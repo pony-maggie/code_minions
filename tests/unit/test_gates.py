@@ -43,6 +43,26 @@ def test_runtime_findings_include_failure_playbook_hint() -> None:
     assert "jsdom" in findings[0].repair_hint.lower()
 
 
+def test_runtime_findings_classify_typescript_contract_diagnostics() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "src/components/Board.tsx(22,15): error TS2322: Type 'string | null' is not assignable to type 'Cell'.",
+            "  Type 'string' is not assignable to type 'Cell'.",
+            "src/hooks/useGameState.ts(2,10): error TS2724: '../types' has no exported member named 'BoardSize'. Did you mean 'BOARD_SIZE'?",
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "typescript-type-contract-mismatch",
+        "typescript-missing-export",
+    ]
+    assert findings[0].paths == ["src/components/Board.tsx"]
+    assert "shared TypeScript type contract" in findings[0].repair_hint
+    assert findings[1].paths == ["src/hooks/useGameState.ts"]
+    assert "existing exported symbol" in findings[1].repair_hint
+
+
 def test_findings_to_text_groups_by_stage_and_severity() -> None:
     text = findings_to_text([
         GateFinding(
