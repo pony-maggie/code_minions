@@ -1,12 +1,37 @@
 """Routes for browsing and controlling runs."""
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from code_minions.web.deps import get_store
 
 router = APIRouter()
+
+
+def _step_findings(steps: list[dict]) -> list[dict]:
+    findings: list[dict] = []
+    for step in steps:
+        raw = step.get("output_json")
+        if not raw:
+            continue
+        try:
+            output = json.loads(raw)
+        except Exception:
+            continue
+        if not isinstance(output, dict):
+            continue
+        profile = output.get("agent_profile") or {}
+        for finding in output.get("gate_findings") or []:
+            if isinstance(finding, dict):
+                findings.append({
+                    "step_id": step["step_id"],
+                    "profile_id": profile.get("profile_id") or "unknown-profile",
+                    **finding,
+                })
+    return findings
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -30,7 +55,7 @@ async def run_detail(request: Request, run_id: str) -> HTMLResponse:
     templates = request.app.state.templates
     return templates.TemplateResponse(
         "run_detail.html",
-        {"request": request, "run": run, "steps": steps},
+        {"request": request, "run": run, "steps": steps, "gate_findings": _step_findings(steps)},
     )
 
 

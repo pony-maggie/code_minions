@@ -20,6 +20,7 @@ import subprocess
 import sys
 from typing import Any
 
+from code_minions.agent_profiles import resolve_agent_profile
 from code_minions.delivery import (
     execution_profile_for_delivery,
     infer_delivery_profile,
@@ -27,6 +28,15 @@ from code_minions.delivery import (
 )
 from code_minions.engine.skill_runtime import SkillExecutionError
 from code_minions.failure_playbook import failure_hints_for_output
+from code_minions.gates import (
+    GateFinding,
+    delivery_issues_to_findings,
+    findings_to_dicts,
+    findings_to_text,
+    runtime_findings_for_output,
+)
+from code_minions.implementation_context import build_implementation_context
+from code_minions.stacks import stack_id_for_delivery
 
 CODER_SYS = """You are Coder. Given a ticket and project context, write failing tests FIRST,
 then minimal implementation to make them pass. Put files inside the worktree.
@@ -308,6 +318,20 @@ def _ticket_delivery_profile(ticket: dict[str, Any]) -> dict[str, Any]:
     })
 
 
+def _agent_profile_for_ticket(ticket: dict[str, Any], policies: dict[str, Any]):
+    delivery_profile = _ticket_delivery_profile(ticket)
+    requested = policies.get("agent_profile")
+    return resolve_agent_profile(
+        role="implementer",
+        delivery_profile=delivery_profile,
+        requested_profile_id=str(requested) if requested else None,
+    )
+
+
+def _source_for_profile(profile: dict[str, Any]) -> str:
+    return stack_id_for_delivery(profile) or "default"
+
+
 def _delivery_profile_context(ticket: dict[str, Any]) -> str:
     profile = _ticket_delivery_profile(ticket)
     if not profile:
@@ -428,6 +452,41 @@ def _run_delivery_profile_check(workdir, ticket: dict[str, Any]) -> tuple[bool, 
     lines.append("Delivery profile:")
     lines.append(json.dumps(profile, ensure_ascii=False, indent=2, sort_keys=True))
     return not errors, "\n".join(lines)
+
+
+def _run_delivery_profile_gate(workdir, ticket: dict[str, Any]) -> tuple[bool, str, list[GateFinding]]:
+    profile = _ticket_delivery_profile(ticket)
+    if not profile:
+        return True, "", []
+    issues = validate_delivery_profile(workdir, profile)
+    findings = delivery_issues_to_findings(issues, source=_source_for_profile(profile))
+    errors = [finding for finding in findings if finding.severity == "error"]
+    warnings = [finding for finding in findings if finding.severity == "warning"]
+    heading = "Delivery profile check failed:" if errors else "Delivery profile warnings:" if warnings else ""
+    text = findings_to_text(findings)
+    if heading and text:
+        text = f"{heading}\n{text}"
+    if not findings:
+        text = "Delivery profile check passed."
+    return not errors, text, findings
+
+
+def _runtime_gate_findings(output: str, ticket: dict[str, Any]) -> list[GateFinding]:
+    profile = _ticket_delivery_profile(ticket)
+    return runtime_findings_for_output(output, source=_source_for_profile(profile))
+
+
+def _record_gate_findings(ctx, findings: list[GateFinding]) -> None:
+    if not findings:
+        return
+    extras = getattr(ctx, "extras", {}) or {}
+    recorder = extras.get("run_event_recorder")
+    step_id = extras.get("current_step_id")
+    if recorder:
+        recorder("gate.findings", {
+            "step_id": step_id,
+            "findings": findings_to_dicts(findings),
+        })
 
 
 def _failure_playbook_context(output: str) -> str:
@@ -630,19 +689,28 @@ def run(ctx):
     policies = _policies(ctx)
     self_heal_max = int(policies.get("self_heal_max_rounds", 3))
     reviewer_max = int(policies.get("reviewer_max_rounds", 3))
+    agent_profile = _agent_profile_for_ticket(ticket, policies)
 
     reviewer_feedback: str = ""
     all_paths: set[str] = set()
     test_output: str = ""
     review: dict[str, Any] = {}
+    latest_gate_findings: list[GateFinding] = []
 
     reviewer_loops = max(1, reviewer_max)
     for reviewer_round in range(1, reviewer_loops + 1):
+        context_package = build_implementation_context(
+            workdir=workdir,
+            ticket=ticket,
+            delivery_profile=_ticket_delivery_profile(ticket),
+            agent_profile=agent_profile,
+            gate_findings=[],
+        )
         coder_user = (
+            f"{context_package.render()}\n\n"
+            f"Delivery profile compact:\n{_delivery_profile_context(ticket)}\n\n"
             f"Project context:\n{_project_context(workdir)}\n\n"
-            f"Delivery profile:\n{_delivery_profile_context(ticket)}\n\n"
             f"Delivery guidance:\n{_delivery_guidance_context(ticket)}\n\n"
-            f"Ticket: {json.dumps(ticket)}\n\n"
             f"Previous reviewer feedback (empty on first round):\n{reviewer_feedback}"
         )
         plan = _llm_call(ctx, CODER_SYS, coder_user)
@@ -651,19 +719,31 @@ def run(ctx):
 
         passed, test_output = False, ""
         for heal_round in range(self_heal_max + 1):
-            passed, delivery_output = _run_delivery_profile_check(workdir, ticket)
+            passed, delivery_output, gate_findings = _run_delivery_profile_gate(workdir, ticket)
             if passed:
                 passed, test_output = _run_tests(workdir, _ticket_delivery_profile(ticket))
                 if delivery_output and delivery_output != "Delivery profile check passed.":
                     test_output = f"{delivery_output}\n\n{test_output}" if test_output else delivery_output
+                if not passed:
+                    gate_findings.extend(_runtime_gate_findings(test_output, ticket))
             else:
                 test_output = delivery_output
+            latest_gate_findings = gate_findings
+            _record_gate_findings(ctx, gate_findings)
             if passed:
                 break
             if heal_round >= self_heal_max:
                 break
+            repair_context = build_implementation_context(
+                workdir=workdir,
+                ticket=ticket,
+                delivery_profile=_ticket_delivery_profile(ticket),
+                agent_profile=agent_profile,
+                gate_findings=gate_findings,
+            )
             plan = _llm_call(
                 ctx, CODER_SYS,
+                f"{repair_context.render()}\n\n"
                 f"Tests failed. Output:\n{test_output}\n\n"
                 f"{_failure_playbook_context(test_output)}\n\n"
                 "Fix the implementation or tests. "
@@ -682,6 +762,8 @@ def run(ctx):
                 "commit_sha": "",
                 "review_report": {"approved": False, "issues": [], "summary": "aborted: tests never green"},
                 "rounds_used": reviewer_round,
+                "agent_profile": agent_profile.to_dict(),
+                "gate_findings": findings_to_dicts(latest_gate_findings),
             }
             raise SkillExecutionError("tests never green", output=output)
 
@@ -697,6 +779,8 @@ def run(ctx):
                 "commit_sha": sha,
                 "review_report": {"approved": True, "issues": [], "summary": "review skipped"},
                 "rounds_used": reviewer_round,
+                "agent_profile": agent_profile.to_dict(),
+                "gate_findings": findings_to_dicts(latest_gate_findings),
             }
 
         diff = _git_diff(workdir)
@@ -717,6 +801,8 @@ def run(ctx):
                 "commit_sha": sha,
                 "review_report": review,
                 "rounds_used": reviewer_round,
+                "agent_profile": agent_profile.to_dict(),
+                "gate_findings": findings_to_dicts(latest_gate_findings),
             }
 
         reviewer_feedback = "\n".join(
@@ -735,4 +821,6 @@ def run(ctx):
         "commit_sha": sha,
         "review_report": review,
         "rounds_used": reviewer_max,
+        "agent_profile": agent_profile.to_dict(),
+        "gate_findings": findings_to_dicts(latest_gate_findings),
     }

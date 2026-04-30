@@ -292,6 +292,42 @@ def test_status_prints_successful_step_outputs(tmp_path):
     assert '"byte_count": 123' in result.output
 
 
+def test_status_prints_gate_findings(tmp_path):
+    db_path = tmp_path / ".devflow" / "runs.db"
+    db_path.parent.mkdir()
+    store = RunStore(db_path)
+    run_id = store.create_run("react-vite-prd-to-commit", {}, llm="minimax/MiniMax-M2.7")
+    store.upsert_step(
+        run_id,
+        "implement[0]",
+        StepStatus.FAILED,
+        output={
+            "agent_profile": {"profile_id": "react-vite/implementer"},
+            "gate_findings": [
+                {
+                    "code": "missing-test-file",
+                    "severity": "warning",
+                    "stage": "preflight",
+                    "message": "No test file found.",
+                    "repair_hint": "Add a real Vitest test.",
+                    "source": "react-vite",
+                    "paths": [],
+                }
+            ],
+        },
+        error="tests never green",
+    )
+    store.set_run_status(run_id, RunStatus.FAILED)
+
+    result = CliRunner().invoke(app, ["status", run_id, "--project-root", str(tmp_path)])
+
+    assert result.exit_code == 0
+    assert "findings:" in result.output
+    assert "react-vite/implementer" in result.output
+    assert "preflight/missing-test-file" in result.output
+    assert "Add a real Vitest test." in result.output
+
+
 def test_skill_list_discovers_skill_md_frontmatter(tmp_path, monkeypatch):
     skills = tmp_path / "skills"
     d = skills / "demo"

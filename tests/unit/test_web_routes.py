@@ -64,3 +64,40 @@ def test_run_detail_shows_steps(client: TestClient) -> None:
     assert "success" in resp.text.lower()
     assert "failed" in resp.text.lower()
     assert "boom" in resp.text
+
+
+def test_run_detail_shows_gate_findings(client: TestClient) -> None:
+    from code_minions.types import RunStatus, StepStatus
+    from code_minions.web.deps import get_store
+
+    store = get_store()
+    run_id = store.create_run("react-vite-prd-to-commit", {}, llm="minimax/MiniMax-M2.7")
+    store.upsert_step(
+        run_id,
+        "implement[0]",
+        StepStatus.FAILED,
+        output={
+            "agent_profile": {"profile_id": "react-vite/implementer"},
+            "gate_findings": [
+                {
+                    "code": "missing-postcss-plugin-dependency",
+                    "severity": "error",
+                    "stage": "preflight",
+                    "message": "PostCSS config references tailwindcss.",
+                    "repair_hint": "Add tailwindcss or remove PostCSS config.",
+                    "source": "react-vite",
+                    "paths": ["postcss.config.js"],
+                }
+            ],
+        },
+        error="tests never green",
+    )
+    store.set_run_status(run_id, RunStatus.FAILED)
+
+    resp = client.get(f"/runs/{run_id}")
+
+    assert resp.status_code == 200
+    assert "Findings" in resp.text
+    assert "react-vite/implementer" in resp.text
+    assert "missing-postcss-plugin-dependency" in resp.text
+    assert "Add tailwindcss or remove PostCSS config." in resp.text

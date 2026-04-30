@@ -1,0 +1,31 @@
+{% if gate_findings %}
+<h2 class="text-lg font-semibold mt-6 mb-3">Findings</h2>
+<div class="bg-white rounded-lg shadow border border-gray-200 overflow-hidden">
+  <table class="w-full text-sm">
+    <thead class="bg-gray-100 border-b border-gray-200 text-left">
+      <tr>
+        <th class="px-4 py-2 font-medium">step</th>
+        <th class="px-4 py-2 font-medium">profile</th>
+        <th class="px-4 py-2 font-medium">finding</th>
+        <th class="px-4 py-2 font-medium">repair</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for finding in gate_findings %}
+      <tr class="border-b border-gray-100">
+        <td class="px-4 py-2 font-mono">{{ finding.step_id }}</td>
+        <td class="px-4 py-2 font-mono text-xs">{{ finding.profile_id }}</td>
+        <td class="px-4 py-2">
+          <div class="font-mono text-xs">{{ finding.severity }} {{ finding.stage }}/{{ finding.code }}</div>
+          <div class="text-xs text-gray-700 mt-1">{{ finding.message }}</div>
+          {% if finding.paths %}
+          <div class="text-xs text-gray-500 mt-1">{{ finding.paths | join(', ') }}</div>
+          {% endif %}
+        </td>
+        <td class="px-4 py-2 text-xs text-gray-700">{{ finding.repair_hint }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}

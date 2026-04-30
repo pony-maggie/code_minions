@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from code_minions.failure_playbook import failure_hints_for_output
+from code_minions.failure_playbook import failure_findings_for_output, failure_hints_for_output
 
 
 def test_playbook_hints_for_missing_vitest_binary() -> None:
@@ -179,3 +179,15 @@ def test_playbook_hints_for_xcodegen_missing_infoplist_generation() -> None:
     assert hints == [
         "An XcodeGen target is missing Info.plist configuration. Add `GENERATE_INFOPLIST_FILE: YES` or an explicit `INFOPLIST_FILE`/`info.path` for every application and unit-test target, especially the test bundle target.",
     ]
+
+
+def test_failure_findings_for_output_preserves_structured_runtime_hint() -> None:
+    findings = failure_findings_for_output(
+        "ReferenceError: describe is not defined",
+        source="react-vite",
+    )
+
+    assert findings[0]["stage"] == "runtime"
+    assert findings[0]["severity"] == "error"
+    assert findings[0]["source"] == "react-vite"
+    assert "Vitest" in findings[0]["repair_hint"]

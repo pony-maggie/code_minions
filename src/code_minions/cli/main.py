@@ -161,6 +161,41 @@ def _print_step_outputs(steps: list[dict[str, Any]]) -> None:
         typer.echo(formatted)
 
 
+def _step_output(step: dict[str, Any]) -> dict[str, Any]:
+    raw = step.get("output_json")
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _print_step_findings(steps: list[dict[str, Any]]) -> None:
+    rows: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+    for step in steps:
+        output = _step_output(step)
+        for finding in output.get("gate_findings") or []:
+            if isinstance(finding, dict):
+                rows.append((step["step_id"], output.get("agent_profile") or {}, finding))
+    if not rows:
+        return
+
+    typer.echo("findings:")
+    for step_id, agent_profile, finding in rows:
+        profile_id = agent_profile.get("profile_id") or "unknown-profile"
+        typer.echo(
+            f"{step_id} [{profile_id}] "
+            f"{finding.get('severity', 'error')} "
+            f"{finding.get('stage', 'runtime')}/{finding.get('code', 'unknown')}: "
+            f"{finding.get('message', '')}"
+        )
+        repair = finding.get("repair_hint")
+        if repair:
+            typer.echo(f"  repair: {repair}")
+
+
 def _format_event_time(ts: datetime, tz: tzinfo | None = None) -> str:
     if ts.tzinfo is None:
         ts = ts.replace(tzinfo=UTC)
@@ -310,6 +345,7 @@ def status(
         typer.echo("errors:")
         for s in errors:
             typer.echo(f"{s['step_id']}: {s['error']}")
+    _print_step_findings(state["steps"])
     _print_step_outputs(state["steps"])
 
 

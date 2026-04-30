@@ -1,3 +1,5 @@
+from typing import Any
+
 PLAYBOOK: tuple[tuple[tuple[str, ...], str], ...] = (
     (
         ("vitest: command not found",),
@@ -126,3 +128,9 @@ def failure_hints_for_output(output: str) -> list[str]:
         if all(needle.lower() in normalized for needle in needles) and hint not in hints:
             hints.append(hint)
     return hints
+
+
+def failure_findings_for_output(output: str, *, source: str = "") -> list[dict[str, Any]]:
+    from code_minions.gates import findings_to_dicts, runtime_findings_for_output
+
+    return findings_to_dicts(runtime_findings_for_output(output, source=source))

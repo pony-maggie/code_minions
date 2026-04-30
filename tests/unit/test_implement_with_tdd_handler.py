@@ -783,6 +783,84 @@ def test_delivery_profile_failure_enters_self_heal_loop(tmp_git_repo: Path, monk
     assert "missing-required-file" in repair_user
 
 
+def test_delivery_profile_failure_outputs_gate_findings(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+    from code_minions.engine.skill_runtime import SkillExecutionError
+
+    ctx = MagicMock()
+    ctx.inputs = {
+        "ticket": {
+            "id": "task-1",
+            "title": "Board",
+            "delivery_profile": {
+                "stack_id": "react-vite",
+                "required_files": ["package.json"],
+            },
+        }
+    }
+    ctx.workdir = tmp_git_repo
+    ctx.llm = MagicMock()
+    ctx.invoke_skill = lambda name, inputs: {"issues": [], "summary": "lgtm", "approved": True}
+    ctx.skill = SimpleNamespace(meta=SimpleNamespace(policies={
+        "self_heal_max_rounds": 0,
+        "reviewer_max_rounds": 0,
+    }))
+    monkeypatch.setattr(entrypoint, "_llm_call", lambda *args, **kwargs: {"files_written": []})
+
+    with pytest.raises(SkillExecutionError) as exc_info:
+        entrypoint.run(ctx)
+
+    output = exc_info.value.output
+    assert output["agent_profile"]["profile_id"] == "react-vite/implementer"
+    assert output["gate_findings"][0]["code"] == "missing-required-file"
+    assert output["gate_findings"][0]["stage"] == "preflight"
+
+
+def test_runtime_failure_findings_are_sent_to_repair_prompt(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+    calls: list[str] = []
+
+    def fake_llm_call(ctx, system, user, **kwargs):
+        calls.append(user)
+        return {"files_written": [{"path": "package.json", "content": '{"scripts":{"test":"vitest run"}}'}]}
+
+    attempts = iter([
+        (False, "ReferenceError: document is not defined"),
+        (True, "ok"),
+    ])
+
+    monkeypatch.setattr(entrypoint, "_llm_call", fake_llm_call)
+    monkeypatch.setattr(
+        entrypoint,
+        "_run_delivery_profile_gate",
+        lambda workdir, ticket: (True, "Delivery profile check passed.", []),
+    )
+    monkeypatch.setattr(entrypoint, "_run_tests", lambda workdir, profile: next(attempts))
+    monkeypatch.setattr(entrypoint, "_git_commit", lambda workdir, msg, ignored_paths=None: "abc123")
+
+    ctx = MagicMock()
+    ctx.inputs = {
+        "ticket": {
+            "id": "task-1",
+            "title": "Board",
+            "delivery_profile": {"stack_id": "react-vite"},
+        }
+    }
+    ctx.workdir = tmp_git_repo
+    ctx.llm = MagicMock()
+    ctx.invoke_skill = lambda name, inputs: {"issues": [], "summary": "lgtm", "approved": True}
+    ctx.skill = SimpleNamespace(meta=SimpleNamespace(policies={
+        "self_heal_max_rounds": 1,
+        "reviewer_max_rounds": 0,
+    }))
+
+    output = entrypoint.run(ctx)
+
+    assert output["test_result"]["passed"] is True
+    assert "Gate findings:" in calls[1]
+    assert "jsdom" in calls[1].lower()
+
+
 def test_relaxed_delivery_profile_warnings_do_not_enter_self_heal_loop(tmp_git_repo: Path, monkeypatch):
     entrypoint = _load_entrypoint()
     from code_minions.llm.types import Message, Response, Usage
