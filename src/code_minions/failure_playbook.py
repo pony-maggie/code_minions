@@ -99,6 +99,12 @@ PLAYBOOK: tuple[tuple[tuple[str, ...], str], ...] = (
         "`getBoundingClientRect` with non-zero width/height before firing coordinate-based clicks.",
     ),
     (
+        ("getcomputedstyle", "expected 'block' to be 'flex'"),
+        "jsdom does not reliably apply external CSS module/import styles for layout assertions. Avoid "
+        "`getComputedStyle()` tests for flex/grid centering or responsive layout; assert semantic "
+        "structure/classes instead, or move layout verification to browser/e2e visual checks.",
+    ),
+    (
         ("low-level-pointerdown-test",),
         "A React/Vite test uses low-level `user.pointer(... '[pointerdown]')` to prove touch support. "
         "In jsdom this can diverge from browser activation behavior; prefer `await user.click(cell)` "

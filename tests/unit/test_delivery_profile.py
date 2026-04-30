@@ -687,6 +687,30 @@ def test_validate_accepts_layout_dependent_react_vite_tests_with_rect_mock(tmp_p
     assert not any(issue["code"] == "jsdom-layout-dependent-test" for issue in issues)
 
 
+def test_validate_rejects_computed_style_layout_assertions_in_jsdom_tests(tmp_path) -> None:
+    (tmp_path / "package.json").write_text('{"scripts":{"test":"vitest run"}}\n')
+    (tmp_path / "vite.config.ts").write_text(
+        "import { defineConfig } from 'vitest/config'\n"
+        "export default defineConfig({ test: { environment: 'jsdom' } })\n"
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "Board.test.tsx").write_text(
+        "test('centers the board', () => {\n"
+        "  const styles = window.getComputedStyle(board.parentElement!)\n"
+        "  expect(styles.display).toBe('flex')\n"
+        "  expect(styles.justifyContent).toBe('center')\n"
+        "})\n"
+    )
+    profile = {"stack_id": "react-vite", "gate_strictness": "relaxed"}
+
+    issues = validate_delivery_profile(tmp_path, profile)
+
+    assert any(
+        issue["code"] == "jsdom-computed-style-layout-test" and issue["severity"] == "error"
+        for issue in issues
+    )
+
+
 def test_validate_accepts_react_vite_test_importing_existing_relative_module(tmp_path) -> None:
     (tmp_path / "package.json").write_text('{"scripts":{"test":"vitest run"}}\n')
     (tmp_path / "vitest.config.ts").write_text(

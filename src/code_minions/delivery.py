@@ -64,6 +64,12 @@ LOW_LEVEL_USER_POINTERDOWN_RE = re.compile(
     r"""\buser(?:Event)?(?:\.setup\(\))?\.pointer\s*\([\s\S]{0,240}\[pointerdown\]""",
     re.MULTILINE,
 )
+COMPUTED_STYLE_LAYOUT_ASSERTION_RE = re.compile(
+    r"""getComputedStyle\s*\([\s\S]{0,320}"""
+    r"""expect\s*\([^)]*\.(?:display|justifyContent|alignItems|placeItems|gridTemplateColumns|width|height)[^)]*\)\s*"""
+    r"""\.(?:toBe|toEqual|toContain|toMatch)\s*\(""",
+    re.MULTILINE,
+)
 TYPESCRIPT_CSS_AT_IMPORT_RE = re.compile(r"""(?m)^\s*@import\s+['"]""")
 POSTCSS_CONFIG_NAMES = (
     "postcss.config.js",
@@ -570,6 +576,18 @@ def _low_level_user_pointerdown_tests(workdir: Path) -> list[Path]:
     return offenders
 
 
+def _computed_style_layout_assertion_tests(workdir: Path) -> list[Path]:
+    offenders: list[Path] = []
+    for path in _js_ts_test_files(workdir):
+        try:
+            text = path.read_text(errors="ignore")
+        except OSError:
+            continue
+        if COMPUTED_STYLE_LAYOUT_ASSERTION_RE.search(text):
+            offenders.append(path)
+    return offenders
+
+
 def _js_ts_test_files(workdir: Path) -> list[Path]:
     test_files: list[Path] = []
     for path in _iter_files(workdir):
@@ -817,6 +835,18 @@ def validate_delivery_profile(workdir: Path, profile: dict[str, Any] | None) -> 
                     "jsdom does not compute real layout, so this often produces zero-sized boxes and false "
                     "interaction failures. Prefer semantic click targets such as cell buttons/test ids, or mock "
                     "`getBoundingClientRect` with non-zero width/height before firing coordinate-based clicks."
+                ),
+            ))
+        computed_style_tests = _computed_style_layout_assertion_tests(workdir)
+        if computed_style_tests:
+            files = ", ".join(path.relative_to(workdir).as_posix() for path in computed_style_tests[:3])
+            issues.append(_delivery_issue(
+                "jsdom-computed-style-layout-test",
+                (
+                    f"{files} asserts flex/grid/responsive layout through `window.getComputedStyle()`. "
+                    "Vitest/jsdom does not reliably apply external CSS import styles for layout assertions. "
+                    "Assert semantic structure, classes, ARIA labels, and stable element presence in unit tests; "
+                    "leave visual centering/responsive layout checks to browser/e2e verification."
                 ),
             ))
         unresolved = _unresolved_relative_imports(workdir)

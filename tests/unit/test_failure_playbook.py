@@ -160,6 +160,18 @@ def test_playbook_hints_for_jsdom_layout_dependent_click_tests() -> None:
     ]
 
 
+def test_playbook_hints_for_jsdom_computed_style_layout_assertions() -> None:
+    hints = failure_hints_for_output(
+        "AssertionError: expected 'block' to be 'flex'\n"
+        "const styles = window.getComputedStyle(board!.parentElement!)\n"
+        "expect(styles.display).toBe('flex')"
+    )
+
+    assert hints == [
+        "jsdom does not reliably apply external CSS module/import styles for layout assertions. Avoid `getComputedStyle()` tests for flex/grid centering or responsive layout; assert semantic structure/classes instead, or move layout verification to browser/e2e visual checks.",
+    ]
+
+
 def test_playbook_hints_for_typescript_state_enum_literal_mismatch() -> None:
     hints = failure_hints_for_output(
         "src/App.tsx(37,22): error TS2345: Argument of type '\"black\"' "

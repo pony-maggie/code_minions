@@ -415,7 +415,10 @@ def _delivery_guidance_context(ticket: dict[str, Any]) -> str:
             "jsdom does not compute layout, so tests must not depend on real `getBoundingClientRect()` "
             "sizes for coordinate-based clicks. Prefer semantic click targets such as board-cell buttons, "
             "roles, labels, or stable test ids; if coordinate clicks are unavoidable, mock "
-            "`getBoundingClientRect` with non-zero width/height before firing events."
+            "`getBoundingClientRect` with non-zero width/height before firing events. "
+            "Do not assert flex/grid centering or responsive layout with `window.getComputedStyle()` in "
+            "Vitest/jsdom; external CSS imports may not be reflected there. Assert classes/structure in "
+            "unit tests and reserve visual layout verification for browser/e2e checks."
         )
     if _looks_like_swift_xcodegen_profile(profile):
         lines.append(
