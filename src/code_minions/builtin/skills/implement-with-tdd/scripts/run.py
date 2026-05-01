@@ -634,6 +634,18 @@ describe('App', () => {
 })
 """
 
+REACT_VITE_TEST_API_NAMES = ("afterEach", "beforeEach", "describe", "expect", "it", "test", "vi")
+REACT_VITE_VITEST_IMPORT_RE = re.compile(
+    r"""import\s*\{(?P<names>[^}]+)\}\s*from\s*['"]vitest['"]\s*;?\n?""",
+    re.MULTILINE | re.DOTALL,
+)
+REACT_VITE_BOARD_COORDINATE_RE = re.compile(
+    r"""行\s*\d+\s*列\s*\d+|第\s*\d+\s*行\s*第\s*\d+\s*列|"""
+    r"""row\s*\d+[\s\S]{0,40}(?:col|column)\s*\d+""",
+    re.IGNORECASE,
+)
+REACT_VITE_REGEX_LITERAL_RE = re.compile(r"""/(?P<pattern>\^(?:\\.|[^/\n])*)(?P<suffix>/[a-z]*)""")
+
 
 def _write_text_if_changed(workdir, rel_path: str, content: str) -> str | None:
     path = workdir / rel_path
@@ -694,6 +706,79 @@ def _has_js_ts_test_file(workdir) -> bool:
     )
 
 
+def _react_vite_test_files(workdir) -> list:
+    ignored = {".git", ".devflow", "node_modules", "dist", "coverage"}
+    test_files = []
+    for path in sorted(workdir.rglob("*")):
+        if not path.is_file() or path.suffix not in {".ts", ".tsx", ".js", ".jsx"}:
+            continue
+        if any(part in ignored for part in path.relative_to(workdir).parts):
+            continue
+        lower_name = path.name.lower()
+        if ".test." in lower_name or ".spec." in lower_name:
+            test_files.append(path)
+    return test_files
+
+
+def _vitest_imported_test_api_names(text: str) -> set[str]:
+    imported: set[str] = set()
+    for match in REACT_VITE_VITEST_IMPORT_RE.finditer(text):
+        for raw_name in match.group("names").split(","):
+            name = raw_name.strip()
+            if not name:
+                continue
+            imported.add(name.split(" as ", 1)[0].strip())
+    return imported
+
+
+def _uses_vitest_test_api(text: str, name: str) -> bool:
+    if name == "vi":
+        return bool(re.search(r"\bvi\s*(?:\.|\()", text))
+    return bool(re.search(rf"\b{re.escape(name)}\s*\(", text))
+
+
+def _stabilize_vitest_imports(text: str) -> str:
+    used = {
+        name
+        for name in REACT_VITE_TEST_API_NAMES
+        if _uses_vitest_test_api(text, name)
+    }
+    missing = used - _vitest_imported_test_api_names(text)
+    if not missing:
+        return text
+
+    match = REACT_VITE_VITEST_IMPORT_RE.search(text)
+    if match:
+        names = _vitest_imported_test_api_names(match.group(0))
+        names.update(missing)
+        replacement = f"import {{ {', '.join(sorted(names))} }} from 'vitest'\n"
+        return text[:match.start()] + replacement + text[match.end():]
+
+    return f"import {{ {', '.join(sorted(missing))} }} from 'vitest'\n{text}"
+
+
+def _anchor_board_coordinate_regex_queries(text: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        pattern = match.group("pattern")
+        if pattern.endswith("$") or not REACT_VITE_BOARD_COORDINATE_RE.search(pattern):
+            return match.group(0)
+        return f"/{pattern}${match.group('suffix')}"
+
+    return REACT_VITE_REGEX_LITERAL_RE.sub(replace, text)
+
+
+def _stabilize_react_vite_tests(workdir) -> set[str]:
+    changed: set[str] = set()
+    for path in _react_vite_test_files(workdir):
+        original = path.read_text()
+        updated = _anchor_board_coordinate_regex_queries(_stabilize_vitest_imports(original))
+        if updated == original:
+            continue
+        path.write_text(updated)
+        changed.add(path.relative_to(workdir).as_posix())
+    return changed
+
+
 def _stabilize_react_vite_scaffold(workdir, ticket: dict[str, Any]) -> set[str]:
     if not _looks_like_react_vite_profile(_ticket_delivery_profile(ticket)):
         return set()
@@ -727,6 +812,7 @@ def _stabilize_react_vite_scaffold(workdir, ticket: dict[str, Any]) -> set[str]:
         written = _write_text_if_changed(workdir, "src/App.test.tsx", REACT_VITE_APP_TEST)
         if written:
             changed.add(written)
+    changed.update(_stabilize_react_vite_tests(workdir))
 
     return changed
 

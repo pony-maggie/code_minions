@@ -422,6 +422,54 @@ def test_react_vite_run_restabilizes_scaffold_after_llm_changes(tmp_git_repo: Pa
     assert any(path in output["files_changed"] for path in ["package.json", "src/setupTests.ts"])
 
 
+def test_react_vite_scaffold_imports_used_vitest_test_apis(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "App.test.tsx").write_text(
+        "describe('App', () => {\n"
+        "  it('renders', () => {\n"
+        "    expect(true).toBe(true)\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "App.test.tsx").read_text()
+    assert "src/App.test.tsx" in changed
+    assert "import { describe, expect, it } from 'vitest'" in text
+    passed, output, findings = entrypoint._run_delivery_profile_gate(tmp_git_repo, ticket)
+    assert passed is True
+    assert "vitest-global-api-mismatch" not in output
+    assert not findings
+
+
+def test_react_vite_scaffold_anchors_board_coordinate_regex_queries(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "tests" / "StatusPanel.test.tsx").write_text(
+        "import { describe, expect, it } from 'vitest'\n"
+        "import { screen } from '@testing-library/react'\n"
+        "describe('StatusPanel', () => {\n"
+        "  it('queries a cell', () => {\n"
+        "    expect(screen.getByRole('button', { name: /^第 7 行第 7 列，空位/ })).toBeDefined()\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "tests" / "StatusPanel.test.tsx").read_text()
+    assert "tests/StatusPanel.test.tsx" in changed
+    assert "name: /^第 7 行第 7 列，空位$/" in text
+    passed, output, findings = entrypoint._run_delivery_profile_gate(tmp_git_repo, ticket)
+    assert passed is True
+    assert "ambiguous-testing-library-query" not in output
+    assert not [finding for finding in findings if finding.code == "ambiguous-testing-library-query"]
+
+
 def test_xcodegen_duplicate_product_name_failure_gets_repair_hint(tmp_git_repo: Path, monkeypatch):
     entrypoint = _load_entrypoint()
     (tmp_git_repo / "project.yml").write_text(
