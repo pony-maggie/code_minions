@@ -50,7 +50,7 @@ def _runtime_code(output: str, hint: str) -> str:
 
 
 def delivery_issues_to_findings(
-    issues: list[dict[str, str]],
+    issues: list[dict[str, Any]],
     *,
     source: str,
 ) -> list[GateFinding]:
@@ -63,7 +63,7 @@ def delivery_issues_to_findings(
             message=str(issue.get("message") or ""),
             repair_hint=str(issue.get("repair_hint") or ""),
             source=source,
-            paths=[],
+            paths=[str(path) for path in issue.get("paths") or []],
         ))
     return findings
 

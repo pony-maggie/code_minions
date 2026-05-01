@@ -521,6 +521,31 @@ def test_validate_rejects_react_vite_test_importing_missing_relative_module(tmp_
     assert any(issue["code"] == "unresolved-relative-import" for issue in issues)
 
 
+def test_validate_suggests_existing_relative_import_target(tmp_path) -> None:
+    (tmp_path / "package.json").write_text('{"scripts":{"test":"vitest run"}}\n')
+    (tmp_path / "vitest.config.ts").write_text(
+        "import { defineConfig } from 'vitest/config'\n"
+        "export default defineConfig({ test: { environment: 'jsdom' } })\n"
+    )
+    (tmp_path / "src" / "hooks").mkdir(parents=True)
+    (tmp_path / "src" / "hooks" / "useGameState.ts").write_text(
+        "import { Board } from './types'\n"
+    )
+    (tmp_path / "src" / "types.ts").write_text("export type Board = unknown\n")
+    (tmp_path / "src" / "App.test.tsx").write_text(
+        "import { describe, expect, it } from 'vitest'\n"
+        "describe('App', () => { it('renders', () => { expect(true).toBe(true) }) })\n"
+    )
+    profile = {"stack_id": "react-vite"}
+
+    issues = validate_delivery_profile(tmp_path, profile)
+
+    issue = next(issue for issue in issues if issue["code"] == "unresolved-relative-import")
+    assert issue["paths"] == ["src/hooks/useGameState.ts", "src/types.ts"]
+    assert "likely target `src/types.ts`" in issue["repair_hint"]
+    assert "import `../types`" in issue["repair_hint"]
+
+
 def test_validate_react_vite_checks_can_be_selected_by_stack_id(tmp_path) -> None:
     (tmp_path / "package.json").write_text('{"scripts":{"test":"vitest run"}}\n')
     (tmp_path / "vite.config.ts").write_text(

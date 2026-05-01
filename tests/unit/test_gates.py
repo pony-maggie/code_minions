@@ -31,6 +31,33 @@ def test_delivery_issues_convert_to_preflight_findings() -> None:
     ]
 
 
+def test_delivery_issues_preserve_repair_hint_and_paths() -> None:
+    findings = delivery_issues_to_findings(
+        [
+            {
+                "code": "unresolved-relative-import",
+                "severity": "error",
+                "message": "`src/hooks/useGameState.ts` imports `./types`.",
+                "repair_hint": "Import `../types`.",
+                "paths": ["src/hooks/useGameState.ts", "src/types.ts"],
+            }
+        ],
+        source="react-vite",
+    )
+
+    assert findings == [
+        GateFinding(
+            code="unresolved-relative-import",
+            severity="error",
+            stage="preflight",
+            message="`src/hooks/useGameState.ts` imports `./types`.",
+            repair_hint="Import `../types`.",
+            source="react-vite",
+            paths=["src/hooks/useGameState.ts", "src/types.ts"],
+        )
+    ]
+
+
 def test_runtime_findings_include_failure_playbook_hint() -> None:
     findings = runtime_findings_for_output(
         "ReferenceError: document is not defined",

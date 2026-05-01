@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 from pathlib import Path
@@ -265,10 +266,22 @@ def _gate_strictness(profile: dict[str, Any]) -> str:
     return "balanced"
 
 
-def _delivery_issue(code: str, message: str, severity: str = "error") -> dict[str, str]:
+def _delivery_issue(
+    code: str,
+    message: str,
+    severity: str = "error",
+    *,
+    repair_hint: str = "",
+    paths: list[str] | None = None,
+) -> dict[str, Any]:
     if severity not in DELIVERY_SEVERITIES:
         severity = "error"
-    return {"code": code, "severity": severity, "message": message}
+    issue: dict[str, Any] = {"code": code, "severity": severity, "message": message}
+    if repair_hint:
+        issue["repair_hint"] = repair_hint
+    if paths:
+        issue["paths"] = paths
+    return issue
 
 
 def _react_vite_hygiene_severity(profile: dict[str, Any]) -> str:
@@ -634,6 +647,58 @@ def _relative_import_resolves(importer: Path, imported: str) -> bool:
     return False
 
 
+def _candidate_relative_import_targets(workdir: Path, importer: Path, imported: str) -> list[Path]:
+    module_name = Path(imported).name
+    if not module_name:
+        return []
+
+    module_stem = Path(module_name).stem if Path(module_name).suffix else module_name
+    candidates: list[Path] = []
+    for path in _iter_files(workdir):
+        if path == importer or path.suffix not in TS_RESOLVABLE_EXTENSIONS:
+            continue
+        if path.stem == module_stem or (path.stem == "index" and path.parent.name == module_stem):
+            candidates.append(path)
+
+    def sort_key(path: Path) -> tuple[int, int, str]:
+        try:
+            common = len(set(importer.relative_to(workdir).parts) & set(path.relative_to(workdir).parts))
+        except ValueError:
+            common = 0
+        return (-common, len(path.parts), path.as_posix())
+
+    return sorted(candidates, key=sort_key)
+
+
+def _relative_import_specifier(importer: Path, target: Path) -> str:
+    module_target = target.parent if target.stem == "index" else target.with_suffix("")
+    rel = os.path.relpath(module_target, start=importer.parent)
+    specifier = Path(rel).as_posix()
+    if not specifier.startswith("."):
+        specifier = f"./{specifier}"
+    return specifier
+
+
+def _relative_import_repair(
+    workdir: Path,
+    importer: Path,
+    imported: str,
+) -> tuple[str, list[str]]:
+    importer_rel = importer.relative_to(workdir).as_posix()
+    candidates = _candidate_relative_import_targets(workdir, importer, imported)
+    if not candidates:
+        return "", [importer_rel]
+
+    target = candidates[0]
+    target_rel = target.relative_to(workdir).as_posix()
+    specifier = _relative_import_specifier(importer, target)
+    return (
+        f"Existing likely target `{target_rel}` is available. From `{importer_rel}`, "
+        f"import `{specifier}` instead of `{imported}`, or move/create the module at the referenced path.",
+        [importer_rel, target_rel],
+    )
+
+
 def _unresolved_relative_imports(workdir: Path) -> list[tuple[Path, str]]:
     unresolved: list[tuple[Path, str]] = []
     for path in _iter_files(workdir):
@@ -650,11 +715,11 @@ def _unresolved_relative_imports(workdir: Path) -> list[tuple[Path, str]]:
     return unresolved
 
 
-def validate_delivery_profile(workdir: Path, profile: dict[str, Any] | None) -> list[dict[str, str]]:
+def validate_delivery_profile(workdir: Path, profile: dict[str, Any] | None) -> list[dict[str, Any]]:
     if not profile:
         return []
 
-    issues: list[dict[str, str]] = []
+    issues: list[dict[str, Any]] = []
     for pattern in profile.get("required_files") or []:
         if isinstance(pattern, str) and not _matches_required_file(workdir, pattern):
             issues.append(_delivery_issue(
@@ -851,6 +916,7 @@ def validate_delivery_profile(workdir: Path, profile: dict[str, Any] | None) -> 
             ))
         unresolved = _unresolved_relative_imports(workdir)
         for importer, imported in unresolved[:5]:
+            repair_hint, paths = _relative_import_repair(workdir, importer, imported)
             issues.append(_delivery_issue(
                 "unresolved-relative-import",
                 (
@@ -858,6 +924,8 @@ def validate_delivery_profile(workdir: Path, profile: dict[str, Any] | None) -> 
                     "but no matching relative source file exists. Create the referenced file, "
                     "update the import, or remove the orphan test/module before running Vitest."
                 ),
+                repair_hint=repair_hint,
+                paths=paths,
             ))
 
     return issues
