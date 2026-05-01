@@ -635,6 +635,8 @@ def test_react_vite_profile_adds_test_environment_guidance_to_coder_prompt(tmp_g
     assert "existing callers" in coder_user
     assert "*.test.ts" in coder_user
     assert "no-test" in coder_user
+    assert "published, conservative package ranges" in coder_user
+    assert "omit a dependency" in coder_user
     assert "postcss.config" in coder_user
     assert "tailwindcss" in coder_user
     assert "autoprefixer" in coder_user

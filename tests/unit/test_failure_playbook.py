@@ -131,6 +131,18 @@ def test_playbook_hints_for_missing_postcss_plugin_dependency() -> None:
     ]
 
 
+def test_playbook_hints_for_npm_unpublished_dependency_version() -> None:
+    hints = failure_hints_for_output(
+        "npm error code ETARGET\n"
+        "npm error notarget No matching version found for @testing-library/user-event@^16.0.1.\n"
+        "npm error notarget In most cases you or one of your dependencies are requesting a package version that doesn't exist."
+    )
+
+    assert hints == [
+        "npm could not install because package.json requests a dependency version that is not published. Do not invent future package versions; replace the dependency range with a published npm version, or remove the dependency if the generated code does not need it.",
+    ]
+
+
 def test_playbook_hints_for_jest_global_used_in_vitest() -> None:
     hints = failure_hints_for_output("ReferenceError: jest is not defined")
 

@@ -76,6 +76,12 @@ PLAYBOOK: tuple[tuple[tuple[str, ...], str], ...] = (
         "PostCSS/Tailwind config and use plain CSS for the React/Vite MVP.",
     ),
     (
+        ("npm error code etarget", "no matching version found for"),
+        "npm could not install because package.json requests a dependency version that is not published. "
+        "Do not invent future package versions; replace the dependency range with a published npm version, "
+        "or remove the dependency if the generated code does not need it.",
+    ),
+    (
         ("referenceerror: window is not defined",),
         "React/Vite component tests are running in Vitest's Node environment. Configure Vitest with "
         "`test: { environment: 'jsdom' }` in `vite.config.ts` or `vitest.config.ts`, keep `jsdom` "

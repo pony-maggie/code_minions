@@ -70,6 +70,19 @@ def test_runtime_findings_include_failure_playbook_hint() -> None:
     assert "jsdom" in findings[0].repair_hint.lower()
 
 
+def test_runtime_findings_classify_npm_unpublished_dependency_version() -> None:
+    findings = runtime_findings_for_output(
+        "npm error code ETARGET\n"
+        "npm error notarget No matching version found for @testing-library/user-event@^16.0.1.",
+        source="react-vite",
+    )
+
+    assert findings[0].stage == "runtime"
+    assert findings[0].severity == "error"
+    assert findings[0].code == "npm-error-code-etarget"
+    assert "published npm version" in findings[0].repair_hint
+
+
 def test_runtime_findings_classify_typescript_contract_diagnostics() -> None:
     findings = runtime_findings_for_output(
         "\n".join([

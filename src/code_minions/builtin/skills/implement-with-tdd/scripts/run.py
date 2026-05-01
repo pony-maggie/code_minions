@@ -402,6 +402,8 @@ def _delivery_guidance_context(ticket: dict[str, Any]) -> str:
             "The current working directory is already the project root; never create a nested `worktree/` "
             "or `workspace/` app inside it. Put `index.html`, `package.json`, source files, and tests at "
             "the root-level React/Vite project paths. "
+            "Do not invent future npm dependency versions. Use published, conservative package ranges for "
+            "React/Vite testing dependencies, and omit a dependency if the generated code does not need it. "
             "Prefer plain CSS for lightweight React/Vite MVPs. If you add `postcss.config.*`, "
             "`tailwind.config.*`, or Tailwind/PostCSS plugins, package.json must declare every referenced "
             "plugin such as `tailwindcss` and `autoprefixer` in devDependencies; otherwise remove the config. "
