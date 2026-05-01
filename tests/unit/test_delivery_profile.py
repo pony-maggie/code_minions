@@ -474,6 +474,52 @@ def test_validate_accepts_vitest_globals_used_with_globals_config(tmp_path) -> N
     assert not any(issue["code"] == "vitest-global-api-mismatch" for issue in issues)
 
 
+def test_validate_rejects_vitest_globals_without_types_config(tmp_path) -> None:
+    (tmp_path / "package.json").write_text('{"scripts":{"test":"vitest run"}}\n')
+    (tmp_path / "vite.config.ts").write_text(
+        "import { defineConfig } from 'vitest/config'\n"
+        "export default defineConfig({ test: { environment: 'jsdom', globals: true } })\n"
+    )
+    (tmp_path / "tsconfig.json").write_text(
+        '{"compilerOptions":{"types":["node"]},"include":["src"]}\n'
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "App.test.tsx").write_text(
+        "import { describe, expect, it } from 'vitest'\n"
+        "const onClick = vi.fn()\n"
+        "describe('App', () => { it('renders', () => { expect(onClick).toBeDefined() }) })\n"
+    )
+    profile = {"stack_id": "react-vite", "gate_strictness": "relaxed"}
+
+    issues = validate_delivery_profile(tmp_path, profile)
+
+    issue = next(issue for issue in issues if issue["code"] == "vitest-global-types-missing")
+    assert issue["severity"] == "error"
+    assert "src/App.test.tsx uses vi" in issue["message"]
+    assert "vitest/globals" in issue["message"]
+
+
+def test_validate_accepts_vitest_globals_with_types_config(tmp_path) -> None:
+    (tmp_path / "package.json").write_text('{"scripts":{"test":"vitest run"}}\n')
+    (tmp_path / "vite.config.ts").write_text(
+        "import { defineConfig } from 'vitest/config'\n"
+        "export default defineConfig({ test: { environment: 'jsdom', globals: true } })\n"
+    )
+    (tmp_path / "tsconfig.json").write_text(
+        '{"compilerOptions":{"types":["vitest/globals"]},"include":["src"]}\n'
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "App.test.tsx").write_text(
+        "const onClick = vi.fn()\n"
+        "describe('App', () => { it('renders', () => { expect(onClick).toBeDefined() }) })\n"
+    )
+    profile = {"stack_id": "react-vite"}
+
+    issues = validate_delivery_profile(tmp_path, profile)
+
+    assert not any(issue["code"] == "vitest-global-types-missing" for issue in issues)
+
+
 def test_validate_accepts_vitest_globals_when_imported_from_vitest(tmp_path) -> None:
     (tmp_path / "package.json").write_text('{"scripts":{"test":"vitest run"}}\n')
     (tmp_path / "vite.config.ts").write_text(

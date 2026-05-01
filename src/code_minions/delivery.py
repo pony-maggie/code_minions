@@ -522,6 +522,36 @@ def _vitest_global_api_mismatches(workdir: Path) -> list[tuple[Path, list[str]]]
     return mismatches
 
 
+def _has_vitest_globals_types(workdir: Path) -> bool:
+    for path in _iter_files(workdir):
+        if path.suffix not in {".json", ".ts", ".tsx", ".d.ts"}:
+            continue
+        if "vitest/globals" in path.read_text(errors="ignore"):
+            return True
+    return False
+
+
+def _vitest_global_type_gaps(workdir: Path) -> list[tuple[Path, list[str]]]:
+    if not _vitest_config_enables_globals(workdir) or _has_vitest_globals_types(workdir):
+        return []
+
+    gaps: list[tuple[Path, list[str]]] = []
+    for path in _js_ts_test_files(workdir):
+        try:
+            text = path.read_text(errors="ignore")
+        except OSError:
+            continue
+        imported = _vitest_imported_names(text)
+        missing = [
+            api
+            for api in VITEST_GLOBAL_APIS
+            if _uses_vitest_api(text, api) and api not in imported
+        ]
+        if missing:
+            gaps.append((path, missing))
+    return gaps
+
+
 def _layout_dependent_test_files(workdir: Path) -> list[Path]:
     offenders: list[Path] = []
     for path in _js_ts_test_files(workdir):
@@ -888,6 +918,19 @@ def validate_delivery_profile(workdir: Path, profile: dict[str, Any] | None) -> 
                     f"{'; '.join(examples)}. Either import the used APIs from `vitest` in each "
                     "test file or set `test: { globals: true }` in the Vitest/Vite config and "
                     "include matching Vitest types."
+                ),
+            ))
+        vitest_global_type_gaps = _vitest_global_type_gaps(workdir)
+        if vitest_global_type_gaps:
+            examples = []
+            for path, missing in vitest_global_type_gaps[:3]:
+                examples.append(f"{path.relative_to(workdir).as_posix()} uses {', '.join(missing)}")
+            issues.append(_delivery_issue(
+                "vitest-global-types-missing",
+                (
+                    "Vitest globals are enabled at runtime, but TypeScript global types are not configured. "
+                    f"{'; '.join(examples)}. Either import the used APIs from `vitest` in each test file, "
+                    "or add `vitest/globals` to `compilerOptions.types` in tsconfig.json."
                 ),
             ))
         layout_dependent_tests = _layout_dependent_test_files(workdir)
