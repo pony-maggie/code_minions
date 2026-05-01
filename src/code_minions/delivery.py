@@ -552,6 +552,30 @@ def _vitest_global_type_gaps(workdir: Path) -> list[tuple[Path, list[str]]]:
     return gaps
 
 
+def _missing_tsconfig_references(workdir: Path) -> list[tuple[Path, str, Path]]:
+    missing: list[tuple[Path, str, Path]] = []
+    for path in _iter_files(workdir):
+        if not path.name.startswith("tsconfig") or path.suffix != ".json":
+            continue
+        try:
+            data = json.loads(path.read_text(errors="ignore"))
+        except json.JSONDecodeError:
+            continue
+        references = data.get("references")
+        if not isinstance(references, list):
+            continue
+        for reference in references:
+            if not isinstance(reference, dict) or not isinstance(reference.get("path"), str):
+                continue
+            raw_reference = reference["path"]
+            target = (path.parent / raw_reference).resolve()
+            if target.is_file() or (target.is_dir() and (target / "tsconfig.json").is_file()):
+                continue
+            expected = target if target.suffix else target / "tsconfig.json"
+            missing.append((path, raw_reference, expected))
+    return missing
+
+
 def _layout_dependent_test_files(workdir: Path) -> list[Path]:
     offenders: list[Path] = []
     for path in _js_ts_test_files(workdir):
@@ -932,6 +956,23 @@ def validate_delivery_profile(workdir: Path, profile: dict[str, Any] | None) -> 
                     f"{'; '.join(examples)}. Either import the used APIs from `vitest` in each test file, "
                     "or add `vitest/globals` to `compilerOptions.types` in tsconfig.json."
                 ),
+            ))
+        missing_tsconfig_references = _missing_tsconfig_references(workdir)
+        for config_path, reference, expected in missing_tsconfig_references[:5]:
+            config_rel = config_path.relative_to(workdir).as_posix()
+            expected_rel = expected.relative_to(workdir).as_posix()
+            issues.append(_delivery_issue(
+                "missing-tsconfig-reference",
+                (
+                    f"`{config_rel}` references `{reference}`, but `{expected_rel}` does not exist. "
+                    "Create the referenced tsconfig file, update the project reference, or remove the "
+                    "stale reference before running TypeScript."
+                ),
+                repair_hint=(
+                    f"Add `{expected_rel}` with the intended TypeScript config, or remove the "
+                    f"`{reference}` entry from `{config_rel}` if it is unused."
+                ),
+                paths=[config_rel, expected_rel],
             ))
         layout_dependent_tests = _layout_dependent_test_files(workdir)
         if layout_dependent_tests:
