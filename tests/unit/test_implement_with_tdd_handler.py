@@ -317,6 +317,111 @@ def test_delivery_profile_typecheck_failure_stops_before_npm_test(tmp_git_repo: 
     assert "Property 'cells' does not exist" in output
 
 
+def test_react_vite_scaffold_creates_stable_project_files(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    assert "package.json" in changed
+    assert "vite.config.ts" in changed
+    assert "tsconfig.json" in changed
+    assert "tsconfig.node.json" in changed
+    assert "src/setupTests.ts" in changed
+    assert "src/index.css" in changed
+    assert "src/App.test.tsx" in changed
+    assert "src/main.tsx" in changed
+    package_json = (tmp_git_repo / "package.json").read_text()
+    assert '"@testing-library/user-event": "14.6.1"' in package_json
+    assert '"vite": "5.4.11"' in package_json
+    assert "afterEach(cleanup)" in (tmp_git_repo / "src" / "setupTests.ts").read_text()
+    assert "afterEach(cleanup())" not in (tmp_git_repo / "src" / "setupTests.ts").read_text()
+
+
+def test_react_vite_scaffold_repairs_llm_modified_harness_files(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "package.json").write_text(
+        '{"scripts":{"test":"vitest run"},"devDependencies":{"@testing-library/user-event":"^16.0.1"}}\n'
+    )
+    (tmp_git_repo / "tsconfig.json").write_text(
+        '{"include":["src"],"references":[{"path":"./tsconfig.node.json"}]}\n'
+    )
+    (tmp_git_repo / "src" / "setupTests.ts").write_text(
+        "import '@testing-library/jest-dom/vitest'\n"
+        "import { cleanup } from '@testing-library/react'\n"
+        "import { afterEach } from 'vitest'\n"
+        "afterEach(cleanup())\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    assert sorted(changed) == sorted([
+        "index.html",
+        "package.json",
+        "src/App.test.tsx",
+        "src/App.tsx",
+        "src/index.css",
+        "src/main.tsx",
+        "src/setupTests.ts",
+        "tsconfig.json",
+        "tsconfig.node.json",
+        "vite.config.ts",
+    ])
+    package_json = (tmp_git_repo / "package.json").read_text()
+    assert '"@testing-library/user-event": "14.6.1"' in package_json
+    assert "^16.0.1" not in package_json
+    assert "afterEach(cleanup)" in (tmp_git_repo / "src" / "setupTests.ts").read_text()
+    assert "afterEach(cleanup())" not in (tmp_git_repo / "src" / "setupTests.ts").read_text()
+    assert (tmp_git_repo / "tsconfig.node.json").is_file()
+
+
+def test_react_vite_run_restabilizes_scaffold_after_llm_changes(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+    from code_minions.llm.types import Message, Response, Usage
+
+    llm = MagicMock()
+    llm.chat.return_value = Response(
+        message=Message(
+            role="assistant",
+            content=(
+                '{"files_written": ['
+                '{"path": "package.json", "content": "{\\"scripts\\":{\\"test\\":\\"vitest run\\"},\\"devDependencies\\":{\\"@testing-library/user-event\\":\\"^16.0.1\\"}}\\n"},'
+                '{"path": "src/setupTests.ts", "content": "import { cleanup } from \\"@testing-library/react\\"\\nimport { afterEach } from \\"vitest\\"\\nafterEach(cleanup())\\n"},'
+                '{"path": "src/App.tsx", "content": "export default function App() { return <main>Ready</main> }\\n"}'
+                '], "reasoning": "ok"}'
+            ),
+        ),
+        usage=Usage(1, 1),
+        model="fake",
+        stop_reason="end_turn",
+    )
+    monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: MagicMock(returncode=0, stdout="ok", stderr=""))
+
+    ctx = MagicMock()
+    ctx.inputs = {"ticket": {"id": "task-1", "title": "Board", "delivery_profile": {"stack_id": "react-vite"}}}
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.invoke_skill = lambda name, inputs: {"issues": [], "summary": "lgtm", "approved": True}
+    ctx.skill = SimpleNamespace(meta=SimpleNamespace(policies={
+        "self_heal_max_rounds": 0,
+        "reviewer_max_rounds": 0,
+    }))
+
+    output = entrypoint.run(ctx)
+
+    assert output["test_result"]["passed"] is True
+    package_json = (tmp_git_repo / "package.json").read_text()
+    assert '"@testing-library/user-event": "14.6.1"' in package_json
+    assert "^16.0.1" not in package_json
+    setup_tests = (tmp_git_repo / "src" / "setupTests.ts").read_text()
+    assert "afterEach(cleanup)" in setup_tests
+    assert "afterEach(cleanup())" not in setup_tests
+    assert (tmp_git_repo / "tsconfig.node.json").is_file()
+    assert any(path in output["files_changed"] for path in ["package.json", "src/setupTests.ts"])
+
+
 def test_xcodegen_duplicate_product_name_failure_gets_repair_hint(tmp_git_repo: Path, monkeypatch):
     entrypoint = _load_entrypoint()
     (tmp_git_repo / "project.yml").write_text(
@@ -796,7 +901,7 @@ def test_delivery_profile_failure_outputs_gate_findings(tmp_git_repo: Path, monk
             "title": "Board",
             "delivery_profile": {
                 "stack_id": "react-vite",
-                "required_files": ["package.json"],
+                "required_files": ["must-exist.txt"],
             },
         }
     }
@@ -901,8 +1006,8 @@ def test_relaxed_delivery_profile_warnings_do_not_enter_self_heal_loop(tmp_git_r
     out = entrypoint.run(ctx)
 
     assert out["test_result"]["passed"] is True
-    assert "Delivery profile warnings" in out["test_result"]["output"]
-    assert "missing-test-file" in out["test_result"]["output"]
+    assert out["test_result"]["output"] == "tests passed"
+    assert "src/App.test.tsx" in out["files_changed"]
     assert llm.chat.call_count == 1
 
 

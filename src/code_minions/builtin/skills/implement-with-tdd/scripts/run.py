@@ -503,6 +503,234 @@ def _failure_playbook_context(output: str) -> str:
     return "\n".join(lines)
 
 
+REACT_VITE_PACKAGE_DEPENDENCIES = {
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+}
+
+REACT_VITE_PACKAGE_DEV_DEPENDENCIES = {
+    "@testing-library/jest-dom": "6.6.3",
+    "@testing-library/react": "16.3.2",
+    "@testing-library/user-event": "14.6.1",
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
+    "@vitejs/plugin-react": "4.3.4",
+    "jsdom": "25.0.1",
+    "typescript": "5.6.3",
+    "vite": "5.4.11",
+    "vitest": "2.1.8",
+}
+
+REACT_VITE_SETUP_TESTS = """import '@testing-library/jest-dom/vitest'
+import { cleanup } from '@testing-library/react'
+import { afterEach } from 'vitest'
+
+afterEach(cleanup)
+"""
+
+REACT_VITE_VITE_CONFIG = """import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],
+  test: {
+    environment: 'jsdom',
+    setupFiles: './src/setupTests.ts',
+  },
+})
+"""
+
+REACT_VITE_TSCONFIG = """{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["src"],
+  "references": [{ "path": "./tsconfig.node.json" }]
+}
+"""
+
+REACT_VITE_TSCONFIG_NODE = """{
+  "compilerOptions": {
+    "composite": true,
+    "skipLibCheck": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowSyntheticDefaultImports": true,
+    "strict": true
+  },
+  "include": ["vite.config.ts"]
+}
+"""
+
+REACT_VITE_INDEX_HTML = """<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Gomoku</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+"""
+
+REACT_VITE_MAIN = """import React from 'react'
+import ReactDOM from 'react-dom/client'
+import App from './App'
+import './index.css'
+
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+)
+"""
+
+REACT_VITE_APP = """export default function App() {
+  return <main>Ready</main>
+}
+"""
+
+REACT_VITE_INDEX_CSS = """html {
+  box-sizing: border-box;
+}
+
+*, *::before, *::after {
+  box-sizing: inherit;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+}
+"""
+
+REACT_VITE_APP_TEST = """import { describe, expect, it } from 'vitest'
+import { render, screen } from '@testing-library/react'
+import App from './App'
+
+describe('App', () => {
+  it('renders the app shell', () => {
+    render(<App />)
+
+    expect(screen.getByText('Ready')).toBeDefined()
+  })
+})
+"""
+
+
+def _write_text_if_changed(workdir, rel_path: str, content: str) -> str | None:
+    path = workdir / rel_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_file() and path.read_text() == content:
+        return None
+    path.write_text(content)
+    return rel_path
+
+
+def _react_vite_package_json(workdir) -> str:
+    package_path = workdir / "package.json"
+    if package_path.is_file():
+        try:
+            data = json.loads(package_path.read_text())
+        except json.JSONDecodeError:
+            data = {}
+    else:
+        data = {}
+
+    if not isinstance(data, dict):
+        data = {}
+    scripts = data.get("scripts") if isinstance(data.get("scripts"), dict) else {}
+    dependencies = data.get("dependencies") if isinstance(data.get("dependencies"), dict) else {}
+    dev_dependencies = data.get("devDependencies") if isinstance(data.get("devDependencies"), dict) else {}
+
+    data["name"] = str(data.get("name") or "react-vite-app")
+    data["private"] = True
+    data["version"] = str(data.get("version") or "0.0.0")
+    data["type"] = "module"
+    data["scripts"] = {
+        **scripts,
+        "dev": "vite",
+        "build": "tsc && vite build",
+        "preview": "vite preview",
+        "test": "vitest run",
+    }
+    data["dependencies"] = {
+        **dependencies,
+        **REACT_VITE_PACKAGE_DEPENDENCIES,
+    }
+    data["devDependencies"] = {
+        **dev_dependencies,
+        **REACT_VITE_PACKAGE_DEV_DEPENDENCIES,
+    }
+    return json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+
+
+def _has_js_ts_test_file(workdir) -> bool:
+    src = workdir / "src"
+    if not src.is_dir():
+        return False
+    return any(
+        path.is_file()
+        and path.suffix in {".ts", ".tsx"}
+        and (".test." in path.name or ".spec." in path.name)
+        for path in src.rglob("*")
+    )
+
+
+def _stabilize_react_vite_scaffold(workdir, ticket: dict[str, Any]) -> set[str]:
+    if not _looks_like_react_vite_profile(_ticket_delivery_profile(ticket)):
+        return set()
+
+    changed: set[str] = set()
+    for rel_path, content in {
+        "package.json": _react_vite_package_json(workdir),
+        "index.html": REACT_VITE_INDEX_HTML,
+        "vite.config.ts": REACT_VITE_VITE_CONFIG,
+        "tsconfig.json": REACT_VITE_TSCONFIG,
+        "tsconfig.node.json": REACT_VITE_TSCONFIG_NODE,
+        "src/setupTests.ts": REACT_VITE_SETUP_TESTS,
+    }.items():
+        written = _write_text_if_changed(workdir, rel_path, content)
+        if written:
+            changed.add(written)
+
+    if not (workdir / "src" / "main.tsx").is_file():
+        written = _write_text_if_changed(workdir, "src/main.tsx", REACT_VITE_MAIN)
+        if written:
+            changed.add(written)
+    if not (workdir / "src" / "index.css").is_file():
+        written = _write_text_if_changed(workdir, "src/index.css", REACT_VITE_INDEX_CSS)
+        if written:
+            changed.add(written)
+    if not (workdir / "src" / "App.tsx").is_file():
+        written = _write_text_if_changed(workdir, "src/App.tsx", REACT_VITE_APP)
+        if written:
+            changed.add(written)
+    if not _has_js_ts_test_file(workdir):
+        written = _write_text_if_changed(workdir, "src/App.test.tsx", REACT_VITE_APP_TEST)
+        if written:
+            changed.add(written)
+
+    return changed
+
+
 def _write_files(workdir, files: list[dict]) -> list[str]:
     paths: list[str] = []
     for f in files:
@@ -701,6 +929,7 @@ def run(ctx):
     test_output: str = ""
     review: dict[str, Any] = {}
     latest_gate_findings: list[GateFinding] = []
+    all_paths.update(_stabilize_react_vite_scaffold(workdir, ticket))
 
     reviewer_loops = max(1, reviewer_max)
     for reviewer_round in range(1, reviewer_loops + 1):
@@ -721,6 +950,7 @@ def run(ctx):
         plan = _llm_call(ctx, CODER_SYS, coder_user)
         paths = _write_files(workdir, plan.get("files_written", []))
         all_paths.update(paths)
+        all_paths.update(_stabilize_react_vite_scaffold(workdir, ticket))
 
         passed, test_output = False, ""
         for heal_round in range(self_heal_max + 1):
@@ -759,6 +989,7 @@ def run(ctx):
             )
             paths = _write_files(workdir, plan.get("files_written", []))
             all_paths.update(paths)
+            all_paths.update(_stabilize_react_vite_scaffold(workdir, ticket))
 
         if not passed:
             output = {
