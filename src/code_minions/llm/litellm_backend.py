@@ -150,6 +150,32 @@ def _read_urlopen_response(req: urllib.request.Request, *, timeout: int) -> byte
         return response.read()
 
 
+def _read_urlopen_response_with_wall_clock_retries(
+    req: urllib.request.Request,
+    *,
+    timeout: int,
+    max_attempts: int = 3,
+) -> bytes:
+    last_exc: RuntimeError | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return _run_with_wall_clock_timeout(
+                lambda: _read_urlopen_response(req, timeout=timeout),
+                seconds=timeout,
+                label="MiniMax request",
+            )
+        except RuntimeError as e:
+            if "timed out" not in str(e):
+                raise
+            last_exc = e
+            if attempt == max_attempts:
+                raise
+            time.sleep(0.5 * attempt)
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("MiniMax request failed before any attempt")
+
+
 def _openai_model_uses_default_temperature(provider: str, model: str) -> bool:
     return provider == "openai" and model.startswith("gpt-5")
 
@@ -301,11 +327,7 @@ class LiteLLMBackend:
         )
         request_timeout = _request_timeout_seconds()
         try:
-            raw_bytes = _run_with_wall_clock_timeout(
-                lambda: _read_urlopen_response(req, timeout=request_timeout),
-                seconds=request_timeout,
-                label="MiniMax request",
-            )
+            raw_bytes = _read_urlopen_response_with_wall_clock_retries(req, timeout=request_timeout)
             raw = json.loads(raw_bytes.decode())
         except urllib.error.HTTPError as e:
             body = e.read().decode(errors="replace")
