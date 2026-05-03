@@ -833,6 +833,7 @@ GOMOKU_OVER_DETAILED_TEST_MARKERS = (
     "已经出现胜者",
     "游戏结束后悔棋",
     "取消胜负状态并回到可继续对局状态",
+    "黑方再次点击白方的位置",
 )
 GOMOKU_BRITTLE_BOARD_TEST_MARKERS = (
     "渲染星位标记",
@@ -1123,6 +1124,14 @@ def _stabilize_placeholder_app_smoke_test(path, text: str) -> str:
     return REACT_VITE_APP_TEST
 
 
+def _stabilize_cell_child_button_clicks(text: str) -> str:
+    return re.sub(
+        r"""(?m)^(?P<indent>\s*)const\s+button\s*=\s*cell\.querySelector\(['"]button['"]\)\s*;?\n(?P=indent)fireEvent\.click\(button!\)\s*;?""",
+        lambda match: f"{match.group('indent')}fireEvent.click(cell)",
+        text,
+    )
+
+
 def _stabilize_react_vite_tests(workdir) -> set[str]:
     changed: set[str] = set()
     changed.update(_rename_ts_tests_with_jsx(workdir))
@@ -1135,7 +1144,9 @@ def _stabilize_react_vite_tests(workdir) -> set[str]:
                         _stabilize_null_board_test_factory_type(
                             workdir,
                             path,
-                            _stabilize_placeholder_app_smoke_test(path, original),
+                            _stabilize_cell_child_button_clicks(
+                                _stabilize_placeholder_app_smoke_test(path, original)
+                            ),
                         )
                     )
                 )

@@ -1188,6 +1188,62 @@ def test_react_vite_scaffold_types_create_empty_board_state_as_board(tmp_git_rep
     assert "useState<BoardState>(() => createEmptyBoard())" in text
 
 
+def test_react_vite_scaffold_clicks_cell_when_child_button_is_absent(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src" / "components").mkdir(parents=True)
+    (tmp_git_repo / "src" / "components" / "Board.test.tsx").write_text(
+        "import { fireEvent, screen } from '@testing-library/react'\n"
+        "\n"
+        "it('点击单元格触发回调', () => {\n"
+        "  const cell = screen.getByTestId('cell-7-7')\n"
+        "  const button = cell.querySelector('button')\n"
+        "  fireEvent.click(button!)\n"
+        "  expect(handleClick).toHaveBeenCalledWith(7, 7)\n"
+        "})\n"
+    )
+    ticket = {
+        "delivery_profile": {"stack_id": "react-vite"},
+        "description": "五子棋 棋盘 黑方 白方 回合",
+    }
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "components" / "Board.test.tsx").read_text()
+    assert "src/components/Board.test.tsx" in changed
+    assert "querySelector('button')" not in text
+    assert "fireEvent.click(cell)" in text
+
+
+def test_react_vite_scaffold_prunes_contradictory_occupied_cell_test(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "tests" / "App.test.tsx").write_text(
+        "import { describe, expect, it } from 'vitest'\n"
+        "\n"
+        "describe('occupied cells', () => {\n"
+        "  it('Given 白方落子后，When 黑方再次点击白方的位置，Then 棋盘状态不变', () => {\n"
+        "    const stillWhiteStone = cell0.querySelector('[data-stone=\"white\"]')\n"
+        "    expect(stillWhiteStone).toBeInTheDocument()\n"
+        "  })\n"
+        "\n"
+        "  it('keeps basic occupied-cell behavior', () => {\n"
+        "    expect(screen.getByText('当前: 白方')).toBeInTheDocument()\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {
+        "delivery_profile": {"stack_id": "react-vite"},
+        "description": "五子棋 棋盘 黑方 白方 回合",
+    }
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "tests" / "App.test.tsx").read_text()
+    assert "tests/App.test.tsx" in changed
+    assert "黑方再次点击白方的位置" not in text
+    assert "basic occupied-cell behavior" in text
+
+
 def test_react_vite_scaffold_replaces_brittle_ready_smoke_test(tmp_git_repo: Path):
     entrypoint = _load_entrypoint()
     (tmp_git_repo / "src").mkdir()
