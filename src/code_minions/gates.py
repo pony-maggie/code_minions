@@ -294,6 +294,27 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
         ))
 
     if (
+        "expect(element).toHaveClass" in output
+        and "Expected the element to have class:" in output
+        and re.search(r"(?m)^\s*board\s*$", output)
+        and "board-container" in output
+    ):
+        findings.append(GateFinding(
+            code="react-board-root-class-contract-mismatch",
+            severity="error",
+            stage="runtime",
+            message="A board rendering test expected the board root element to have class `board`.",
+            repair_hint=(
+                "Keep the board root DOM contract consistent. Put `data-testid=\"board\"` and class "
+                "`board` on the actual grid element, and use a separate parent wrapper with "
+                "`board-container` when needed for centering/responsive layout. Do not put the board test id "
+                "only on the container if tests assert the grid has class `board`."
+            ),
+            source=source,
+            paths=paths,
+        ))
+
+    if (
         "expect(element).toHaveAttribute" in output
         and "data-stone=" in output
         and "Received:" in output

@@ -222,6 +222,28 @@ def test_runtime_findings_classify_board_cell_class_contract_regression() -> Non
     assert "black" in findings[0].repair_hint
 
 
+def test_runtime_findings_classify_board_root_class_contract_mismatch() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  src/components/Board.test.tsx > Board 组件 > 空棋盘渲染 > 渲染 15x15 线网",
+            "Error: expect(element).toHaveClass(\"board\")",
+            "Expected the element to have class:",
+            "  board",
+            "Received:",
+            "  board-container",
+            "❯ src/components/Board.test.tsx:14:21",
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "react-board-root-class-contract-mismatch"
+    ]
+    assert findings[0].paths == ["src/components/Board.test.tsx"]
+    assert "data-testid=\"board\"" in findings[0].repair_hint
+    assert "board-container" in findings[0].repair_hint
+
+
 def test_runtime_findings_classify_board_cell_text_vs_accessible_name_mismatch() -> None:
     findings = runtime_findings_for_output(
         "\n".join([
