@@ -103,6 +103,23 @@ def test_runtime_findings_classify_typescript_contract_diagnostics() -> None:
     assert "existing exported symbol" in findings[1].repair_hint
 
 
+def test_runtime_findings_classify_board_test_null_array_inference() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            'src/components/Board.test.tsx(50,7): error TS2322: Type \'"black"\' is not assignable to type \'null\'.',
+            'src/components/Board.test.tsx(59,7): error TS2322: Type \'"white"\' is not assignable to type \'null\'.',
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "react-board-test-null-array-inference"
+    ]
+    assert findings[0].paths == ["src/components/Board.test.tsx"]
+    assert "BoardState" in findings[0].repair_hint
+    assert "Array.from" in findings[0].repair_hint
+
+
 def test_runtime_findings_classify_react_hook_missing_imports() -> None:
     findings = runtime_findings_for_output(
         "\n".join([

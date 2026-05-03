@@ -687,6 +687,11 @@ REACT_VITE_GLUED_IMPORT_DECLARATION_RE = re.compile(
 )
 REACT_VITE_POSITION_EXPORT_RE = re.compile(r"""\bexport\s+(?:interface|type)\s+Position\b""")
 REACT_VITE_POSITION_LOCAL_RE = re.compile(r"""\b(?:interface|type)\s+Position\b""")
+REACT_VITE_NULL_BOARD_FACTORY_RETURN_RE = re.compile(
+    r"""(?P<prefix>\(\s*\)\s*:\s*)(?:\(?\s*null\s*\)?\s*\[\]\s*\[\])(?P<suffix>\s*=>)"""
+)
+REACT_VITE_BOARD_EXPORT_RE = re.compile(r"""\bexport\s+(?:type|interface)\s+Board\b""")
+REACT_VITE_BOARD_STATE_EXPORT_RE = re.compile(r"""\bexport\s+(?:type|interface)\s+BoardState\b""")
 
 REACT_VITE_POSITION_TYPE = """export interface Position {
   row: number
@@ -848,6 +853,74 @@ def _stabilize_bare_dom_clicks(text: str) -> str:
     return _ensure_testing_library_import(updated, "fireEvent")
 
 
+def _ensure_types_type_import(
+    workdir,
+    path,
+    text: str,
+    *,
+    exported_symbol: str,
+    local_symbol: str,
+) -> str:
+    if _types_import_has_local_symbol(text, local_symbol) or (
+        exported_symbol == local_symbol and _types_import_has_symbol(text, exported_symbol)
+    ):
+        return text
+
+    import_name = (
+        exported_symbol
+        if exported_symbol == local_symbol
+        else f"{exported_symbol} as {local_symbol}"
+    )
+
+    match = REACT_VITE_TYPES_IMPORT_RE.search(text)
+    if match:
+        names = [name.strip() for name in match.group("names").split(",") if name.strip()]
+        if match.group("typeonly"):
+            names.append(import_name)
+            import_keyword = "import type"
+        else:
+            names.append(f"type {import_name}")
+            import_keyword = "import"
+        replacement = f"{import_keyword} {{ {', '.join(names)} }} from '{match.group('source')}'\n"
+        return text[:match.start()] + replacement + text[match.end():]
+
+    specifier = _types_import_specifier(workdir, path)
+    return f"import type {{ {import_name} }} from '{specifier}'\n{text}"
+
+
+def _stabilize_null_board_test_factory_type(workdir, path, text: str) -> str:
+    if not REACT_VITE_NULL_BOARD_FACTORY_RETURN_RE.search(text):
+        return text
+    if "'black'" not in text and '"black"' not in text and "'white'" not in text and '"white"' not in text:
+        return text
+
+    types_path = workdir / "src" / "types.ts"
+    if not types_path.is_file():
+        return text
+
+    types_text = types_path.read_text(errors="ignore")
+    if REACT_VITE_BOARD_EXPORT_RE.search(types_text):
+        updated = _ensure_types_type_import(
+            workdir,
+            path,
+            text,
+            exported_symbol="Board",
+            local_symbol="BoardState",
+        )
+        return REACT_VITE_NULL_BOARD_FACTORY_RETURN_RE.sub(r"\g<prefix>BoardState\g<suffix>", updated)
+    if REACT_VITE_BOARD_STATE_EXPORT_RE.search(types_text):
+        updated = _ensure_types_type_import(
+            workdir,
+            path,
+            text,
+            exported_symbol="BoardState",
+            local_symbol="BoardState",
+        )
+        return REACT_VITE_NULL_BOARD_FACTORY_RETURN_RE.sub(r"\g<prefix>BoardState\g<suffix>", updated)
+
+    return text
+
+
 def _stabilize_placeholder_app_smoke_test(path, text: str) -> str:
     if path.name != "App.test.tsx":
         return text
@@ -863,7 +936,13 @@ def _stabilize_react_vite_tests(workdir) -> set[str]:
         updated = _stabilize_bare_dom_clicks(
             _stabilize_user_event_imports(
                 _anchor_board_coordinate_regex_queries(
-                    _stabilize_vitest_imports(_stabilize_placeholder_app_smoke_test(path, original))
+                    _stabilize_vitest_imports(
+                        _stabilize_null_board_test_factory_type(
+                            workdir,
+                            path,
+                            _stabilize_placeholder_app_smoke_test(path, original),
+                        )
+                    )
                 )
             )
         )
@@ -916,6 +995,22 @@ def _has_local_symbol_declaration(text: str, symbol: str) -> bool:
 def _types_import_has_symbol(text: str, symbol: str) -> bool:
     for match in REACT_VITE_TYPES_IMPORT_RE.finditer(text):
         if any(_imported_symbol_name(name) == symbol for name in match.group("names").split(",")):
+            return True
+    return False
+
+
+def _imported_local_symbol_name(raw_name: str) -> str:
+    name = raw_name.strip()
+    if name.startswith("type "):
+        name = name.removeprefix("type ").strip()
+    if " as " in name:
+        return name.split(" as ", 1)[1].strip()
+    return name
+
+
+def _types_import_has_local_symbol(text: str, symbol: str) -> bool:
+    for match in REACT_VITE_TYPES_IMPORT_RE.finditer(text):
+        if any(_imported_local_symbol_name(name) == symbol for name in match.group("names").split(",")):
             return True
     return False
 

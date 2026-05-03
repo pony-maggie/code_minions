@@ -671,6 +671,39 @@ def test_react_vite_scaffold_rewrites_bare_dom_clicks_in_tests(tmp_git_repo: Pat
     assert "cell.click()" not in text
 
 
+def test_react_vite_scaffold_types_null_board_test_factory(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src" / "components").mkdir(parents=True)
+    (tmp_git_repo / "src" / "types.ts").write_text(
+        "export type Stone = 'black' | 'white' | null\n"
+        "export type Board = Stone[][]\n"
+    )
+    (tmp_git_repo / "src" / "components" / "Board.test.tsx").write_text(
+        "import { describe, expect, it } from 'vitest'\n"
+        "import Board from './Board'\n"
+        "\n"
+        "const createEmptyBoard = (): (null)[][] =>\n"
+        "  Array.from({ length: 15 }, () => Array.from({ length: 15 }, () => null))\n"
+        "\n"
+        "describe('Board', () => {\n"
+        "  it('renders stones', () => {\n"
+        "    const board = createEmptyBoard()\n"
+        "    board[7][7] = 'black'\n"
+        "    expect(board[7][7]).toBe('black')\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "components" / "Board.test.tsx").read_text()
+    assert "src/components/Board.test.tsx" in changed
+    assert "import type { Board as BoardState } from '../types'" in text
+    assert "const createEmptyBoard = (): BoardState =>" in text
+    assert "(): (null)[][]" not in text
+
+
 def test_react_vite_scaffold_replaces_brittle_ready_smoke_test(tmp_git_repo: Path):
     entrypoint = _load_entrypoint()
     (tmp_git_repo / "src").mkdir()

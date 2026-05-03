@@ -160,6 +160,17 @@ def _typescript_runtime_findings(output: str, *, source: str) -> list[GateFindin
                 "`Player | 'empty'` or `Player | null`. Winner/check functions should accept only "
                 "the playable `Player` type, while board arrays should use `CellState`."
             )
+        elif (
+            ts_code == "2322"
+            and re.search(r"""Type ['"]"?(?:black|white)"?['"] is not assignable to type ['"]null['"]""", message)
+        ):
+            code = "react-board-test-null-array-inference"
+            repair_hint = (
+                "Do not type test-board factories as `null[][]` or `(null)[][]` when later assigning "
+                "`'black'` or `'white'`. Import the canonical board type, for example "
+                "`import type { Board as BoardState } from '../types'`, return `BoardState`, and keep "
+                "the `Array.from(..., () => null)` initializer typed through that shared contract."
+            )
         elif ts_code in {"2322", "2345"} and "not assignable to" in lowered:
             code = "typescript-type-contract-mismatch"
             repair_hint = (
