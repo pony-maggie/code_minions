@@ -18,6 +18,7 @@ import os
 import re
 import subprocess
 import sys
+from contextlib import suppress
 from typing import Any
 
 from code_minions.agent_profiles import resolve_agent_profile
@@ -1290,9 +1291,38 @@ def _stabilize_react_vite_scaffold(workdir, ticket: dict[str, Any]) -> set[str]:
         if written:
             changed.add(written)
     changed.update(_stabilize_react_vite_tests(workdir))
+    changed.update(_stabilize_react_vite_types_module(workdir))
     changed.update(_stabilize_position_type_contract(workdir))
     changed.update(repair_unique_unresolved_relative_imports(workdir))
 
+    return changed
+
+
+def _stabilize_react_vite_types_module(workdir) -> set[str]:
+    changed: set[str] = set()
+    src_dir = workdir / "src"
+    types_file = src_dir / "types.ts"
+    types_index = src_dir / "types" / "index.ts"
+    if not types_file.is_file() or not types_index.is_file():
+        return changed
+
+    index_text = types_index.read_text()
+    if not re.fullmatch(r"\s*export\s*\{[\s\S]*\}\s*from\s*['\"](?:\.|\.\./types)['\"]\s*;?\s*", index_text):
+        return changed
+
+    for path in src_dir.rglob("*"):
+        if not path.is_file() or path.suffix not in {".ts", ".tsx"}:
+            continue
+        text = path.read_text()
+        updated = re.sub(r"(from\s+['\"])([^'\"]*/types)/index(['\"])", r"\1\2\3", text)
+        if updated != text:
+            path.write_text(updated)
+            changed.add(str(path.relative_to(workdir)))
+
+    types_index.unlink()
+    changed.add("src/types/index.ts")
+    with suppress(OSError):
+        types_index.parent.rmdir()
     return changed
 
 

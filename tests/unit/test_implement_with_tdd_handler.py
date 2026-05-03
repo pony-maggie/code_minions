@@ -793,6 +793,25 @@ def test_react_vite_scaffold_removes_duplicate_ts_jsx_test_when_tsx_exists(tmp_g
     assert "existing tsx test" in (tmp_git_repo / "src" / "useGameState.test.tsx").read_text()
 
 
+def test_react_vite_scaffold_removes_duplicate_types_self_barrel(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src" / "types").mkdir(parents=True)
+    (tmp_git_repo / "src" / "types.ts").write_text(
+        "export type Player = 'black' | 'white'\n"
+        "export type Cell = Player | null\n"
+    )
+    (tmp_git_repo / "src" / "types" / "index.ts").write_text(
+        "export { type Player, type Cell } from '.';\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    assert "src/types/index.ts" in changed
+    assert not (tmp_git_repo / "src" / "types" / "index.ts").exists()
+    assert "export type Player" in (tmp_git_repo / "src" / "types.ts").read_text()
+
+
 def test_turn_based_board_game_guidance_limits_complex_gomoku_rule_tests():
     entrypoint = _load_entrypoint()
     ticket = {
