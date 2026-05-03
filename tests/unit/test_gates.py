@@ -921,7 +921,8 @@ def test_runtime_findings_classify_board_fill_timeout() -> None:
         "turn-board-game-board-fill-test-timeout"
     ]
     assert findings[0].paths == ["tests/App.test.tsx"]
-    assert "225" in findings[0].repair_hint
+    assert "omit" in findings[0].repair_hint.lower()
+    assert "full-board draw UI test" in findings[0].repair_hint
 
 
 def test_runtime_findings_classify_user_event_import_mismatch() -> None:

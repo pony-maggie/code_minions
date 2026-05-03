@@ -827,6 +827,7 @@ def test_turn_based_board_game_guidance_limits_complex_gomoku_rule_tests():
     assert "Do not let synthetic full-board" in guidance
     assert "Do not write UI tests that fill or click the whole board to prove a draw" in guidance
     assert "omit automated draw tests for the Gomoku MVP" in guidance
+    assert "Do not write or keep UI tests for white vertical wins, diagonal wins, or full-board draws" in guidance
 
 
 def test_turn_based_board_game_guidance_preserves_current_turn_status_contract():

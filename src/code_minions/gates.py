@@ -1050,10 +1050,10 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
             stage="runtime",
             message="A board-fill draw test timed out before completing the full board setup.",
             repair_hint=(
-                "Avoid 225 slow `userEvent.click` calls just to create a full-board draw state. "
-                "Test draw detection with a pure helper/state setup, use faster `fireEvent.click` "
-                "with a carefully generated no-win pattern, or raise the timeout only after proving "
-                "the test is not stuck in an accidental win/game-over loop."
+                "For the Gomoku MVP workflow, omit or delete the full-board draw UI test instead of "
+                "clicking 225 cells or raising timeouts. Keep the automated UI coverage lightweight: one "
+                "black horizontal win smoke test plus core interaction tests is enough; draw can be covered "
+                "only if there is already a simple deterministic helper/state setup."
             ),
             source=source,
             paths=paths,
