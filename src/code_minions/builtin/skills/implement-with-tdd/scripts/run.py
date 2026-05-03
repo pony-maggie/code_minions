@@ -1413,6 +1413,44 @@ def _stabilize_nullable_win_result_state(workdir, ticket: dict[str, Any]) -> set
     return changed
 
 
+def _stabilize_create_empty_board_state_type(workdir, ticket: dict[str, Any]) -> set[str]:
+    if not (_looks_like_turn_based_board_game(ticket) or _looks_like_gomoku_project(ticket)):
+        return set()
+    types_path = workdir / "src" / "types.ts"
+    if not types_path.is_file() or not REACT_VITE_BOARD_EXPORT_RE.search(types_path.read_text(errors="ignore")):
+        return set()
+
+    src_dir = workdir / "src"
+    if not src_dir.is_dir():
+        return set()
+
+    changed: set[str] = set()
+    for path in src_dir.rglob("*.tsx"):
+        if ".test." in path.name.lower() or ".spec." in path.name.lower():
+            continue
+        original = path.read_text(errors="ignore")
+        if "useState" not in original or "createEmptyBoard" not in original:
+            continue
+        updated = re.sub(
+            r"""useState\s*<\s*\(?\s*Stone\s*\)?\s*\[\]\s*>\s*\(""",
+            "useState<BoardState>(",
+            original,
+        )
+        if updated == original:
+            continue
+        updated = _ensure_types_type_import(
+            workdir,
+            path,
+            updated,
+            exported_symbol="Board",
+            local_symbol="BoardState",
+        )
+        if updated != original:
+            path.write_text(updated)
+            changed.add(path.relative_to(workdir).as_posix())
+    return changed
+
+
 def _stabilize_clickable_cell_div_roles(workdir, ticket: dict[str, Any]) -> set[str]:
     if not (_looks_like_turn_based_board_game(ticket) or _looks_like_gomoku_project(ticket)):
         return set()
@@ -1664,6 +1702,7 @@ def _stabilize_react_vite_scaffold(workdir, ticket: dict[str, Any]) -> set[str]:
     changed.update(_stabilize_duplicate_cell_testids(workdir, ticket))
     changed.update(_stabilize_occupied_cell_turn_guard(workdir, ticket))
     changed.update(_stabilize_nullable_win_result_state(workdir, ticket))
+    changed.update(_stabilize_create_empty_board_state_type(workdir, ticket))
     changed.update(_stabilize_clickable_cell_div_roles(workdir, ticket))
     changed.update(_stabilize_react_vite_types_module(workdir))
     changed.update(_stabilize_react_vite_board_type_helpers(workdir))

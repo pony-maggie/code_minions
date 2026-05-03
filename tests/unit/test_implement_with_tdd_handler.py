@@ -1157,6 +1157,37 @@ def test_react_vite_scaffold_types_board_test_literal_fixtures(tmp_git_repo: Pat
     assert "const mockBoard: BoardState = [" in text
 
 
+def test_react_vite_scaffold_types_create_empty_board_state_as_board(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "types.ts").write_text(
+        "export type Stone = 'black' | 'white' | null\n"
+        "export type Board = Stone[][]\n"
+        "export function createEmptyBoard(): Board { return [] }\n"
+    )
+    (tmp_git_repo / "src" / "GameBoard.tsx").write_text(
+        "import { useState } from 'react'\n"
+        "import { Board } from './Board'\n"
+        "import { Stone, createEmptyBoard } from './types'\n"
+        "\n"
+        "export function GameBoard() {\n"
+        "  const [board, setBoard] = useState<(Stone)[]>(() => createEmptyBoard())\n"
+        "  return <Board board={board} />\n"
+        "}\n"
+    )
+    ticket = {
+        "delivery_profile": {"stack_id": "react-vite"},
+        "description": "五子棋 棋盘 黑方 白方 回合",
+    }
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "GameBoard.tsx").read_text()
+    assert "src/GameBoard.tsx" in changed
+    assert "type Board as BoardState" in text
+    assert "useState<BoardState>(() => createEmptyBoard())" in text
+
+
 def test_react_vite_scaffold_replaces_brittle_ready_smoke_test(tmp_git_repo: Path):
     entrypoint = _load_entrypoint()
     (tmp_git_repo / "src").mkdir()
