@@ -1703,6 +1703,11 @@ def _python_src_packages(workdir) -> list[tuple[str, Any]]:
     return packages
 
 
+def _canonical_python_package(workdir):
+    packages = [(name, path) for name, path in _python_src_packages(workdir) if name not in {"ast", "src"}]
+    return packages[0] if len(packages) == 1 else None
+
+
 def _python_package_main_content(package_dir) -> str:
     init_text = (package_dir / "__init__.py").read_text(errors="ignore")
     if re.search(r"(?m)^def\s+main\s*\(", init_text):
@@ -1710,6 +1715,80 @@ def _python_package_main_content(package_dir) -> str:
     if (package_dir / "cli.py").is_file():
         return "from .cli import main\n\nif __name__ == '__main__':\n    main()\n"
     return ""
+
+
+def _rewrite_imports_for_package(text: str, package_name: str, *, in_package: bool) -> str:
+    ast_target = ".ast" if in_package else f"{package_name}.ast"
+    evaluator_target = ".evaluator" if in_package else f"{package_name}.evaluator"
+    parser_target = ".parser" if in_package else f"{package_name}.parser"
+    replacements = {
+        "from ast.nodes import": "from .nodes import" if in_package else f"from {package_name}.ast.nodes import",
+        "from ast import": f"from {ast_target} import",
+        "from evaluator import": f"from {evaluator_target} import",
+        "from parser import": f"from {parser_target} import",
+    }
+    updated = text
+    for old, new in replacements.items():
+        updated = updated.replace(old, new)
+    return updated
+
+
+def _move_python_path_into_package(workdir, source, target) -> set[str]:
+    changed: set[str] = set()
+    if not source.exists() or target.exists():
+        return changed
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(source), str(target))
+    if target.is_dir():
+        for moved in target.rglob("*.py"):
+            changed.add(moved.relative_to(workdir).as_posix())
+    else:
+        changed.add(target.relative_to(workdir).as_posix())
+    changed.add(source.relative_to(workdir).as_posix())
+    return changed
+
+
+def _stabilize_python_canonical_package_layout(workdir) -> set[str]:
+    canonical = _canonical_python_package(workdir)
+    if not canonical:
+        return set()
+
+    package_name, package_dir = canonical
+    src_dir = workdir / "src"
+    changed: set[str] = set()
+
+    changed.update(_move_python_path_into_package(workdir, src_dir / "ast", package_dir / "ast"))
+    for module_name in ("evaluator.py", "cli.py", "main.py", "__main__.py"):
+        changed.update(_move_python_path_into_package(workdir, src_dir / module_name, package_dir / module_name))
+
+    for path in package_dir.rglob("*.py"):
+        text = path.read_text(errors="ignore")
+        updated = _rewrite_imports_for_package(text, package_name, in_package=True)
+        if updated != text:
+            path.write_text(updated)
+            changed.add(path.relative_to(workdir).as_posix())
+
+    parser_path = package_dir / "parser.py"
+    parser_text = parser_path.read_text(errors="ignore") if parser_path.is_file() else ""
+    for path in (workdir / "tests").rglob("test*.py") if (workdir / "tests").is_dir() else []:
+        text = path.read_text(errors="ignore")
+        if "from parser import parse" in text and "def parse(" not in parser_text:
+            path.unlink()
+            changed.add(path.relative_to(workdir).as_posix())
+            continue
+        updated = _rewrite_imports_for_package(text, package_name, in_package=False)
+        if updated != text:
+            path.write_text(updated)
+            changed.add(path.relative_to(workdir).as_posix())
+
+    for stray in ("ast.py", "parser.py", "evaluator.py", "cli.py", "main.py", "__main__.py"):
+        path = src_dir / stray
+        if path.is_file() and not (package_dir / stray).exists():
+            path.unlink()
+            changed.add(path.relative_to(workdir).as_posix())
+
+    return changed
 
 
 PYTHON_CLI_BRITTLE_TEST_MARKERS = (
@@ -1809,6 +1888,7 @@ def _stabilize_python_cli_scaffold(workdir, ticket: dict[str, Any]) -> set[str]:
 
     changed: set[str] = set()
     changed.update(_remove_nested_python_shadow_projects(workdir))
+    changed.update(_stabilize_python_canonical_package_layout(workdir))
     for package_name, package_dir in _python_src_packages(workdir):
         for shadow_path in (workdir / f"{package_name}.py", workdir / "src" / f"{package_name}.py"):
             if shadow_path.is_file():

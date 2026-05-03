@@ -2730,3 +2730,41 @@ def test_python_cli_stabilizer_keeps_public_tokenize_from_returning_eof(tmp_path
     assert "tokens.append(Token(TokenType.EOF, None))" not in updated
     assert "if pos[0] >= len(tokens):" in updated
     assert "return Token(TokenType.EOF, None)" in updated
+
+
+def test_python_cli_stabilizer_adopts_orphan_src_modules_into_canonical_package(tmp_path: Path):
+    entrypoint = _load_entrypoint()
+    package_dir = tmp_path / "src" / "calc_lite"
+    package_dir.mkdir(parents=True)
+    (package_dir / "__init__.py").write_text("")
+    (package_dir / "parser.py").write_text("class Parser:\n    pass\n")
+    (tmp_path / "src" / "ast").mkdir()
+    (tmp_path / "src" / "ast" / "__init__.py").write_text("from ast.nodes import NUM\n")
+    (tmp_path / "src" / "ast" / "nodes.py").write_text("class NUM:\n    pass\n")
+    (tmp_path / "src" / "evaluator.py").write_text("from ast import NUM\n\ndef evaluate(node):\n    return 1\n")
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_evaluator.py").write_text(
+        "from ast import NUM\nfrom evaluator import evaluate\n\ndef test_eval():\n    assert evaluate(NUM()) == 1\n"
+    )
+    (tests_dir / "test_parser.py").write_text("from parser import parse\n\ndef test_parse():\n    assert parse('1')\n")
+    ticket = {
+        "delivery_profile": {
+            "stack_id": "python-cli",
+            "kind": "cli",
+            "language": "python",
+            "build_system": "python",
+        }
+    }
+
+    changed = entrypoint._stabilize_python_cli_scaffold(tmp_path, ticket)
+
+    assert "src/calc_lite/ast/__init__.py" in changed
+    assert "src/calc_lite/evaluator.py" in changed
+    assert not (tmp_path / "src" / "ast").exists()
+    assert not (tmp_path / "src" / "evaluator.py").exists()
+    assert "from .nodes import NUM" in (package_dir / "ast" / "__init__.py").read_text()
+    assert "from .ast import NUM" in (package_dir / "evaluator.py").read_text()
+    assert "from calc_lite.ast import NUM" in (tests_dir / "test_evaluator.py").read_text()
+    assert "from calc_lite.evaluator import evaluate" in (tests_dir / "test_evaluator.py").read_text()
+    assert not (tests_dir / "test_parser.py").exists()
