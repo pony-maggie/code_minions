@@ -287,6 +287,47 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
     findings: list[GateFinding] = []
     path = _first_vitest_frame_path(output)
     paths = [path] if path else []
+    if (
+        "Unable to find an element by:" in output
+        and "reset-button" in output
+        and ("getByTestId('reset-button')" in output or 'data-testid="reset-button"' in output)
+    ):
+        reset_path = _vitest_frame_path_containing(output, "App") or path
+        findings.append(GateFinding(
+            code="react-vite-missing-stable-control-testid",
+            severity="error",
+            stage="runtime",
+            message="A React test expected a stable control test id that is missing from the rendered app.",
+            repair_hint=(
+                "Preserve existing public test contracts when adding features. Render the reset/restart "
+                "control with `data-testid=\"reset-button\"` (`reset-button`) if tests already use it, or update all tests "
+                "and UI together to a single stable selector. Do not remove earlier task controls while "
+                "implementing win/draw logic."
+            ),
+            source=source,
+            paths=[reset_path] if reset_path else paths,
+        ))
+
+    if (
+        "expected undefined to be null" in output
+        and "lastMove" in output
+        and "toBeNull()" in output
+    ):
+        last_move_path = _vitest_frame_path_containing(output, "useGameState") or path
+        findings.append(GateFinding(
+            code="turn-based-board-game-last-move-reset-contract",
+            severity="error",
+            stage="runtime",
+            message="Game-state reset returned `undefined` for last move where tests expect `null`.",
+            repair_hint=(
+                "Keep the hook state contract explicit: initialize and reset `lastMove` to `null`, not "
+                "`undefined`, and expose it consistently as `Position | null`. If the name changed during "
+                "a refactor, update both the hook return value and tests in the same task."
+            ),
+            source=source,
+            paths=[last_move_path] if last_move_path else paths,
+        ))
+
     jsx_in_ts_match = re.search(
         r"(?P<path>[^\s]+\.test\.ts):\d+:\d+:\s+ERROR:\s+Expected [\"']?>[\"']? but found [\"']?/[\"']?",
         output,
@@ -705,7 +746,8 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
         "expect(element).toHaveTextContent()" in output
         and "Expected element to have text content:" in output
         and "Received:" in output
-        and any(term in output for term in ("黑棋胜", "白棋胜", "平局"))
+        and any(term in output for term in ("黑棋胜", "白棋胜", "黑方获胜", "白方获胜", "平局"))
+        and "当前回合" not in output
     ):
         findings.append(GateFinding(
             code="turn-based-board-game-winner-status-mismatch",

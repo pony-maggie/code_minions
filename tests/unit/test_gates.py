@@ -464,6 +464,41 @@ def test_runtime_findings_classify_turn_based_winner_status_mismatch() -> None:
     assert "move sequence" in findings[0].repair_hint
 
 
+def test_runtime_findings_classify_missing_reset_button_contract() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "TestingLibraryElementError: Unable to find an element by: [data-testid=\"reset-button\"]",
+            "❯ src/App.test.tsx:129:31",
+            "  129|       await user.click(screen.getByTestId('reset-button'))",
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "react-vite-missing-stable-control-testid"
+    ]
+    assert findings[0].paths == ["src/App.test.tsx"]
+    assert "`reset-button`" in findings[0].repair_hint
+
+
+def test_runtime_findings_classify_last_move_reset_null_contract() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  src/hooks/useGameState.test.ts > useGameState > reset game > should reset all state",
+            "AssertionError: expected undefined to be null",
+            "❯ src/hooks/useGameState.test.ts:172:39",
+            "  172|       expect(result.current.lastMove).toBeNull()",
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "turn-based-board-game-last-move-reset-contract"
+    ]
+    assert findings[0].paths == ["src/hooks/useGameState.test.ts"]
+    assert "`lastMove`" in findings[0].repair_hint
+
+
 def test_runtime_findings_classify_impossible_public_win_sequence() -> None:
     findings = runtime_findings_for_output(
         "\n".join([
