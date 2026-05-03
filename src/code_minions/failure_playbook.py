@@ -25,7 +25,7 @@ PLAYBOOK: tuple[tuple[tuple[str, ...], str], ...] = (
         "globals deliberately and include the matching types.",
     ),
     (
-        ("ts1109", "expression expected"),
+        ("setuptests.ts", "ts1109", "expression expected"),
         "TypeScript reported `TS1109: Expression expected`, commonly caused by CSS-style `@import` "
         "in a `.ts` setup file. Use ES module syntax instead, for example "
         "`import '@testing-library/jest-dom/vitest';`.",

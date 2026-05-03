@@ -50,6 +50,14 @@ def test_playbook_hints_for_css_at_import_in_typescript_setup() -> None:
     ]
 
 
+def test_ts1109_outside_setup_file_does_not_emit_setup_css_import_hint() -> None:
+    hints = failure_hints_for_output(
+        "src/hooks/useGameState.test.ts(17,6): error TS1109: Expression expected."
+    )
+
+    assert hints == []
+
+
 def test_playbook_hints_for_vitest_no_test_files_found() -> None:
     hints = failure_hints_for_output("No test files found, exiting with code 1")
 

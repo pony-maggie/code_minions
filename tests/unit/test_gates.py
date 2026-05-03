@@ -805,6 +805,22 @@ def test_runtime_findings_classify_jsx_inside_ts_test_file() -> None:
     assert ".tsx" in findings[0].repair_hint
 
 
+def test_runtime_findings_classify_typescript_jsx_inside_ts_test_file() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "src/hooks/useGameState.test.ts(14,7): error TS1005: '>' expected.",
+            "src/hooks/useGameState.test.ts(14,12): error TS1005: ')' expected.",
+            "src/hooks/useGameState.test.ts(17,6): error TS1109: Expression expected.",
+        ]),
+        source="react-vite",
+    )
+
+    assert "react-vite-jsx-in-ts-test-file" in [finding.code for finding in findings]
+    finding = next(item for item in findings if item.code == "react-vite-jsx-in-ts-test-file")
+    assert finding.paths == ["src/hooks/useGameState.test.ts"]
+    assert ".tsx" in finding.repair_hint
+
+
 def test_findings_to_text_groups_by_stage_and_severity() -> None:
     text = findings_to_text([
         GateFinding(

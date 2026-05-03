@@ -100,7 +100,22 @@ def _typescript_runtime_findings(output: str, *, source: str) -> list[GateFindin
         message = match.group("message").strip()
         lowered = message.lower()
 
-        if ts_code == "2304" and "cannot find name" in lowered:
+        if (
+            path.endswith(".test.ts")
+            and ts_code in {"1005", "1109"}
+            and (
+                "'>' expected" in output
+                or '">" expected' in output
+                or "Expected \">\"" in output
+            )
+        ):
+            code = "react-vite-jsx-in-ts-test-file"
+            repair_hint = (
+                f"Rename `{path}` to use a `.tsx` extension, or remove JSX from that test file. "
+                "React Testing Library tests that render JSX such as `<App />` must live in "
+                "`*.test.tsx` so TypeScript/Vite parse JSX correctly."
+            )
+        elif ts_code == "2304" and "cannot find name" in lowered:
             missing_name_match = _TSC_MISSING_NAME_RE.search(message)
             missing_name = missing_name_match.group("name") if missing_name_match else ""
             if missing_name in REACT_HOOK_NAMES:
