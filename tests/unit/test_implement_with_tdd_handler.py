@@ -805,6 +805,7 @@ def test_turn_based_board_game_guidance_includes_safe_white_win_fillers():
     assert "must not share one row" in guidance
     assert "(10,10)" in guidance
     assert "(14,13)" in guidance
+    assert "A full board is not automatically a draw" in guidance
 
 
 def test_xcodegen_duplicate_product_name_failure_gets_repair_hint(tmp_git_repo: Path, monkeypatch):

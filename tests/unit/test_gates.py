@@ -570,6 +570,25 @@ def test_runtime_findings_classify_draw_test_created_accidental_win() -> None:
     assert "draw helper" in finding.repair_hint
 
 
+def test_runtime_findings_classify_draw_helper_board_with_accidental_win() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  tests/game-logic.test.ts > getGameStatus > 棋盘已满且无人五连",
+            "AssertionError: expected 'white-wins' to be 'draw' // Object.is equality",
+            "Expected: \"draw\"",
+            "Received: \"white-wins\"",
+            "❯ tests/game-logic.test.ts:113:22",
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "turn-board-game-draw-test-created-accidental-win"
+    ]
+    assert findings[0].paths == ["tests/game-logic.test.ts"]
+    assert "proven no-five board" in findings[0].repair_hint
+
+
 def test_runtime_findings_classify_missing_white_win_from_invalid_sequence() -> None:
     findings = runtime_findings_for_output(
         "\n".join([

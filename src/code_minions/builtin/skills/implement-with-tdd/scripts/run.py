@@ -554,7 +554,9 @@ def _delivery_guidance_context(ticket: dict[str, Any]) -> str:
             "filler cells far away. If you need to test five same-color stones without turn alternation, test a pure "
             "board-state helper instead of the public click UI. For full-board draw tests, prefer "
             "a pure board-state/draw helper test or a fast deterministic setup over 225 slow `userEvent` "
-            "clicks, which often time out or accidentally create a win before the board is full."
+            "clicks, which often time out or accidentally create a win before the board is full. A full "
+            "board is not automatically a draw: do not use simple checkerboard, row-major, or stripe "
+            "patterns unless the same test first verifies the win detector returns no black/white winner."
         )
 
     return "\n".join(lines) if lines else "No delivery-specific guidance."
