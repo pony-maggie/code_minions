@@ -140,6 +140,13 @@ def _typescript_runtime_findings(output: str, *, source: str) -> list[GateFindin
             if path not in implicit_any_paths:
                 implicit_any_paths.append(path)
             continue
+        elif ts_code == "2739" and "missing the following properties from type" in lowered:
+            code = "typescript-jsx-missing-required-props"
+            repair_hint = (
+                "Pass the required props at the JSX call site or update the component props "
+                "contract to match its callers. When a child component gains required props, "
+                "update the parent state and handlers in the same change."
+            )
         elif ts_code in {"2322", "2345"} and "not assignable to" in lowered:
             code = "typescript-type-contract-mismatch"
             repair_hint = (

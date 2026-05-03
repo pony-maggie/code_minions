@@ -214,6 +214,20 @@ def test_runtime_findings_classify_user_event_import_mismatch() -> None:
     assert "default export" in findings[0].repair_hint
 
 
+def test_runtime_findings_classify_jsx_missing_required_props() -> None:
+    findings = runtime_findings_for_output(
+        "src/App.tsx(9,8): error TS2739: Type '{}' is missing the following properties "
+        "from type 'BoardProps': cells, onCellClick",
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "typescript-jsx-missing-required-props"
+    ]
+    assert findings[0].paths == ["src/App.tsx"]
+    assert "Pass the required props" in findings[0].repair_hint
+
+
 def test_findings_to_text_groups_by_stage_and_severity() -> None:
     text = findings_to_text([
         GateFinding(
