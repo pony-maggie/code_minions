@@ -95,6 +95,25 @@ def test_retries_when_llm_returns_invalid_json(tmp_git_repo: Path, monkeypatch):
     assert any("valid JSON object only" in m.content for m in retry_messages)
 
 
+def test_extract_json_object_allows_reasoning_prefix_and_trailing_text() -> None:
+    entrypoint = _load_entrypoint()
+
+    data = entrypoint._extract_json_object(
+        '<think>fixed</think>\n\n'
+        '{"files_written": [{"path": "src/App.tsx", "content": "export default function App() { return null }\\n"}], '
+        '"reasoning": "ok"}\n'
+        '{"reasoning": "duplicate trailing object"}',
+        require_files=True,
+    )
+
+    assert data == {
+        "files_written": [
+            {"path": "src/App.tsx", "content": "export default function App() { return null }\n"}
+        ],
+        "reasoning": "ok",
+    }
+
+
 def test_retries_when_llm_returns_no_files_written(tmp_git_repo: Path, monkeypatch):
     entrypoint = _load_entrypoint()
 

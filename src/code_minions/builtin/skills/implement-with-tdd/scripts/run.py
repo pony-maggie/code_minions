@@ -55,13 +55,21 @@ Do not include explanatory prose outside the final JSON.
 
 
 def _extract_json_object(content: str, *, require_files: bool) -> dict[str, Any]:
-    m = re.search(r"\{.*\}", content, re.DOTALL)
-    if not m:
+    decoder = json.JSONDecoder()
+    last_error: json.JSONDecodeError | None = None
+    data: Any = None
+    for match in re.finditer(r"\{", content):
+        try:
+            data, _end = decoder.raw_decode(content[match.start():])
+        except json.JSONDecodeError as e:
+            last_error = e
+            continue
+        if isinstance(data, dict):
+            break
+    else:
+        if last_error is not None:
+            raise ValueError(f"LLM returned invalid JSON: {last_error}; content={content[:200]!r}") from last_error
         raise ValueError(f"LLM did not return JSON: {content[:200]}")
-    try:
-        data = json.loads(m.group(0))
-    except json.JSONDecodeError as e:
-        raise ValueError(f"LLM returned invalid JSON: {e}; content={content[:200]!r}") from e
     if not isinstance(data, dict):
         raise ValueError(f"LLM JSON must be an object, got {type(data).__name__}")
     if require_files:
