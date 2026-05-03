@@ -243,6 +243,24 @@ def test_runtime_findings_classify_turn_based_winner_status_mismatch() -> None:
     assert "move sequence" in findings[0].repair_hint
 
 
+def test_runtime_findings_classify_board_fill_timeout() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  tests/App.test.tsx > 五子棋游戏 - 胜负判定 > 棋盘已满且无人五连，显示平局",
+            "Error: Test timed out in 5000ms.",
+            "If this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".",
+            "❯ tests/App.test.tsx:133:44",
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "turn-board-game-board-fill-test-timeout"
+    ]
+    assert findings[0].paths == ["tests/App.test.tsx"]
+    assert "225" in findings[0].repair_hint
+
+
 def test_runtime_findings_classify_user_event_import_mismatch() -> None:
     findings = runtime_findings_for_output(
         'src/App.test.tsx(39,13): error TS2339: Property \'user\' does not exist on type '

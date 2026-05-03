@@ -349,6 +349,25 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
         ))
 
     if (
+        "Test timed out in 5000ms" in output
+        and any(term in output for term in ("棋盘已满", "平局", "draw"))
+    ):
+        findings.append(GateFinding(
+            code="turn-board-game-board-fill-test-timeout",
+            severity="error",
+            stage="runtime",
+            message="A board-fill draw test timed out before completing the full board setup.",
+            repair_hint=(
+                "Avoid 225 slow `userEvent.click` calls just to create a full-board draw state. "
+                "Test draw detection with a pure helper/state setup, use faster `fireEvent.click` "
+                "with a carefully generated no-win pattern, or raise the timeout only after proving "
+                "the test is not stuck in an accidental win/game-over loop."
+            ),
+            source=source,
+            paths=paths,
+        ))
+
+    if (
         "expect(element).toHaveTextContent()" in output
         and "Expected element to have text content:" in output
         and "Received:" in output

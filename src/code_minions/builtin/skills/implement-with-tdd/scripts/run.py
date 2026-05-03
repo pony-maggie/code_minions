@@ -443,7 +443,11 @@ def _delivery_guidance_context(ticket: dict[str, Any]) -> str:
             "For turn-based board game tests, use valid public move sequences that alternate players. "
             "When testing one player's win, interleave opponent filler moves that do not block the line "
             "or accidentally create an earlier win. Do not assert impossible same-player consecutive "
-            "moves through the normal move API."
+            "moves through the normal move API. For Gomoku white-win tests through the public click API, "
+            "remember white only moves on turns 2, 4, 6, 8, and 10; place black filler stones far away "
+            "from the target line so black cannot complete five first. For full-board draw tests, prefer "
+            "a pure board-state/draw helper test or a fast deterministic setup over 225 slow `userEvent` "
+            "clicks, which often time out or accidentally create a win before the board is full."
         )
 
     return "\n".join(lines) if lines else "No delivery-specific guidance."
