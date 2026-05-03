@@ -563,6 +563,40 @@ def test_runtime_findings_classify_hook_white_win_sequence_that_gives_black_earl
     assert "White wins through the public move/click API" in findings[0].repair_hint
 
 
+def test_runtime_findings_classify_nullable_win_result_without_guard() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "src/App.tsx(32,9): error TS18047: 'result' is possibly 'null'.",
+            "src/App.tsx(33,17): error TS18047: 'result' is possibly 'null'.",
+            "src/App.tsx(34,23): error TS18047: 'result' is possibly 'null'.",
+            "src/App.tsx(35,21): error TS18047: 'result' is possibly 'null'.",
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "turn-based-board-game-nullable-win-result-unguarded"
+    ]
+    assert findings[0].paths == ["src/App.tsx"]
+    assert "if (result)" in findings[0].repair_hint
+
+
+def test_runtime_findings_classify_stale_hook_test_end_game_api() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "src/useGameState.test.ts(85,24): error TS2339: Property 'endGame' does not exist on type '{ stones: Stone[]; currentPlayer: StoneColor; lastMove: StonePosition | null; gameOver: boolean; winner: StoneColor | null; winningCells: StonePosition[] | null; makeMove: (row: number, col: number) => boolean; resetGame: () => void; getStoneAt: (row: number, col: number) => Stone | undefined; }'.",
+            "src/useGameState.test.ts(104,24): error TS2339: Property 'endGame' does not exist on type '{ stones: Stone[]; currentPlayer: StoneColor; lastMove: StonePosition | null; gameOver: boolean; winner: StoneColor | null; winningCells: StonePosition[] | null; makeMove: (row: number, col: number) => boolean; resetGame: () => void; getStoneAt: (row: number, col: number) => Stone | undefined; }'.",
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "turn-based-board-game-stale-hook-test-api"
+    ]
+    assert findings[0].paths == ["src/useGameState.test.ts"]
+    assert "Do not leave tests calling `endGame`" in findings[0].repair_hint
+
+
 def test_runtime_findings_classify_draw_test_created_accidental_win() -> None:
     findings = runtime_findings_for_output(
         "\n".join([

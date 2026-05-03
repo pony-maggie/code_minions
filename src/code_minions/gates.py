@@ -151,6 +151,34 @@ def _typescript_runtime_findings(output: str, *, source: str) -> list[GateFindin
                 "`const user = (await import('@testing-library/user-event')).default`; do not "
                 "destructure a non-existent `user` property."
             )
+        elif (
+            ts_code == "2339"
+            and "property 'endgame' does not exist" in lowered
+            and "usegamestate" in path.lower()
+            and path.endswith((".test.ts", ".test.tsx"))
+        ):
+            code = "turn-based-board-game-stale-hook-test-api"
+            repair_hint = (
+                "The hook contract exposes `makeMove`, `resetGame`, winner/game-over state, and query "
+                "helpers, but not a test-only `endGame` mutator. Do not leave tests calling `endGame`; "
+                "either drive game-over through valid `makeMove` sequences or add a real exported hook "
+                "API and update implementation and tests together."
+            )
+        elif (
+            ts_code == "18047"
+            and "possibly 'null'" in lowered
+            and (
+                "'result'" in lowered
+                or any(name in output for name in ("checkWin", "winningCells", "winner", "gameOver"))
+            )
+        ):
+            code = "turn-based-board-game-nullable-win-result-unguarded"
+            repair_hint = (
+                "Win-check helpers often return a result object or `null` when no winner exists. Guard "
+                "before reading result fields, for example `const result = checkWin(...); if (result) { "
+                "setWinner(result.winner); setWinningCells(result.winningCells); }`, and keep normal "
+                "turn switching in the no-win branch."
+            )
         elif ts_code == "7006" and "implicitly has an 'any' type" in message:
             if path not in implicit_any_paths:
                 implicit_any_paths.append(path)
