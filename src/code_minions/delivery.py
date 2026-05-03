@@ -782,6 +782,44 @@ def _unresolved_relative_imports(workdir: Path) -> list[tuple[Path, str]]:
     return unresolved
 
 
+def repair_unique_unresolved_relative_imports(workdir: Path) -> list[str]:
+    """Repair unresolved TS/JS relative imports when exactly one matching target exists."""
+    changed: list[str] = []
+    for path in _iter_files(workdir):
+        if path.suffix not in {".js", ".jsx", ".ts", ".tsx"}:
+            continue
+        try:
+            text = path.read_text(errors="ignore")
+        except OSError:
+            continue
+
+        replacements: list[tuple[int, int, str]] = []
+        for match in TS_IMPORT_RE.finditer(text):
+            group = "path" if match.group("path") else "dynamic"
+            imported = match.group(group)
+            if not imported or _relative_import_resolves(path, imported):
+                continue
+            candidates = _candidate_relative_import_targets(workdir, path, imported)
+            if len(candidates) != 1:
+                continue
+            replacements.append((
+                match.start(group),
+                match.end(group),
+                _relative_import_specifier(path, candidates[0]),
+            ))
+        if not replacements:
+            continue
+
+        updated = text
+        for start, end, specifier in reversed(replacements):
+            updated = updated[:start] + specifier + updated[end:]
+        if updated == text:
+            continue
+        path.write_text(updated)
+        changed.append(path.relative_to(workdir).as_posix())
+    return changed
+
+
 def validate_delivery_profile(workdir: Path, profile: dict[str, Any] | None) -> list[dict[str, Any]]:
     if not profile:
         return []

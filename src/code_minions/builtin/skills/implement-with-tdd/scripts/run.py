@@ -24,6 +24,7 @@ from code_minions.agent_profiles import resolve_agent_profile
 from code_minions.delivery import (
     execution_profile_for_delivery,
     infer_delivery_profile,
+    repair_unique_unresolved_relative_imports,
     validate_delivery_profile,
 )
 from code_minions.engine.skill_runtime import SkillExecutionError
@@ -818,6 +819,7 @@ def _stabilize_react_vite_scaffold(workdir, ticket: dict[str, Any]) -> set[str]:
         if written:
             changed.add(written)
     changed.update(_stabilize_react_vite_tests(workdir))
+    changed.update(repair_unique_unresolved_relative_imports(workdir))
 
     return changed
 
