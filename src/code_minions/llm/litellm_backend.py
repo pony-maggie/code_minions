@@ -7,6 +7,8 @@ from __future__ import annotations
 import http.client
 import json
 import os
+import queue
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -120,6 +122,32 @@ def _urlopen_with_retries(
     if last_exc is not None:
         raise last_exc
     raise RuntimeError("MiniMax request failed before any attempt")
+
+
+def _run_with_wall_clock_timeout(func, *, seconds: int, label: str) -> Any:
+    results: queue.Queue[tuple[bool, Any]] = queue.Queue(maxsize=1)
+
+    def _target() -> None:
+        try:
+            results.put((True, func()))
+        except BaseException as e:
+            results.put((False, e))
+
+    thread = threading.Thread(target=_target, daemon=True)
+    thread.start()
+    thread.join(seconds)
+    if thread.is_alive():
+        raise RuntimeError(f"{label} timed out after {seconds}s")
+
+    ok, value = results.get_nowait()
+    if ok:
+        return value
+    raise value
+
+
+def _read_urlopen_response(req: urllib.request.Request, *, timeout: int) -> bytes:
+    with _urlopen_with_retries(req, timeout=timeout) as response:
+        return response.read()
 
 
 def _openai_model_uses_default_temperature(provider: str, model: str) -> bool:
@@ -271,9 +299,14 @@ class LiteLLMBackend:
             },
             method="POST",
         )
+        request_timeout = _request_timeout_seconds()
         try:
-            with _urlopen_with_retries(req) as response:
-                raw = json.loads(response.read().decode())
+            raw_bytes = _run_with_wall_clock_timeout(
+                lambda: _read_urlopen_response(req, timeout=request_timeout),
+                seconds=request_timeout,
+                label="MiniMax request",
+            )
+            raw = json.loads(raw_bytes.decode())
         except urllib.error.HTTPError as e:
             body = e.read().decode(errors="replace")
             raise RuntimeError(f"MiniMax request failed: HTTP {e.code}: {body}") from e

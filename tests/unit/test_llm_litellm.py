@@ -238,6 +238,41 @@ def test_minimax_uses_openai_compatible_endpoint_by_default():
         }
 
 
+def test_minimax_response_read_has_wall_clock_timeout(monkeypatch):
+    import time
+
+    class SlowHTTPResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self):
+            time.sleep(2)
+            return json.dumps({
+                "choices": [{"message": {"content": "late"}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 2},
+                "model": "MiniMax-M2.7",
+            }).encode()
+
+    monkeypatch.setenv("CODE_MINIONS_LLM_TIMEOUT_SECONDS", "1")
+    with patch("urllib.request.urlopen", return_value=SlowHTTPResponse()):
+        be = LiteLLMBackend(provider="minimax", default_model="MiniMax-M2.7", api_key="mini-x")
+
+        started = time.monotonic()
+        try:
+            be.chat([Message(role="user", content="hi")])
+        except RuntimeError as e:
+            elapsed = time.monotonic() - started
+            assert "MiniMax request timed out after 1s" in str(e)
+            assert elapsed < 1.8
+        else:
+            raise AssertionError("expected RuntimeError")
+
+
 def test_minimax_api_base_can_be_overridden():
     class FakeHTTPResponse:
         status = 200
