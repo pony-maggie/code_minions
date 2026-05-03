@@ -338,6 +338,48 @@ def test_runtime_findings_classify_draw_test_created_accidental_win() -> None:
     assert "draw helper" in finding.repair_hint
 
 
+def test_runtime_findings_classify_missing_white_win_from_invalid_sequence() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  tests/App.test.tsx > 胜负判定与获胜棋子高亮 > 白方纵向五子获胜",
+            "TestingLibraryElementError: Unable to find an element with the text: /白.*胜|白方.*赢/i.",
+            "❯ tests/App.test.tsx:62:21",
+        ]),
+        source="react-vite",
+    )
+
+    assert "turn-based-board-game-invalid-white-win-sequence" in [
+        finding.code for finding in findings
+    ]
+    finding = next(
+        f for f in findings if f.code == "turn-based-board-game-invalid-white-win-sequence"
+    )
+    assert finding.paths == ["tests/App.test.tsx"]
+    assert "five white target cells" in finding.repair_hint
+    assert "turns 2/4/6/8/10" in finding.repair_hint
+
+
+def test_runtime_findings_classify_draw_text_missing_after_public_board_fill() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  tests/App.test.tsx > 胜负判定与获胜棋子高亮 > 平局判定",
+            "TestingLibraryElementError: Unable to find an element with the text: /平.*局|平手/i.",
+            "          class=\"cell occupied winning\"",
+            "❯ tests/App.test.tsx:246:21",
+        ]),
+        source="react-vite",
+    )
+
+    assert "turn-board-game-draw-test-created-accidental-win" in [
+        finding.code for finding in findings
+    ]
+    finding = next(
+        f for f in findings if f.code == "turn-board-game-draw-test-created-accidental-win"
+    )
+    assert finding.paths == ["tests/App.test.tsx"]
+    assert "draw helper" in finding.repair_hint
+
+
 def test_runtime_findings_classify_winner_state_not_updated() -> None:
     findings = runtime_findings_for_output(
         "\n".join([

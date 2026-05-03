@@ -395,6 +395,26 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
         ))
 
     if (
+        "Unable to find an element with the text:" in output
+        and any(pattern in output for pattern in ("/白.*胜|白方.*赢/i", "白方胜利", "白方获胜"))
+        and any(term in output for term in ("五子棋", "Gomoku", "胜负判定", "棋子"))
+    ):
+        findings.append(GateFinding(
+            code="turn-based-board-game-invalid-white-win-sequence",
+            severity="error",
+            stage="runtime",
+            message="A Gomoku test expected a white win, but the public move sequence did not produce one.",
+            repair_hint=(
+                "White wins through the public click API require five white target cells, all played on "
+                "turns 2/4/6/8/10. Do not count black's first move as part of the white target line, and "
+                "do not stop after only four white stones. Use black filler moves far from the white line, "
+                "for example black `(14,0)..(14,4)` and white target `(0,1)..(4,1)` for a vertical win."
+            ),
+            source=source,
+            paths=paths,
+        ))
+
+    if (
         "to be null" in output
         and "data-testid=\"winner-display\"" in output
         and any(term in output for term in ("棋盘已满", "平局", "draw"))
@@ -411,6 +431,26 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
                 "full. Test draw detection with a pure draw helper/state setup or a proven no-five board "
                 "pattern, and assert the product's visible `平局` contract rather than assuming the "
                 "`winner-display` element must be absent."
+            ),
+            source=source,
+            paths=paths,
+        ))
+
+    if (
+        "Unable to find an element with the text:" in output
+        and any(pattern in output for pattern in ("/平.*局|平手/i", "平局"))
+        and ("cell occupied winning" in output or "棋盘已满" in output or "draw" in output)
+    ):
+        findings.append(GateFinding(
+            code="turn-board-game-draw-test-created-accidental-win",
+            severity="error",
+            stage="runtime",
+            message="A full-board draw test could not find draw text after public board filling.",
+            repair_hint=(
+                "Avoid sequentially filling a Gomoku board through the public click API for draw tests; "
+                "naive row-major or alternating patterns usually create five-in-a-row before the board is "
+                "full. Test draw detection with a pure draw helper/state setup or a proven no-five board "
+                "pattern, and assert the product's visible `平局` contract after that deterministic setup."
             ),
             source=source,
             paths=paths,
