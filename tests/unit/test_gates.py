@@ -317,6 +317,48 @@ def test_runtime_findings_classify_board_cell_text_vs_accessible_name_mismatch()
     assert "accessible name" in findings[0].repair_hint
 
 
+def test_runtime_findings_classify_board_cell_literal_text_vs_symbol_mismatch() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  tests/GameInteraction.test.tsx > 核心落子交互与回合管理 > Given 空棋盘",
+            "Error: expect(element).toHaveTextContent()",
+            "Expected element to have text content:",
+            "  黑子",
+            "Received:",
+            "  ●",
+            "❯ tests/GameInteraction.test.tsx:21:18",
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "react-board-cell-text-accessible-name-mismatch"
+    ]
+    assert findings[0].paths == ["tests/GameInteraction.test.tsx"]
+    assert "accessible name" in findings[0].repair_hint
+
+
+def test_runtime_findings_classify_early_gomoku_game_over_status_test() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  tests/GameInteraction.test.tsx > 核心落子交互与回合管理 > Given 已经出现胜者，When 用户继续点击棋盘，Then 不再新增棋子",
+            "Error: expect(element).toHaveTextContent()",
+            "Expected element to have text content:",
+            "  黑方获胜",
+            "Received:",
+            "  当前回合: 黑子",
+            "❯ tests/GameInteraction.test.tsx:74:20",
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "turn-based-board-game-current-turn-status-contract-drift"
+    ]
+    assert findings[0].paths == ["tests/GameInteraction.test.tsx"]
+    assert "defer tests" in findings[0].repair_hint
+
+
 def test_runtime_findings_classify_board_testid_contract_mismatch() -> None:
     findings = runtime_findings_for_output(
         "\n".join([

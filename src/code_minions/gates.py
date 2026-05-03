@@ -658,7 +658,10 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
         "expect(element).toHaveTextContent()" in output
         and "Expected element to have text content:" in output
         and "Received:" in output
-        and re.search(r"(?m)^\s*/(?:空\$|黑|白)/\s*$", output)
+        and (
+            re.search(r"(?m)^\s*/(?:空\$|黑|白)/\s*$", output)
+            or re.search(r"(?m)^\s*(?:空|黑子|白子)\s*$", output)
+        )
         and ("●" in output or "Received:\n" in output)
     ):
         findings.append(GateFinding(
@@ -712,11 +715,26 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
         ))
 
     if (
-        any(pattern in output for pattern in (
-            "getByText('当前回合:",
-            'getByText("当前回合:',
-            "getByText(/当前回合:",
-        ))
+        (
+            any(pattern in output for pattern in (
+                "getByText('当前回合:",
+                'getByText("当前回合:',
+                "getByText(/当前回合:",
+            ))
+            or (
+                "expect(element).toHaveTextContent()" in output
+                and "Expected element to have text content:" in output
+                and any(term in output for term in ("黑方获胜", "白方获胜", "黑棋胜", "白棋胜"))
+                and "Received:" in output
+                and "当前回合" in output
+                and any(term in output for term in (
+                    "核心落子交互",
+                    "已存在游戏结束状态",
+                    "游戏结束后禁止继续落子",
+                    "已经出现胜者，When 用户继续点击棋盘",
+                ))
+            )
+        )
         and any(term in output for term in ("data-testid=\"game-status\"", "当前回合", "核心落子交互", "已存在游戏结束状态"))
     ):
         findings.append(GateFinding(

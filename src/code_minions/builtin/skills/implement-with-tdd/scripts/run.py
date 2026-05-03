@@ -496,6 +496,9 @@ def _delivery_guidance_context(ticket: dict[str, Any]) -> str:
             "Use a single canonical shared type module. If `src/types.ts` already exists, extend it and "
             "do not create `src/types/index.ts` or another shadow type entry; update imports consistently "
             "so callers do not split between incompatible `Cell`/`CellState` or board type definitions. "
+            "Preserve existing exported test helpers and aliases from that module, such as a Gomoku "
+            "`createEmptyBoard()` helper or `Board` type alias; if you introduce `BoardState`, keep "
+            "`export type Board = BoardState` when earlier tests import `Board`. "
             "When adding React hooks such as `useState`, `useCallback`, `useMemo`, or `useEffect`, import "
             "React hooks explicitly from `react` in the file that uses them. "
             "Keep TypeScript interfaces consistent across existing callers and new modules; `tsc --noEmit` "
@@ -1300,10 +1303,65 @@ def _stabilize_react_vite_scaffold(workdir, ticket: dict[str, Any]) -> set[str]:
             changed.add(written)
     changed.update(_stabilize_react_vite_tests(workdir))
     changed.update(_stabilize_react_vite_types_module(workdir))
+    changed.update(_stabilize_react_vite_board_type_helpers(workdir))
     changed.update(_stabilize_position_type_contract(workdir))
     changed.update(repair_unique_unresolved_relative_imports(workdir))
 
     return changed
+
+
+def _stabilize_react_vite_board_type_helpers(workdir) -> set[str]:
+    src_dir = workdir / "src"
+    types_path = src_dir / "types.ts"
+    if not src_dir.is_dir() or not types_path.is_file():
+        return set()
+
+    project_files = [
+        path
+        for base in (src_dir, workdir / "tests")
+        if base.is_dir()
+        for path in base.rglob("*")
+        if path.is_file() and path.suffix in {".ts", ".tsx"} and path != types_path
+    ]
+    if not project_files:
+        return set()
+
+    imports_board = False
+    imports_create_empty_board = False
+    for path in project_files:
+        text = path.read_text(errors="ignore")
+        for match in REACT_VITE_TYPES_IMPORT_RE.finditer(text):
+            names = [_imported_symbol_name(name) for name in match.group("names").split(",")]
+            imports_board = imports_board or "Board" in names
+            imports_create_empty_board = imports_create_empty_board or "createEmptyBoard" in names
+
+    if not imports_board and not imports_create_empty_board:
+        return set()
+
+    types_text = types_path.read_text(errors="ignore")
+    additions: list[str] = []
+    has_board_state = REACT_VITE_BOARD_STATE_EXPORT_RE.search(types_text)
+    has_board_alias = REACT_VITE_BOARD_EXPORT_RE.search(types_text)
+    if imports_board and has_board_state and not has_board_alias:
+        additions.append("export type Board = BoardState")
+
+    has_create_empty_board = re.search(
+        r"""\bexport\s+(?:function|const)\s+createEmptyBoard\b""",
+        types_text,
+    )
+    if imports_create_empty_board and has_board_state and not has_create_empty_board:
+        additions.append(
+            "export function createEmptyBoard(): BoardState {\n"
+            "  return Array.from({ length: BOARD_SIZE }, () => "
+            "Array.from({ length: BOARD_SIZE }, () => null))\n"
+            "}"
+        )
+
+    if not additions:
+        return set()
+
+    types_path.write_text(types_text.rstrip() + "\n\n" + "\n\n".join(additions) + "\n")
+    return {"src/types.ts"}
 
 
 def _stabilize_react_vite_types_module(workdir) -> set[str]:

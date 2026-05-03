@@ -726,6 +726,33 @@ def test_react_vite_scaffold_types_null_board_test_factory(tmp_git_repo: Path):
     assert "(): (null)[][]" not in text
 
 
+def test_react_vite_scaffold_preserves_board_type_helpers_imported_by_tests(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "src" / "types.ts").write_text(
+        "export type Player = 'black' | 'white'\n"
+        "export type CellState = Player | null\n"
+        "export type BoardState = CellState[][]\n"
+        "export const BOARD_SIZE = 15\n"
+    )
+    (tmp_git_repo / "tests" / "Board.test.tsx").write_text(
+        "import { createEmptyBoard, Board as BoardType } from '../src/types'\n"
+        "\n"
+        "const board: BoardType = createEmptyBoard()\n"
+        "board[7][7] = 'black'\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "types.ts").read_text()
+    assert "src/types.ts" in changed
+    assert "export type Board = BoardState" in text
+    assert "export function createEmptyBoard(): BoardState" in text
+    assert "BOARD_SIZE" in text
+
+
 def test_react_vite_scaffold_replaces_brittle_ready_smoke_test(tmp_git_repo: Path):
     entrypoint = _load_entrypoint()
     (tmp_git_repo / "src").mkdir()
