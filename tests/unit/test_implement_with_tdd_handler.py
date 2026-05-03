@@ -753,6 +753,81 @@ def test_react_vite_scaffold_preserves_board_type_helpers_imported_by_tests(tmp_
     assert "BOARD_SIZE" in text
 
 
+def test_react_vite_scaffold_prunes_over_detailed_gomoku_ui_tests(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "tests" / "App.test.tsx").write_text(
+        "import { describe, it, expect } from 'vitest'\n"
+        "\n"
+        "describe('胜负判定与获胜棋子高亮', () => {\n"
+        "  it('Given 黑方横向连续五子，When 第五子落下，Then 显示黑方获胜并高亮这五子', async () => {\n"
+        "    expect(true).toBe(true)\n"
+        "  })\n"
+        "\n"
+        "  it('Given 白方纵向连续五子，When 第五子落下，Then 显示白方获胜并高亮这五子', async () => {\n"
+        "    expect(true).toBe(true)\n"
+        "  })\n"
+        "\n"
+        "  it('Given 白方左上到右下斜线连续五子，When 第五子落下，Then 显示白方获胜并高亮', async () => {\n"
+        "    expect(true).toBe(true)\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {
+        "delivery_profile": {"stack_id": "react-vite"},
+        "features": [{"name": "胜负判定", "description": "五子棋 本地双人对战 黑棋白棋轮流回合"}],
+    }
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "tests" / "App.test.tsx").read_text()
+    assert "tests/App.test.tsx" in changed
+    assert "黑方横向连续五子" in text
+    assert "白方纵向连续五子" not in text
+    assert "左上到右下斜线" not in text
+
+
+def test_react_vite_scaffold_prunes_brittle_gomoku_board_class_tests(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "tests" / "Board.test.tsx").write_text(
+        "import { describe, it, expect } from 'vitest'\n"
+        "\n"
+        "describe('Board 组件', () => {\n"
+        "  it('渲染完整的 15x15 棋盘', () => {\n"
+        "    expect(true).toBe(true)\n"
+        "  })\n"
+        "\n"
+        "  it('渲染星位标记', () => {\n"
+        "    const starPoints = document.querySelectorAll('.star-point')\n"
+        "    expect(starPoints).toHaveLength(5)\n"
+        "  })\n"
+        "\n"
+        "  it('用户落子后显示黑色棋子', () => {\n"
+        "    expect(cell.querySelector('.stone.black')).toBeInTheDocument()\n"
+        "  })\n"
+        "\n"
+        "  it('最后落子位置显示标记', () => {\n"
+        "    expect(cell.querySelector('.last-move-mark')).toBeInTheDocument()\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {
+        "delivery_profile": {"stack_id": "react-vite"},
+        "features": [{"name": "棋盘与交互", "description": "五子棋 棋盘 黑棋白棋轮流回合"}],
+    }
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "tests" / "Board.test.tsx").read_text()
+    assert "tests/Board.test.tsx" in changed
+    assert "渲染完整的 15x15 棋盘" in text
+    assert "渲染星位标记" not in text
+    assert ".stone.black" not in text
+    assert ".last-move-mark" not in text
+
+
 def test_react_vite_scaffold_replaces_brittle_ready_smoke_test(tmp_git_repo: Path):
     entrypoint = _load_entrypoint()
     (tmp_git_repo / "src").mkdir()
