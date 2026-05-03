@@ -3,6 +3,7 @@ from __future__ import annotations
 from code_minions.delivery import (
     execution_profile_for_delivery,
     infer_delivery_profile,
+    repair_unique_unresolved_relative_imports,
     validate_delivery_profile,
 )
 
@@ -613,6 +614,20 @@ def test_validate_rejects_react_vite_test_importing_missing_relative_module(tmp_
     issues = validate_delivery_profile(tmp_path, profile)
 
     assert any(issue["code"] == "unresolved-relative-import" for issue in issues)
+
+
+def test_repair_creates_missing_react_vite_css_import(tmp_path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "App.tsx").write_text("import './App.css'\nexport default function App() { return <div /> }\n")
+
+    changed = repair_unique_unresolved_relative_imports(tmp_path)
+
+    assert changed == ["src/App.css"]
+    assert (tmp_path / "src" / "App.css").is_file()
+    assert not any(
+        issue["code"] == "unresolved-relative-import"
+        for issue in validate_delivery_profile(tmp_path, {"stack_id": "react-vite"})
+    )
 
 
 def test_validate_suggests_existing_relative_import_target(tmp_path) -> None:

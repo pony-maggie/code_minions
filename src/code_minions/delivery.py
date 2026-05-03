@@ -25,6 +25,7 @@ LANGUAGE_BY_SUFFIX = {
 }
 
 TS_RESOLVABLE_EXTENSIONS = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json")
+REACT_VITE_STYLE_IMPORT_SUFFIXES = (".css",)
 TS_IMPORT_RE = re.compile(
     r"""(?:import|export)\s+(?:type\s+)?(?:[^'"]+\s+from\s+)?['"](?P<path>\.{1,2}/[^'"]+)['"]|"""
     r"""import\(\s*['"](?P<dynamic>\.{1,2}/[^'"]+)['"]\s*\)|"""
@@ -784,8 +785,9 @@ def _unresolved_relative_imports(workdir: Path) -> list[tuple[Path, str]]:
 
 
 def repair_unique_unresolved_relative_imports(workdir: Path) -> list[str]:
-    """Repair unresolved TS/JS relative imports when exactly one matching target exists."""
+    """Repair low-risk unresolved TS/JS relative imports."""
     changed: list[str] = []
+    workdir_resolved = workdir.resolve()
     for path in _iter_files(workdir):
         if path.suffix not in {".js", ".jsx", ".ts", ".tsx"}:
             continue
@@ -804,6 +806,16 @@ def repair_unique_unresolved_relative_imports(workdir: Path) -> list[str]:
                 group = "require"
             imported = match.group(group)
             if not imported or _relative_import_resolves(path, imported):
+                continue
+            explicit_target = (path.parent / imported).resolve()
+            if any(imported.endswith(suffix) for suffix in REACT_VITE_STYLE_IMPORT_SUFFIXES):
+                try:
+                    explicit_target.relative_to(workdir_resolved)
+                except ValueError:
+                    continue
+                explicit_target.parent.mkdir(parents=True, exist_ok=True)
+                explicit_target.write_text("/* Generated to satisfy an explicit style import. */\n")
+                changed.append(explicit_target.relative_to(workdir).as_posix())
                 continue
             candidates = _candidate_relative_import_targets(workdir, path, imported)
             if len(candidates) != 1:
