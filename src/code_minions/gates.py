@@ -514,6 +514,28 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
 
     if (
         "useGameState.test" in output
+        and "winner" in output
+        and "expected null to be 'black'" in output
+    ):
+        hook_path = _vitest_frame_path_containing(output, "useGameState.test")
+        findings.append(GateFinding(
+            code="turn-based-board-game-hook-winner-state-not-updated",
+            severity="error",
+            stage="runtime",
+            message="A game-state hook test expected a winner after a five-in-row move sequence but `winner` stayed null.",
+            repair_hint=(
+                "If this task owns win/game-over behavior, wire win detection into `handleCellClick` or the "
+                "shared move reducer: evaluate the board after placing the latest stone, set `winner`, and "
+                "ignore later moves while `winner` is set. If the current task is only core turn management "
+                "and win detection belongs to a later task, move this assertion to the win-detection tests "
+                "instead of requiring `winner` before that behavior exists."
+            ),
+            source=source,
+            paths=[hook_path] if hook_path else paths,
+        ))
+
+    if (
+        "useGameState.test" in output
         and "handleCellClick" in output
         and (
             "expected 'black' to be 'white'" in output

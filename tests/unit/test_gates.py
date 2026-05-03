@@ -625,6 +625,28 @@ def test_runtime_findings_classify_winner_state_not_updated() -> None:
     assert "placeStone" in findings[0].repair_hint
 
 
+def test_runtime_findings_classify_hook_winner_state_not_updated() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  src/hooks/useGameState.test.ts > useGameState > 游戏结束后禁止落子 > Given 已经出现胜者",
+            "AssertionError: expected null to be 'black' // Object.is equality",
+            "❯ src/hooks/useGameState.test.ts:130:37",
+            "130|       expect(result.current.winner).toBe('black')",
+        ]),
+        source="react-vite",
+    )
+
+    assert "turn-based-board-game-hook-winner-state-not-updated" in [
+        finding.code for finding in findings
+    ]
+    finding = next(
+        item for item in findings if item.code == "turn-based-board-game-hook-winner-state-not-updated"
+    )
+    assert finding.paths == ["src/hooks/useGameState.test.ts"]
+    assert "handleCellClick" in finding.repair_hint
+    assert "win detection" in finding.repair_hint
+
+
 def test_runtime_findings_classify_presentational_board_test_expects_game_state() -> None:
     findings = runtime_findings_for_output(
         "\n".join([
