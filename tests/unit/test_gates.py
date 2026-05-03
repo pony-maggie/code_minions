@@ -286,6 +286,58 @@ def test_runtime_findings_classify_turn_based_winner_status_mismatch() -> None:
     assert "move sequence" in findings[0].repair_hint
 
 
+def test_runtime_findings_classify_impossible_public_win_sequence() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  tests/GameResult.test.tsx > 五子棋胜负判定 > 横向五子 > Given 黑方横向连续五子",
+            "Error: expect(element).toHaveTextContent()",
+            "Expected element to have text content:",
+            "  黑方胜利",
+            "Received:",
+            "  白方回合",
+            "❯ tests/GameResult.test.tsx:34:52",
+        ]),
+        source="react-vite",
+    )
+
+    assert "turn-based-board-game-impossible-public-win-sequence" in [
+        finding.code for finding in findings
+    ]
+    finding = next(
+        f for f in findings if f.code == "turn-based-board-game-impossible-public-win-sequence"
+    )
+    assert finding.paths == ["tests/GameResult.test.tsx"]
+    assert "9-click" in finding.repair_hint
+    assert "pure helper" in finding.repair_hint
+
+
+def test_runtime_findings_classify_draw_test_created_accidental_win() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  tests/GameResult.test.tsx > 五子棋胜负判定 > 平局判定 > Given 棋盘已满且无人五连",
+            "AssertionError: expected <div data-testid=\"winner-display\"></div> to be null",
+            "Received:",
+            "<div",
+            "  data-testid=\"winner-display\"",
+            ">",
+            "  黑方",
+            "</div>",
+            "❯ tests/GameResult.test.tsx:201:29",
+        ]),
+        source="react-vite",
+    )
+
+    assert "turn-board-game-draw-test-created-accidental-win" in [
+        finding.code for finding in findings
+    ]
+    finding = next(
+        f for f in findings if f.code == "turn-board-game-draw-test-created-accidental-win"
+    )
+    assert finding.paths == ["tests/GameResult.test.tsx"]
+    assert "sequentially filling" in finding.repair_hint
+    assert "draw helper" in finding.repair_hint
+
+
 def test_runtime_findings_classify_winner_state_not_updated() -> None:
     findings = runtime_findings_for_output(
         "\n".join([

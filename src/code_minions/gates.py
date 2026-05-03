@@ -376,6 +376,50 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
         "expect(element).toHaveTextContent()" in output
         and "Expected element to have text content:" in output
         and "Received:" in output
+        and any(term in output for term in ("黑方胜利", "白方胜利"))
+        and any(term in output for term in ("黑方回合", "白方回合"))
+    ):
+        findings.append(GateFinding(
+            code="turn-based-board-game-impossible-public-win-sequence",
+            severity="error",
+            stage="runtime",
+            message="A public UI test expected a win from an impossible same-player move sequence.",
+            repair_hint=(
+                "Public board clicks alternate players. Do not test a Gomoku win by clicking the target "
+                "player's five cells consecutively through the UI. Use a valid 9-click black-win sequence "
+                "such as black target cells `(0,0)..(0,4)` on turns 1/3/5/7/9 with white filler moves far "
+                "away, or use a pure helper/state setup when testing same-player board geometry directly."
+            ),
+            source=source,
+            paths=paths,
+        ))
+
+    if (
+        "to be null" in output
+        and "data-testid=\"winner-display\"" in output
+        and any(term in output for term in ("棋盘已满", "平局", "draw"))
+        and any(term in output for term in ("黑方", "白方", "black", "white"))
+    ):
+        findings.append(GateFinding(
+            code="turn-board-game-draw-test-created-accidental-win",
+            severity="error",
+            stage="runtime",
+            message="A full-board draw test produced a winner before the board was filled.",
+            repair_hint=(
+                "Avoid sequentially filling a Gomoku board through the public click API for draw tests; "
+                "naive row-major or alternating patterns usually create five-in-a-row before the board is "
+                "full. Test draw detection with a pure draw helper/state setup or a proven no-five board "
+                "pattern, and assert the product's visible `平局` contract rather than assuming the "
+                "`winner-display` element must be absent."
+            ),
+            source=source,
+            paths=paths,
+        ))
+
+    if (
+        "expect(element).toHaveTextContent()" in output
+        and "Expected element to have text content:" in output
+        and "Received:" in output
         and any(term in output for term in ("黑棋胜", "白棋胜", "平局"))
     ):
         findings.append(GateFinding(

@@ -1077,6 +1077,8 @@ def test_turn_based_board_game_ticket_adds_valid_move_sequence_guidance(tmp_git_
     assert "turn-based board game" in coder_user
     assert "filler moves" in coder_user
     assert "impossible same-player consecutive moves" in coder_user
+    assert "9-click black-win sequence" in coder_user
+    assert "pure board-state" in coder_user
 
 
 def test_swift_xcodegen_profile_adds_infoplist_guidance_to_coder_prompt(tmp_git_repo: Path, monkeypatch):
