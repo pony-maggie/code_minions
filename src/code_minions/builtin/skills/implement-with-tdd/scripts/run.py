@@ -1763,6 +1763,36 @@ def _stabilize_python_cli_tests(workdir) -> set[str]:
     return changed
 
 
+def _stabilize_python_tokenize_eof_contract(workdir) -> set[str]:
+    src_dir = workdir / "src"
+    if not src_dir.is_dir():
+        return set()
+
+    changed: set[str] = set()
+    for path in src_dir.rglob("*.py"):
+        text = path.read_text(errors="ignore")
+        if "def tokenize" not in text or "TokenType.EOF" not in text:
+            continue
+        updated = re.sub(
+            r"(?m)^[ \t]*tokens\.append\(Token\(TokenType\.EOF,\s*None\)\)\n",
+            "",
+            text,
+        )
+        if "def current" in updated and "return tokens[pos[0]]" in updated and "if pos[0] >= len(tokens):" not in updated:
+            updated = updated.replace(
+                "    def current():\n        return tokens[pos[0]]\n",
+                "    def current():\n"
+                "        if pos[0] >= len(tokens):\n"
+                "            return Token(TokenType.EOF, None)\n"
+                "        return tokens[pos[0]]\n",
+                1,
+            )
+        if updated != text:
+            path.write_text(updated)
+            changed.add(path.relative_to(workdir).as_posix())
+    return changed
+
+
 def _remove_nested_python_shadow_projects(workdir) -> set[str]:
     changed: set[str] = set()
     for name in ("worktree", "workspace"):
@@ -1796,6 +1826,7 @@ def _stabilize_python_cli_scaffold(workdir, ticket: dict[str, Any]) -> set[str]:
                 changed.add(written)
 
     changed.update(_stabilize_python_cli_tests(workdir))
+    changed.update(_stabilize_python_tokenize_eof_contract(workdir))
     return changed
 
 

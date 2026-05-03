@@ -2693,3 +2693,40 @@ def test_python_cli_stabilizer_removes_nested_worktree_and_src_module_cli_tests(
     assert "python -m', 'src" not in updated
     assert "test_cli_module_division_by_zero" not in updated
     assert "test_real_behavior" in updated
+
+
+def test_python_cli_stabilizer_keeps_public_tokenize_from_returning_eof(tmp_path: Path):
+    entrypoint = _load_entrypoint()
+    package_dir = tmp_path / "src" / "calc_lite"
+    package_dir.mkdir(parents=True)
+    source = (
+        "from calc_lite.tokenizer import Token, TokenType\n\n"
+        "def tokenize(text):\n"
+        "    tokens = []\n"
+        "    tokens.append(Token(TokenType.NUM, 1))\n"
+        "    tokens.append(Token(TokenType.EOF, None))\n"
+        "    return tokens\n\n"
+        "def parse(tokens):\n"
+        "    pos = [0]\n"
+        "    def current():\n"
+        "        return tokens[pos[0]]\n"
+        "    if current().type != TokenType.EOF:\n"
+        "        pass\n"
+    )
+    (package_dir / "__init__.py").write_text(source)
+    ticket = {
+        "delivery_profile": {
+            "stack_id": "python-cli",
+            "kind": "cli",
+            "language": "python",
+            "build_system": "python",
+        }
+    }
+
+    changed = entrypoint._stabilize_python_cli_scaffold(tmp_path, ticket)
+
+    assert "src/calc_lite/__init__.py" in changed
+    updated = (package_dir / "__init__.py").read_text()
+    assert "tokens.append(Token(TokenType.EOF, None))" not in updated
+    assert "if pos[0] >= len(tokens):" in updated
+    assert "return Token(TokenType.EOF, None)" in updated
