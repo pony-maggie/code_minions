@@ -828,6 +828,30 @@ def test_react_vite_scaffold_prunes_brittle_gomoku_board_class_tests(tmp_git_rep
     assert ".last-move-mark" not in text
 
 
+def test_react_vite_scaffold_prunes_over_specific_game_over_undo_turn_test(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "tests" / "Undo.test.tsx").write_text(
+        "import { describe, it, expect } from 'vitest'\n"
+        "\n"
+        "describe('游戏结束后悔棋', () => {\n"
+        "  it('Given 游戏已经结束，When 用户点击悔棋，Then 取消胜负状态并回到可继续对局状态', async () => {\n"
+        "    expect(screen.getByRole('status')).toHaveTextContent('当前回合: 白子')\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {
+        "delivery_profile": {"stack_id": "react-vite"},
+        "features": [{"name": "悔棋与重开", "description": "五子棋 黑棋白棋轮流回合"}],
+    }
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "tests" / "Undo.test.tsx").read_text()
+    assert "tests/Undo.test.tsx" in changed
+    assert "当前回合: 白子" not in text
+
+
 def test_react_vite_scaffold_replaces_brittle_ready_smoke_test(tmp_git_repo: Path):
     entrypoint = _load_entrypoint()
     (tmp_git_repo / "src").mkdir()

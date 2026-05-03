@@ -821,6 +821,8 @@ GOMOKU_OVER_DETAILED_TEST_MARKERS = (
     "右上到左下斜线",
     "棋盘已满",
     "平局",
+    "游戏结束后悔棋",
+    "取消胜负状态并回到可继续对局状态",
 )
 GOMOKU_BRITTLE_BOARD_TEST_MARKERS = (
     "渲染星位标记",
