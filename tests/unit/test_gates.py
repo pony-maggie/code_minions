@@ -339,6 +339,53 @@ def test_runtime_findings_classify_board_cell_data_stone_not_updated() -> None:
     assert "data-stone" in findings[0].repair_hint
 
 
+def test_runtime_findings_classify_presentational_board_occupied_click_contract() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  src/__tests__/Board.test.tsx > Board > 点击已有棋子的位置不调用onCellClick",
+            "AssertionError: expected \"spy\" to not be called at all, but actually been called 1 times",
+            "Received:",
+            "  1st spy call:",
+            "    Array [",
+            "      7,",
+            "      7,",
+            "    ]",
+            " ❯ src/__tests__/Board.test.tsx:47:33",
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "react-presentational-board-occupied-click-contract"
+    ]
+    assert findings[0].paths == ["src/__tests__/Board.test.tsx"]
+    assert "App" in findings[0].repair_hint
+    assert "presentational" in findings[0].repair_hint
+
+
+def test_runtime_findings_classify_hook_batched_turn_actions() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  src/__tests__/useGameState.test.ts > useGameState > 白方落子 > 白方点击空位置显示白子",
+            "AssertionError: expected 'black' to be 'white' // Object.is equality",
+            "Expected: \"white\"",
+            "Received: \"black\"",
+            " ❯ src/__tests__/useGameState.test.ts:63:42",
+            "     61|         result.current.handleCellClick(6, 6); // 白方",
+            "     62|       });",
+            "     63|       expect(result.current.board[6][6]).toBe('white');",
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "react-hook-batched-turn-actions-use-stale-state"
+    ]
+    assert findings[0].paths == ["src/__tests__/useGameState.test.ts"]
+    assert "separate `act`" in findings[0].repair_hint
+    assert "latest `result.current.handleCellClick`" in findings[0].repair_hint
+
+
 def test_runtime_findings_classify_turn_based_winner_status_mismatch() -> None:
     findings = runtime_findings_for_output(
         "\n".join([

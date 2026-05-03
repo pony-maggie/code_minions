@@ -252,6 +252,14 @@ def _first_vitest_frame_path(output: str) -> str:
     return match.group("path") if match else ""
 
 
+def _vitest_frame_path_containing(output: str, needle: str) -> str:
+    for match in _VITEST_FRAME_PATH_RE.finditer(output):
+        path = match.group("path")
+        if needle in path:
+            return path
+    return ""
+
+
 def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
     findings: list[GateFinding] = []
     path = _first_vitest_frame_path(output)
@@ -377,6 +385,56 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
             ),
             source=source,
             paths=paths,
+        ))
+
+    if (
+        "Board.test.tsx" in output
+        and "expected \"spy\" to not be called at all" in output
+        and "actually been called" in output
+        and "onCellClick" in output
+    ):
+        board_path = _vitest_frame_path_containing(output, "Board.test")
+        findings.append(GateFinding(
+            code="react-presentational-board-occupied-click-contract",
+            severity="error",
+            stage="runtime",
+            message=(
+                "A presentational Board test expected occupied cells to suppress the click callback."
+            ),
+            repair_hint=(
+                "Keep ownership clear between presentational Board and App/game-state logic. If Board is "
+                "only a controlled/presentational grid, test duplicate/occupied move prevention through "
+                "App or the game-state hook, not by expecting Board to know the game rules. If Board owns "
+                "that contract, explicitly disable occupied cells or guard `onCellClick` when `cell !== null`."
+            ),
+            source=source,
+            paths=[board_path] if board_path else paths,
+        ))
+
+    if (
+        "useGameState.test" in output
+        and "handleCellClick" in output
+        and (
+            "expected 'black' to be 'white'" in output
+            or "expected 'white' to be 'black'" in output
+            or "expected null to be 'black'" in output
+        )
+    ):
+        hook_path = _vitest_frame_path_containing(output, "useGameState.test")
+        findings.append(GateFinding(
+            code="react-hook-batched-turn-actions-use-stale-state",
+            severity="error",
+            stage="runtime",
+            message="A hook test appears to call multiple turn-changing actions inside one stale render snapshot.",
+            repair_hint=(
+                "In renderHook tests for turn-based React state, perform each move in a separate `act` call "
+                "and call the latest `result.current.handleCellClick` after React has applied the previous "
+                "state update. If the product intentionally supports multiple programmatic moves in one "
+                "transaction, implement `handleCellClick` with functional state updates; otherwise prefer "
+                "public App click tests for alternating-turn workflows."
+            ),
+            source=source,
+            paths=[hook_path] if hook_path else paths,
         ))
 
     if (
