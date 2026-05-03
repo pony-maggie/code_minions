@@ -550,7 +550,10 @@ def _delivery_guidance_context(ticket: dict[str, Any]) -> str:
             "white wins, both diagonals, and full-board draw fixtures; those often spend more effort on "
             "constructing safe filler moves than on product behavior. If rule-geometry coverage is needed, "
             "use a small pure helper test with an explicit board state. Do not let synthetic full-board "
-            "or complex filler-sequence tests block an otherwise working MVP."
+            "or complex filler-sequence tests block an otherwise working MVP. Do not test game-over "
+            "behavior by constructing a five-in-row sequence in an early move/turn-management task; "
+            "defer that assertion to the win-detection task, or test an already-ended state only when "
+            "the implementation already exposes such a state directly."
         )
 
     return "\n".join(lines) if lines else "No delivery-specific guidance."

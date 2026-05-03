@@ -822,6 +822,20 @@ def test_turn_based_board_game_guidance_keeps_gomoku_tests_lightweight():
     assert "(10,10)" not in guidance
 
 
+def test_turn_based_board_game_guidance_defers_game_over_sequences_before_win_detection():
+    entrypoint = _load_entrypoint()
+    ticket = {
+        "delivery_profile": {"stack_id": "react-vite"},
+        "title": "核心落子交互与回合管理",
+        "description": "实现五子棋棋盘点击落子、回合切换、已有棋子不可重复落子",
+    }
+
+    guidance = entrypoint._delivery_guidance_context(ticket)
+
+    assert "Do not test game-over behavior by constructing a five-in-row sequence" in guidance
+    assert "defer that assertion to the win-detection task" in guidance
+
+
 def test_xcodegen_duplicate_product_name_failure_gets_repair_hint(tmp_git_repo: Path, monkeypatch):
     entrypoint = _load_entrypoint()
     (tmp_git_repo / "project.yml").write_text(
