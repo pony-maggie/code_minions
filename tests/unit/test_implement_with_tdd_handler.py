@@ -829,6 +829,20 @@ def test_turn_based_board_game_guidance_limits_complex_gomoku_rule_tests():
     assert "omit automated draw tests for the Gomoku MVP" in guidance
 
 
+def test_turn_based_board_game_guidance_preserves_current_turn_status_contract():
+    entrypoint = _load_entrypoint()
+    ticket = {
+        "delivery_profile": {"stack_id": "react-vite"},
+        "description": "五子棋，显示当前回合并判定胜负",
+    }
+
+    guidance = entrypoint._delivery_guidance_context(ticket)
+
+    assert "Preserve existing current-turn status text" in guidance
+    assert "当前回合: 黑子" in guidance
+    assert "黑子落子" in guidance
+
+
 def test_turn_based_board_game_guidance_keeps_gomoku_tests_lightweight():
     entrypoint = _load_entrypoint()
     ticket = {

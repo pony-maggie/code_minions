@@ -819,6 +819,28 @@ def test_runtime_findings_classify_winner_state_not_updated() -> None:
     assert "placeStone" in findings[0].repair_hint
 
 
+def test_runtime_findings_classify_current_turn_status_contract_drift() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  tests/interaction.test.tsx > 核心落子交互与回合管理 > 点击已有棋子的位置不改变棋盘状态",
+            '          data-testid="game-status"',
+            "❯ tests/interaction.test.tsx:71:21",
+            "     71|       expect(screen.getByText('当前回合: 白子')).toBeInTheDocument();",
+        ]),
+        source="react-vite",
+    )
+
+    assert "turn-based-board-game-current-turn-status-contract-drift" in [
+        finding.code for finding in findings
+    ]
+    finding = next(
+        f for f in findings
+        if f.code == "turn-based-board-game-current-turn-status-contract-drift"
+    )
+    assert finding.paths == ["tests/interaction.test.tsx"]
+    assert "当前回合" in finding.repair_hint
+
+
 def test_runtime_findings_classify_hook_winner_state_not_updated() -> None:
     findings = runtime_findings_for_output(
         "\n".join([

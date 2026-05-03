@@ -712,6 +712,25 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
         ))
 
     if (
+        any(pattern in output for pattern in ("getByText('当前回合:", 'getByText("当前回合:'))
+        and any(term in output for term in ("data-testid=\"game-status\"", "当前回合", "核心落子交互"))
+    ):
+        findings.append(GateFinding(
+            code="turn-based-board-game-current-turn-status-contract-drift",
+            severity="error",
+            stage="runtime",
+            message="Turn-based board game current-turn status text drifted from an earlier test contract.",
+            repair_hint=(
+                "Preserve the existing visible current-turn contract across tasks. If earlier tests assert "
+                "`当前回合: 黑子` or `当前回合: 白子`, keep rendering that text for in-progress turns and add "
+                "winner/draw text only for ended games, or update the UI and all existing tests consistently "
+                "in the same task."
+            ),
+            source=source,
+            paths=paths,
+        ))
+
+    if (
         "expect(element).toHaveTextContent()" in output
         and "Expected element to have text content:" in output
         and "Received:" in output
