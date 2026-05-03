@@ -1040,6 +1040,30 @@ def test_react_vite_scaffold_keeps_turn_on_occupied_cell_click(tmp_git_repo: Pat
     assert "}, [board, currentPlayer, gameStatus])" in text
 
 
+def test_react_vite_scaffold_allows_nullable_win_result_state(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "App.tsx").write_text(
+        "import { useState } from 'react'\n"
+        "import { type WinResult } from './utils/winDetection'\n"
+        "\n"
+        "export default function App() {\n"
+        "  const [winResult, setWinResult] = useState<WinResult>(null)\n"
+        "  return <div>{winResult?.winner}</div>\n"
+        "}\n"
+    )
+    ticket = {
+        "delivery_profile": {"stack_id": "react-vite"},
+        "description": "五子棋 胜负判定 连续五子",
+    }
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "App.tsx").read_text()
+    assert "src/App.tsx" in changed
+    assert "useState<WinResult | null>(null)" in text
+
+
 def test_react_vite_scaffold_replaces_brittle_ready_smoke_test(tmp_git_repo: Path):
     entrypoint = _load_entrypoint()
     (tmp_git_repo / "src").mkdir()

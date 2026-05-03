@@ -1354,6 +1354,30 @@ def _stabilize_occupied_cell_turn_guard(workdir, ticket: dict[str, Any]) -> set[
     return changed
 
 
+def _stabilize_nullable_win_result_state(workdir, ticket: dict[str, Any]) -> set[str]:
+    if not (_looks_like_turn_based_board_game(ticket) or _looks_like_gomoku_project(ticket)):
+        return set()
+
+    src_dir = workdir / "src"
+    if not src_dir.is_dir():
+        return set()
+
+    changed: set[str] = set()
+    for path in src_dir.rglob("*"):
+        if not path.is_file() or path.suffix not in {".ts", ".tsx"}:
+            continue
+        if ".test." in path.name.lower() or ".spec." in path.name.lower():
+            continue
+        original = path.read_text(errors="ignore")
+        if "useState<WinResult>(null)" not in original:
+            continue
+        updated = original.replace("useState<WinResult>(null)", "useState<WinResult | null>(null)")
+        if updated != original:
+            path.write_text(updated)
+            changed.add(path.relative_to(workdir).as_posix())
+    return changed
+
+
 def _imported_symbol_name(raw_name: str) -> str:
     name = raw_name.strip()
     if name.startswith("type "):
@@ -1561,6 +1585,7 @@ def _stabilize_react_vite_scaffold(workdir, ticket: dict[str, Any]) -> set[str]:
     changed.update(_stabilize_board_test_noop_click_handlers(workdir, ticket))
     changed.update(_stabilize_duplicate_cell_testids(workdir, ticket))
     changed.update(_stabilize_occupied_cell_turn_guard(workdir, ticket))
+    changed.update(_stabilize_nullable_win_result_state(workdir, ticket))
     changed.update(_stabilize_react_vite_types_module(workdir))
     changed.update(_stabilize_react_vite_board_type_helpers(workdir))
     changed.update(_stabilize_position_type_contract(workdir))
