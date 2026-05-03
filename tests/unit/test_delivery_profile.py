@@ -658,6 +658,29 @@ def test_validate_react_vite_checks_can_be_selected_by_stack_id(tmp_path) -> Non
     assert any(issue["code"] == "missing-test-file" for issue in issues)
 
 
+def test_validate_rejects_duplicate_react_vite_types_module_sources(tmp_path) -> None:
+    (tmp_path / "package.json").write_text('{"scripts":{"test":"vitest run"}}\n')
+    (tmp_path / "vite.config.ts").write_text(
+        "import { defineConfig } from 'vitest/config'\n"
+        "export default defineConfig({ test: { environment: 'jsdom' } })\n"
+    )
+    (tmp_path / "src" / "types").mkdir(parents=True)
+    (tmp_path / "src" / "types.ts").write_text("export interface CellState {}\n")
+    (tmp_path / "src" / "types" / "index.ts").write_text("export interface Cell {}\n")
+    (tmp_path / "src" / "App.test.tsx").write_text(
+        "import { describe, expect, it } from 'vitest'\n"
+        "describe('App', () => { it('renders', () => { expect(true).toBe(true) }) })\n"
+    )
+    profile = {"stack_id": "react-vite", "gate_strictness": "relaxed"}
+
+    issues = validate_delivery_profile(tmp_path, profile)
+
+    issue = next(issue for issue in issues if issue["code"] == "duplicate-types-module")
+    assert issue["severity"] == "error"
+    assert issue["paths"] == ["src/types.ts", "src/types/index.ts"]
+    assert "single canonical shared type module" in issue["message"]
+
+
 def test_validate_rejects_nested_react_vite_worktree_project(tmp_path) -> None:
     (tmp_path / "package.json").write_text('{"scripts":{"test":"vitest run"}}\n')
     (tmp_path / "vite.config.ts").write_text(

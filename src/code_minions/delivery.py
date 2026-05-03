@@ -614,6 +614,19 @@ def _nested_react_vite_project_paths(workdir: Path) -> list[Path]:
     return nested_roots
 
 
+def _duplicate_types_module_paths(workdir: Path) -> list[Path]:
+    module_files = [workdir / "src" / "types.ts", workdir / "src" / "types.tsx"]
+    index_files = [
+        workdir / "src" / "types" / "index.ts",
+        workdir / "src" / "types" / "index.tsx",
+    ]
+    existing_modules = [path for path in module_files if path.is_file()]
+    existing_indexes = [path for path in index_files if path.is_file()]
+    if not existing_modules or not existing_indexes:
+        return []
+    return [existing_modules[0], existing_indexes[0]]
+
+
 def _ambiguous_testing_library_queries(workdir: Path) -> list[tuple[Path, str]]:
     offenders: list[tuple[Path, str]] = []
     for path in _js_ts_test_files(workdir):
@@ -829,6 +842,23 @@ def validate_delivery_profile(workdir: Path, profile: dict[str, Any] | None) -> 
                     "tests to root-level `index.html`, `package.json`, and `src/`, then delete the "
                     "nested shadow project so later tasks modify the same app."
                 ),
+            ))
+        duplicate_types = _duplicate_types_module_paths(workdir)
+        if duplicate_types:
+            paths = [path.relative_to(workdir).as_posix() for path in duplicate_types]
+            issues.append(_delivery_issue(
+                "duplicate-types-module",
+                (
+                    f"React/Vite project has duplicate shared type module entries: {', '.join(paths)}. "
+                    "Keep a single canonical shared type module, usually `src/types.ts`; extend that file "
+                    "or update all imports consistently instead of adding `src/types/index.ts` that shadows "
+                    "`../types` resolution."
+                ),
+                repair_hint=(
+                    "Merge the duplicate type declarations into one module and update imports so every "
+                    "caller references the same exported symbols."
+                ),
+                paths=paths,
             ))
         ambiguous_queries = _ambiguous_testing_library_queries(workdir)
         if ambiguous_queries:

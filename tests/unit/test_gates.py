@@ -103,6 +103,63 @@ def test_runtime_findings_classify_typescript_contract_diagnostics() -> None:
     assert "existing exported symbol" in findings[1].repair_hint
 
 
+def test_runtime_findings_classify_react_hook_missing_imports() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "src/hooks/useGame.ts(20,29): error TS2304: Cannot find name 'useState'.",
+            "src/hooks/useGame.ts(26,20): error TS2304: Cannot find name 'useCallback'.",
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == ["typescript-missing-react-hook-import"]
+    assert findings[0].paths == ["src/hooks/useGame.ts"]
+    assert "import { useCallback, useState } from 'react'" in findings[0].repair_hint
+
+
+def test_runtime_findings_classify_missing_local_symbol() -> None:
+    findings = runtime_findings_for_output(
+        "src/hooks/useGame.ts(60,10): error TS2304: Cannot find name 'isWinningCell'.",
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == ["typescript-missing-symbol"]
+    assert findings[0].paths == ["src/hooks/useGame.ts"]
+    assert "Define or import `isWinningCell`" in findings[0].repair_hint
+
+
+def test_runtime_findings_classify_local_declaration_not_exported() -> None:
+    findings = runtime_findings_for_output(
+        'src/hooks/useGame.ts(2,31): error TS2459: Module \'"../utils/gameLogic"\' '
+        "declares 'StoneColor' locally, but it is not exported.",
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "typescript-local-declaration-not-exported"
+    ]
+    assert findings[0].paths == ["src/hooks/useGame.ts"]
+    assert "canonical source module" in findings[0].repair_hint
+
+
+def test_runtime_findings_classify_implicit_any_diagnostics() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "src/App.tsx(30,21): error TS7006: Parameter 'row' implicitly has an 'any' type.",
+            "src/App.tsx(30,26): error TS7006: Parameter 'rowIndex' implicitly has an 'any' type.",
+            "src/Board.tsx(31,23): error TS7006: Parameter 'cell' implicitly has an 'any' type.",
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "typescript-implicit-any",
+        "typescript-implicit-any",
+    ]
+    assert findings[0].paths == ["src/App.tsx"]
+    assert "Annotate callback parameters" in findings[0].repair_hint
+
+
 def test_findings_to_text_groups_by_stage_and_severity() -> None:
     text = findings_to_text([
         GateFinding(

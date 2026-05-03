@@ -800,6 +800,10 @@ def test_react_vite_profile_adds_test_environment_guidance_to_coder_prompt(tmp_g
     assert "semantic click targets" in coder_user
     assert "Preserve existing exported type contracts" in coder_user
     assert "Stone.Black" in coder_user
+    assert "single canonical shared type module" in coder_user
+    assert "src/types.ts" in coder_user
+    assert "do not create `src/types/index.ts`" in coder_user
+    assert "import React hooks explicitly" in coder_user
 
 
 def test_turn_based_board_game_ticket_adds_valid_move_sequence_guidance(tmp_git_repo: Path, monkeypatch):
