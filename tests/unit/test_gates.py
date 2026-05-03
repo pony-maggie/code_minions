@@ -664,6 +664,30 @@ def test_runtime_findings_classify_draw_helper_board_with_accidental_win() -> No
     assert "proven no-five board" in findings[0].repair_hint
 
 
+def test_runtime_findings_classify_draw_helper_expected_null_but_received_winner() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  tests/checkWinner.test.ts > checkDraw > should detect draw when board is full with no 5-in-a-row",
+            "AssertionError: expected { Object (winner, positions) } to be null",
+            "Received:",
+            "Object {",
+            "  \"winner\": \"black\",",
+            "}",
+            "❯ tests/checkWinner.test.ts:215:20",
+            "  213|     // No winner should exist with this pattern",
+            "  214|     const winner = checkWinner(board);",
+            "  215|     expect(winner).toBeNull();",
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "turn-board-game-draw-test-created-accidental-win"
+    ]
+    assert findings[0].paths == ["tests/checkWinner.test.ts"]
+    assert "proven no-five board" in findings[0].repair_hint
+
+
 def test_runtime_findings_classify_missing_white_win_from_invalid_sequence() -> None:
     findings = runtime_findings_for_output(
         "\n".join([

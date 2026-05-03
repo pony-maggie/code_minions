@@ -845,6 +845,26 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
         ))
 
     if (
+        "expected { Object (winner, positions) } to be null" in output
+        and any(term in output for term in ("board is full", "full with no 5-in-a-row", "No winner"))
+        and any(term in output for term in ('"winner": "black"', '"winner": "white"'))
+    ):
+        findings.append(GateFinding(
+            code="turn-board-game-draw-test-created-accidental-win",
+            severity="error",
+            stage="runtime",
+            message="A draw helper test expected no winner, but the full-board fixture contains five-in-row.",
+            repair_hint=(
+                "A full Gomoku board is not automatically a draw. Use a proven no-five board fixture, "
+                "or test draw by setting a full board state known not to contain five contiguous stones "
+                "in any row, column, or diagonal before asserting `null`/draw. Avoid simple checkerboard, "
+                "row-major, or repeated stripe patterns unless you have verified the win detector returns no winner."
+            ),
+            source=source,
+            paths=paths,
+        ))
+
+    if (
         "expect(element).toHaveTextContent()" in output
         and "Expected element to have text content:" in output
         and "Received:" in output
