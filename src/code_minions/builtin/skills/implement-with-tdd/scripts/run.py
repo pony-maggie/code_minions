@@ -1298,6 +1298,62 @@ def _stabilize_duplicate_cell_testids(workdir, ticket: dict[str, Any]) -> set[st
     return changed
 
 
+def _stabilize_occupied_cell_turn_guard(workdir, ticket: dict[str, Any]) -> set[str]:
+    if not (_looks_like_turn_based_board_game(ticket) or _looks_like_gomoku_project(ticket)):
+        return set()
+
+    src_dir = workdir / "src"
+    if not src_dir.is_dir():
+        return set()
+
+    changed: set[str] = set()
+    for path in src_dir.rglob("*.tsx"):
+        if ".test." in path.name.lower() or ".spec." in path.name.lower():
+            continue
+        original = path.read_text(errors="ignore")
+        if not all(token in original for token in ("useCallback", "handleCellClick", "setBoard", "setCurrentPlayer")):
+            continue
+        if "const [board, setBoard]" not in original and "const [board,setBoard]" not in original:
+            continue
+        if "if (board[row][col]" in original:
+            continue
+
+        guard = ""
+        if "prev[row][col].stone !== null" in original:
+            guard = "if (board[row][col].stone !== null) return"
+        elif "prev[row][col] !== null" in original:
+            guard = "if (board[row][col] !== null) return"
+        if not guard:
+            continue
+
+        guard_text = guard
+        updated = re.sub(
+            r"""(?m)^(?P<indent>\s*)if\s*\(\s*gameStatus\s*!==\s*['"]playing['"]\s*\)\s*return\s*;?\s*$""",
+            lambda match, guard_text=guard_text: f"{match.group(0)}\n{match.group('indent')}{guard_text}",
+            original,
+            count=1,
+        )
+        if updated == original:
+            continue
+
+        def add_board_dependency(match: re.Match[str]) -> str:
+            deps = [dep.strip() for dep in match.group("deps").split(",") if dep.strip()]
+            if "board" not in deps:
+                deps.insert(0, "board")
+            return f"{match.group('prefix')}{', '.join(deps)}{match.group('suffix')}"
+
+        updated = re.sub(
+            r"""(?P<prefix>const\s+handleCellClick\s*=\s*useCallback\s*\([\s\S]*?\},\s*\[)(?P<deps>[^\]]*)(?P<suffix>\]\))""",
+            add_board_dependency,
+            updated,
+            count=1,
+        )
+        if updated != original:
+            path.write_text(updated)
+            changed.add(path.relative_to(workdir).as_posix())
+    return changed
+
+
 def _imported_symbol_name(raw_name: str) -> str:
     name = raw_name.strip()
     if name.startswith("type "):
@@ -1504,6 +1560,7 @@ def _stabilize_react_vite_scaffold(workdir, ticket: dict[str, Any]) -> set[str]:
     changed.update(_stabilize_turn_based_board_game_mvp_tests(workdir, ticket))
     changed.update(_stabilize_board_test_noop_click_handlers(workdir, ticket))
     changed.update(_stabilize_duplicate_cell_testids(workdir, ticket))
+    changed.update(_stabilize_occupied_cell_turn_guard(workdir, ticket))
     changed.update(_stabilize_react_vite_types_module(workdir))
     changed.update(_stabilize_react_vite_board_type_helpers(workdir))
     changed.update(_stabilize_position_type_contract(workdir))

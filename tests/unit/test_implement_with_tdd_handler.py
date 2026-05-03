@@ -1001,6 +1001,45 @@ def test_react_vite_scaffold_adds_noop_board_click_handler_in_tests(tmp_git_repo
     assert "lastMove={{ row: 1, col: 1 }} onCellClick={() => {}}" in text
 
 
+def test_react_vite_scaffold_keeps_turn_on_occupied_cell_click(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "App.tsx").write_text(
+        "import { useCallback, useState } from 'react'\n"
+        "\n"
+        "export default function App() {\n"
+        "  const [board, setBoard] = useState(createEmptyBoard())\n"
+        "  const [currentPlayer, setCurrentPlayer] = useState<'black' | 'white'>('black')\n"
+        "  const [gameStatus, setGameStatus] = useState('playing')\n"
+        "\n"
+        "  const handleCellClick = useCallback((row: number, col: number) => {\n"
+        "    if (gameStatus !== 'playing') return\n"
+        "\n"
+        "    setBoard(prev => {\n"
+        "      if (prev[row][col].stone !== null) return prev\n"
+        "      const next = prev.map(r => r.map(c => ({ ...c })))\n"
+        "      next[row][col] = { stone: currentPlayer }\n"
+        "      return next\n"
+        "    })\n"
+        "    setCurrentPlayer(prev => prev === 'black' ? 'white' : 'black')\n"
+        "  }, [currentPlayer, gameStatus])\n"
+        "\n"
+        "  return <div />\n"
+        "}\n"
+    )
+    ticket = {
+        "delivery_profile": {"stack_id": "react-vite"},
+        "description": "五子棋 棋盘 黑方 白方 回合",
+    }
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "App.tsx").read_text()
+    assert "src/App.tsx" in changed
+    assert "if (board[row][col].stone !== null) return" in text
+    assert "}, [board, currentPlayer, gameStatus])" in text
+
+
 def test_react_vite_scaffold_replaces_brittle_ready_smoke_test(tmp_git_repo: Path):
     entrypoint = _load_entrypoint()
     (tmp_git_repo / "src").mkdir()
