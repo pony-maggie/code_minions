@@ -556,6 +556,71 @@ def test_react_vite_scaffold_adds_missing_position_type_contract(tmp_git_repo: P
     assert "col: number" in types_text
 
 
+def test_react_vite_scaffold_keeps_existing_import_type_position(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "types.ts").write_text(
+        "export type Stone = 'black' | 'white'\n"
+        "export type Board = (Stone | null)[][]\n"
+        "export interface Position {\n"
+        "  row: number\n"
+        "  col: number\n"
+        "}\n"
+    )
+    (tmp_git_repo / "src" / "App.tsx").write_text(
+        "import { useState } from 'react'\n"
+        "import type { Board as BoardType, Position, Stone } from './types'\n"
+        "\n"
+        "export default function App() {\n"
+        "  const [lastMove] = useState<Position | null>(null)\n"
+        "  return <div>{lastMove?.row}</div>\n"
+        "}\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "App.tsx").read_text()
+    assert "src/App.tsx" not in changed
+    assert text.count("Position") == 2
+    assert "import { type Position }" not in text
+
+
+def test_react_vite_scaffold_aliases_board_type_import_collision(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src" / "components").mkdir(parents=True)
+    (tmp_git_repo / "src" / "types.ts").write_text(
+        "export type Stone = 'black' | 'white'\n"
+        "export type Board = (Stone | null)[][]\n"
+        "export interface Position {\n"
+        "  row: number\n"
+        "  col: number\n"
+        "}\n"
+    )
+    (tmp_git_repo / "src" / "components" / "Board.tsx").write_text(
+        "import type { Board, Position } from '../types'\n"
+        "\n"
+        "interface BoardProps {\n"
+        "  board: Board\n"
+        "  lastMove?: Position | null\n"
+        "}\n"
+        "\n"
+        "export const Board = ({ board, lastMove }: BoardProps) => {\n"
+        "  return <div>{board.length}{lastMove?.row}</div>\n"
+        "}\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "components" / "Board.tsx").read_text()
+    assert "src/components/Board.tsx" in changed
+    assert "Board as BoardState" in text
+    assert "board: BoardState" in text
+    assert "board: Board\n" not in text
+    assert "from '../types'\ninterface BoardProps" in text
+
+
 def test_react_vite_scaffold_repairs_user_event_dynamic_import(tmp_git_repo: Path):
     entrypoint = _load_entrypoint()
     (tmp_git_repo / "src").mkdir()

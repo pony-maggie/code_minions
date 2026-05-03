@@ -651,9 +651,20 @@ REACT_VITE_BOARD_COORDINATE_RE = re.compile(
     re.IGNORECASE,
 )
 REACT_VITE_REGEX_LITERAL_RE = re.compile(r"""/(?P<pattern>\^(?:\\.|[^/\n])*)(?P<suffix>/[a-z]*)""")
-REACT_VITE_TYPES_IMPORT_RE = re.compile(
-    r"""import\s*\{(?P<names>[^}]+)\}\s*from\s*['"](?P<source>\.{1,2}/[^'"]*types)['"]\s*;?""",
+REACT_VITE_NAMED_IMPORT_RE = re.compile(
+    r"""import\s+(?:type\s+)?\{(?P<names>[^}]+)\}\s*from\s*['"][^'"]+['"]\s*;?""",
     re.MULTILINE | re.DOTALL,
+)
+REACT_VITE_TYPES_IMPORT_RE = re.compile(
+    r"""import\s+(?P<typeonly>type\s+)?\{(?P<names>[^}]+)\}\s*from\s*['"](?P<source>\.{1,2}/[^'"]*types)['"]\s*;?""",
+    re.MULTILINE | re.DOTALL,
+)
+REACT_VITE_SINGLE_POSITION_TYPES_IMPORT_RE = re.compile(
+    r"""^import\s*\{\s*type\s+Position\s*\}\s*from\s*['"](?P<source>\.{1,2}/[^'"]*types)['"]\s*;?\n""",
+    re.MULTILINE,
+)
+REACT_VITE_GLUED_IMPORT_DECLARATION_RE = re.compile(
+    r"""(from\s*['"][^'"]+['"])(?=(?:interface|type|const|export|function|class)\b)"""
 )
 REACT_VITE_POSITION_EXPORT_RE = re.compile(r"""\bexport\s+(?:interface|type)\s+Position\b""")
 REACT_VITE_POSITION_LOCAL_RE = re.compile(r"""\b(?:interface|type)\s+Position\b""")
@@ -809,8 +820,26 @@ def _stabilize_react_vite_tests(workdir) -> set[str]:
     return changed
 
 
+def _imported_symbol_name(raw_name: str) -> str:
+    name = raw_name.strip()
+    if name.startswith("type "):
+        name = name.removeprefix("type ").strip()
+    return re.split(r"\s+as\s+", name, maxsplit=1)[0].strip()
+
+
+def _imports_named_symbol(text: str, symbol: str) -> bool:
+    for match in REACT_VITE_NAMED_IMPORT_RE.finditer(text):
+        if any(_imported_symbol_name(name) == symbol for name in match.group("names").split(",")):
+            return True
+    return False
+
+
 def _uses_position_without_local_definition(text: str) -> bool:
-    return bool(re.search(r"\bPosition\b", text)) and not REACT_VITE_POSITION_LOCAL_RE.search(text)
+    return (
+        bool(re.search(r"\bPosition\b", text))
+        and not REACT_VITE_POSITION_LOCAL_RE.search(text)
+        and not _imports_named_symbol(text, "Position")
+    )
 
 
 def _types_import_specifier(workdir, path) -> str:
@@ -819,6 +848,69 @@ def _types_import_specifier(workdir, path) -> str:
     if not specifier.startswith("."):
         specifier = f"./{specifier}"
     return specifier
+
+
+def _has_local_symbol_declaration(text: str, symbol: str) -> bool:
+    return bool(
+        re.search(
+            rf"""\b(?:export\s+)?(?:const|let|var|function|class|interface|type)\s+{re.escape(symbol)}\b""",
+            text,
+        )
+    )
+
+
+def _types_import_has_symbol(text: str, symbol: str) -> bool:
+    for match in REACT_VITE_TYPES_IMPORT_RE.finditer(text):
+        if any(_imported_symbol_name(name) == symbol for name in match.group("names").split(",")):
+            return True
+    return False
+
+
+def _remove_redundant_position_type_imports(text: str) -> str:
+    if not _types_import_has_symbol(text, "Position"):
+        return text
+    matches = list(REACT_VITE_SINGLE_POSITION_TYPES_IMPORT_RE.finditer(text))
+    if not matches:
+        return text
+    return REACT_VITE_SINGLE_POSITION_TYPES_IMPORT_RE.sub("", text)
+
+
+def _separate_glued_import_declarations(text: str) -> str:
+    return REACT_VITE_GLUED_IMPORT_DECLARATION_RE.sub(r"\1\n", text)
+
+
+def _alias_board_type_import_collision(text: str) -> str:
+    if not _has_local_symbol_declaration(text, "Board"):
+        return text
+
+    def replace_import(match: re.Match[str]) -> str:
+        names = [name.strip() for name in match.group("names").split(",") if name.strip()]
+        changed = False
+        updated_names: list[str] = []
+        for name in names:
+            imported = _imported_symbol_name(name)
+            if imported == "Board" and " as " not in name:
+                changed = True
+                if match.group("typeonly"):
+                    updated_names.append("Board as BoardState")
+                elif name.startswith("type "):
+                    updated_names.append("type Board as BoardState")
+                else:
+                    updated_names.append("type Board as BoardState")
+            else:
+                updated_names.append(name)
+        if not changed:
+            return match.group(0)
+        import_keyword = "import type" if match.group("typeonly") else "import"
+        return f"{import_keyword} {{ {', '.join(updated_names)} }} from '{match.group('source')}'\n"
+
+    updated = REACT_VITE_TYPES_IMPORT_RE.sub(replace_import, text)
+    if updated == text:
+        return text
+
+    updated = re.sub(r"""(:\s*)Board\b""", r"\1BoardState", updated)
+    updated = re.sub(r"""(<\s*)Board(\s*[,>])""", r"\1BoardState\2", updated)
+    return updated
 
 
 def _stabilize_position_type_contract(workdir) -> set[str]:
@@ -836,13 +928,22 @@ def _stabilize_position_type_contract(workdir) -> set[str]:
         and ".spec." not in path.name.lower()
         and path != types_path
     ]
+    changed: set[str] = set()
+    for path in source_files:
+        text = path.read_text(errors="ignore")
+        updated = _alias_board_type_import_collision(
+            _remove_redundant_position_type_imports(_separate_glued_import_declarations(text))
+        )
+        if updated != text:
+            path.write_text(updated)
+            changed.add(path.relative_to(workdir).as_posix())
+
     position_users = [
         path for path in source_files if _uses_position_without_local_definition(path.read_text(errors="ignore"))
     ]
     if not position_users:
-        return set()
+        return changed
 
-    changed: set[str] = set()
     types_text = types_path.read_text(errors="ignore")
     if not REACT_VITE_POSITION_EXPORT_RE.search(types_text):
         types_path.write_text(types_text.rstrip() + "\n\n" + REACT_VITE_POSITION_TYPE)
@@ -850,14 +951,15 @@ def _stabilize_position_type_contract(workdir) -> set[str]:
 
     for path in position_users:
         text = path.read_text(errors="ignore")
-        if re.search(r"""\bimport\s*\{[^}]*\bPosition\b[^}]*\}\s*from\s*['"][^'"]*types['"]""", text, re.DOTALL):
+        if _types_import_has_symbol(text, "Position"):
             continue
 
         match = REACT_VITE_TYPES_IMPORT_RE.search(text)
         if match:
             names = [name.strip() for name in match.group("names").split(",") if name.strip()]
-            names.append("type Position")
-            replacement = f"import {{ {', '.join(names)} }} from '{match.group('source')}'"
+            names.append("Position" if match.group("typeonly") else "type Position")
+            import_keyword = "import type" if match.group("typeonly") else "import"
+            replacement = f"{import_keyword} {{ {', '.join(names)} }} from '{match.group('source')}'\n"
             updated = text[:match.start()] + replacement + text[match.end():]
         else:
             specifier = _types_import_specifier(workdir, path)
