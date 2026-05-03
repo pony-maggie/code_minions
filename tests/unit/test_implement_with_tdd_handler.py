@@ -919,6 +919,36 @@ def test_react_vite_scaffold_prunes_over_specific_game_over_undo_turn_test(tmp_g
     assert "当前回合: 白子" not in text
 
 
+def test_react_vite_scaffold_prunes_early_game_over_component_tests(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src" / "components").mkdir(parents=True)
+    (tmp_git_repo / "src" / "components" / "Board.test.tsx").write_text(
+        "import { describe, it, expect } from 'vitest'\n"
+        "\n"
+        "describe('BoardComponent - 落子交互与回合管理', () => {\n"
+        "  it('Given 空棋盘，When 黑方点击一个空交叉点，Then 该位置显示黑子', () => {\n"
+        "    expect(true).toBe(true)\n"
+        "  })\n"
+        "\n"
+        "  it('Given 已经出现胜者 > When 用户继续点击棋盘, Then 不再新增棋子', () => {\n"
+        "    expect(emptyCell).toHaveAttribute('data-stone', null)\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {
+        "delivery_profile": {"stack_id": "react-vite"},
+        "description": "五子棋 棋盘 黑方 白方 回合",
+    }
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "components" / "Board.test.tsx").read_text()
+    assert "src/components/Board.test.tsx" in changed
+    assert "空棋盘" in text
+    assert "已经出现胜者" not in text
+    assert "data-stone', null" not in text
+
+
 def test_react_vite_scaffold_removes_duplicate_cell_testids_from_wrappers(tmp_git_repo: Path):
     entrypoint = _load_entrypoint()
     (tmp_git_repo / "src" / "components").mkdir(parents=True)
