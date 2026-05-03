@@ -922,6 +922,27 @@ def test_validate_accepts_react_vite_test_importing_existing_relative_module(tmp
     assert not any(issue["code"] == "unresolved-relative-import" for issue in issues)
 
 
+def test_validate_accepts_relative_import_with_dotted_module_name(tmp_path) -> None:
+    (tmp_path / "package.json").write_text('{"scripts":{"test":"vitest run"}}\n')
+    (tmp_path / "vite.config.ts").write_text(
+        "import { defineConfig } from 'vitest/config'\n"
+        "export default defineConfig({ test: { environment: 'jsdom' } })\n"
+    )
+    (tmp_path / "src" / "components").mkdir(parents=True)
+    (tmp_path / "src" / "components" / "Board.test.tsx").write_text(
+        "import { makeBoard } from './Board.test.utils'\n"
+        "test('renders', () => expect(makeBoard()).toEqual([]))\n"
+    )
+    (tmp_path / "src" / "components" / "Board.test.utils.ts").write_text(
+        "export const makeBoard = () => []\n"
+    )
+    profile = {"stack_id": "react-vite"}
+
+    issues = validate_delivery_profile(tmp_path, profile)
+
+    assert not any(issue["code"] == "unresolved-relative-import" for issue in issues)
+
+
 def test_execution_profile_for_react_vite_installs_and_runs_ci_tests() -> None:
     profile = {
         "kind": "web-app",

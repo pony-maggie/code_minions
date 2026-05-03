@@ -707,13 +707,20 @@ def _relative_import_resolves(importer: Path, imported: str) -> bool:
     target = (importer.parent / imported).resolve()
     if target.is_file():
         return True
-    if target.suffix:
+    if target.suffix in TS_RESOLVABLE_EXTENSIONS:
         return False
-    if any(target.with_suffix(ext).is_file() for ext in TS_RESOLVABLE_EXTENSIONS):
+    if any((target.parent / f"{target.name}{ext}").is_file() for ext in TS_RESOLVABLE_EXTENSIONS):
         return True
     if target.is_dir():
         return any((target / f"index{ext}").is_file() for ext in TS_RESOLVABLE_EXTENSIONS)
     return False
+
+
+def _import_module_stem(module_name: str) -> str:
+    for extension in TS_RESOLVABLE_EXTENSIONS:
+        if module_name.endswith(extension):
+            return module_name[: -len(extension)]
+    return module_name
 
 
 def _candidate_relative_import_targets(workdir: Path, importer: Path, imported: str) -> list[Path]:
@@ -721,7 +728,7 @@ def _candidate_relative_import_targets(workdir: Path, importer: Path, imported: 
     if not module_name:
         return []
 
-    module_stem = Path(module_name).stem if Path(module_name).suffix else module_name
+    module_stem = _import_module_stem(module_name)
     candidates: list[Path] = []
     for path in _iter_files(workdir):
         if path == importer or path.suffix not in TS_RESOLVABLE_EXTENSIONS:
