@@ -524,6 +524,25 @@ def test_runtime_findings_classify_impossible_public_win_sequence() -> None:
     assert "pure helper" in finding.repair_hint
 
 
+def test_runtime_findings_classify_white_win_sequence_that_gives_black_early_win() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  tests/winDetection.test.ts > makeMove with win/draw detection > sets winner when white makes 5-in-a-row vertically",
+            "AssertionError: expected 'black' to be 'white' // Object.is equality",
+            "Expected: \"white\"",
+            "Received: \"black\"",
+            "❯ tests/winDetection.test.ts:152:26",
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "turn-based-board-game-invalid-white-win-sequence"
+    ]
+    assert findings[0].paths == ["tests/winDetection.test.ts"]
+    assert "do not share one row" in findings[0].repair_hint
+
+
 def test_runtime_findings_classify_draw_test_created_accidental_win() -> None:
     findings = runtime_findings_for_output(
         "\n".join([

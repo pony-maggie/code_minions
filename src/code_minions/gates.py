@@ -693,8 +693,34 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
             repair_hint=(
                 "White wins through the public click API require five white target cells, all played on "
                 "turns 2/4/6/8/10. Do not count black's first move as part of the white target line, and "
-                "do not stop after only four white stones. Use black filler moves far from the white line, "
-                "for example black `(14,0)..(14,4)` and white target `(0,1)..(4,1)` for a vertical win."
+                "do not stop after only four white stones. Use black filler moves that do not share one row, "
+                "one column, or one diagonal, for example black `(10,10)`, `(11,12)`, `(12,14)`, `(13,11)`, "
+                "`(14,13)` and white target `(0,5)..(4,5)` for a vertical win."
+            ),
+            source=source,
+            paths=paths,
+        ))
+
+    if (
+        "expected 'black' to be 'white'" in output
+        and (
+            "white makes 5-in-a-row" in output
+            or "White player wins" in output
+            or "白方" in output
+        )
+        and any(term in output for term in ("winner", "获胜", "win/draw", "Gomoku", "五子棋"))
+    ):
+        findings.append(GateFinding(
+            code="turn-based-board-game-invalid-white-win-sequence",
+            severity="error",
+            stage="runtime",
+            message="A Gomoku white-win test accidentally produced an earlier black win.",
+            repair_hint=(
+                "White wins through the public move/click API require five white target cells on turns "
+                "2/4/6/8/10. Black filler moves must not share one row, one column, or one diagonal; do not share one row/column/diagonal, otherwise "
+                "black can win on turn 9 before white's fifth move. Use fillers like `(10,10)`, `(11,12)`, "
+                "`(12,14)`, `(13,11)`, `(14,13)` with white target `(0,5)..(4,5)`, or test same-color "
+                "geometry through a pure board helper instead of the turn-advancing API."
             ),
             source=source,
             paths=paths,
@@ -851,8 +877,9 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
             repair_hint=(
                 "White wins through the public click API require five white target cells, all played on "
                 "turns 2/4/6/8/10. Do not count black's first move as part of the white target line, and "
-                "do not stop after only four white stones. Use black filler moves far from the white line, "
-                "for example black `(14,0)..(14,4)` and white target `(0,1)..(4,1)` for a vertical win."
+                "do not stop after only four white stones. Use black filler moves that do not share one row, "
+                "one column, or one diagonal, for example black `(10,10)`, `(11,12)`, `(12,14)`, `(13,11)`, "
+                "`(14,13)` and white target `(0,5)..(4,5)` for a vertical win."
             ),
             source=source,
             paths=paths,

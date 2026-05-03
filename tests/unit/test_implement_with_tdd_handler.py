@@ -793,6 +793,20 @@ def test_react_vite_scaffold_removes_duplicate_ts_jsx_test_when_tsx_exists(tmp_g
     assert "existing tsx test" in (tmp_git_repo / "src" / "useGameState.test.tsx").read_text()
 
 
+def test_turn_based_board_game_guidance_includes_safe_white_win_fillers():
+    entrypoint = _load_entrypoint()
+    ticket = {
+        "delivery_profile": {"stack_id": "react-vite"},
+        "description": "五子棋，黑白轮流落子，白方纵向五子也要正确获胜",
+    }
+
+    guidance = entrypoint._delivery_guidance_context(ticket)
+
+    assert "must not share one row" in guidance
+    assert "(10,10)" in guidance
+    assert "(14,13)" in guidance
+
+
 def test_xcodegen_duplicate_product_name_failure_gets_repair_hint(tmp_git_repo: Path, monkeypatch):
     entrypoint = _load_entrypoint()
     (tmp_git_repo / "project.yml").write_text(
