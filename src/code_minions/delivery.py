@@ -241,6 +241,15 @@ def execution_profile_for_delivery(profile: dict[str, Any] | None) -> dict[str, 
             "ignored_paths": ["*.xcodeproj", "DerivedData"],
         }
 
+    if stack_id == "python-cli" or ("python" in text and ("cli" in text or "command line" in text)):
+        test_command = str(profile.get("test_command") or "python -m pytest -q")
+        return {
+            "install_command": None,
+            "test_command": shlex.split(test_command),
+            "env": {"PYTHONPATH": "{workdir}{pathsep}{workdir}/src"},
+            "ignored_paths": ["__pycache__", ".pytest_cache"],
+        }
+
     return {}
 
 

@@ -2072,7 +2072,7 @@ def _run_tests(workdir, profile: dict[str, Any] | None = None) -> tuple[bool, st
         cmd = [sys.executable, "-m", "pytest", "-q"]
         env = os.environ.copy()
         existing = env.get("PYTHONPATH")
-        paths = [str(workdir)]
+        paths = [str(workdir), str(workdir / "src")]
         if existing:
             paths.append(existing)
         env["PYTHONPATH"] = os.pathsep.join(paths)
@@ -2095,7 +2095,13 @@ def _run_node_tests(workdir) -> tuple[bool, str]:
 def _run_execution_profile_tests(workdir, execution_profile: dict[str, Any]) -> tuple[bool, str]:
     output = ""
     env = os.environ.copy()
-    env.update({str(k): str(v) for k, v in (execution_profile.get("env") or {}).items()})
+    for key, value in (execution_profile.get("env") or {}).items():
+        env[str(key)] = (
+            str(value)
+            .replace("{workdir}", str(workdir))
+            .replace("{pathsep}", os.pathsep)
+            .replace("{PYTHONPATH}", env.get("PYTHONPATH", ""))
+        )
 
     for command_key in ("install_command", "pre_test_command"):
         command = execution_profile.get(command_key)

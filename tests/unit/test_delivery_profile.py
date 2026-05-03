@@ -999,3 +999,16 @@ def test_execution_profile_for_swift_xcodegen_uses_generate_then_xcodebuild() ->
         "env": {},
         "ignored_paths": ["*.xcodeproj", "DerivedData"],
     }
+
+
+def test_execution_profile_for_python_cli_adds_src_to_pythonpath() -> None:
+    execution = execution_profile_for_delivery({
+        "stack_id": "python-cli",
+        "kind": "cli",
+        "language": "python",
+        "test_command": "python -m pytest -q",
+    })
+
+    assert execution["install_command"] is None
+    assert execution["test_command"] == ["python", "-m", "pytest", "-q"]
+    assert "{workdir}/src" in execution["env"]["PYTHONPATH"]
