@@ -294,6 +294,28 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
         ))
 
     if (
+        "expect(element).toHaveAttribute" in output
+        and "data-stone=" in output
+        and "Received:" in output
+        and re.search(r"(?m)^\s*null\s*$", output)
+        and any(stone in output for stone in ('data-stone="black"', 'data-stone="white"'))
+    ):
+        findings.append(GateFinding(
+            code="react-board-cell-data-stone-not-updated",
+            severity="error",
+            stage="runtime",
+            message="A board interaction test expected the clicked cell data-stone attribute to update.",
+            repair_hint=(
+                "Preserve the stable board-cell DOM contract and update the clicked cell element with "
+                "`data-stone=\"black\"` or `data-stone=\"white\"` after moves. If board cells are objects "
+                "such as `{ stone, isLastMove }`, check occupancy with `cell.stone !== null` rather than "
+                "`cell !== null`; otherwise empty object cells will block every move before state updates."
+            ),
+            source=source,
+            paths=paths,
+        ))
+
+    if (
         "expect(element).toHaveTextContent()" in output
         and "Expected element to have text content:" in output
         and "Received:" in output

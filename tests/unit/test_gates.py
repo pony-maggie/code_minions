@@ -243,6 +243,28 @@ def test_runtime_findings_classify_board_cell_text_vs_accessible_name_mismatch()
     assert "accessible name" in findings[0].repair_hint
 
 
+def test_runtime_findings_classify_board_cell_data_stone_not_updated() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  src/App.test.tsx > Gomoku core interaction > should place black stone on first click and switch to white",
+            "Error: expect(element).toHaveAttribute(\"data-stone\", \"black\")",
+            "Expected the element to have attribute:",
+            "  data-stone=\"black\"",
+            "Received:",
+            "  null",
+            "❯ src/App.test.tsx:22:18",
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "react-board-cell-data-stone-not-updated"
+    ]
+    assert findings[0].paths == ["src/App.test.tsx"]
+    assert "cell.stone" in findings[0].repair_hint
+    assert "data-stone" in findings[0].repair_hint
+
+
 def test_runtime_findings_classify_turn_based_winner_status_mismatch() -> None:
     findings = runtime_findings_for_output(
         "\n".join([
