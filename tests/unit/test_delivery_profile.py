@@ -640,6 +640,33 @@ def test_validate_suggests_existing_relative_import_target(tmp_path) -> None:
     assert "import `../types`" in issue["repair_hint"]
 
 
+def test_validate_suggests_existing_relative_require_target(tmp_path) -> None:
+    (tmp_path / "package.json").write_text('{"scripts":{"test":"vitest run"}}\n')
+    (tmp_path / "vitest.config.ts").write_text(
+        "import { defineConfig } from 'vitest/config'\n"
+        "export default defineConfig({ test: { environment: 'jsdom' } })\n"
+    )
+    (tmp_path / "src" / "hooks").mkdir(parents=True)
+    (tmp_path / "src" / "hooks" / "useGameState.ts").write_text("export const checkDraw = () => false\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "GameState.test.tsx").write_text(
+        "import { describe, expect, it } from 'vitest'\n"
+        "describe('draw', () => {\n"
+        "  it('checks draw', () => {\n"
+        "    const { checkDraw } = require('../hooks/useGameState')\n"
+        "    expect(checkDraw()).toBe(false)\n"
+        "  })\n"
+        "})\n"
+    )
+    profile = {"stack_id": "react-vite"}
+
+    issues = validate_delivery_profile(tmp_path, profile)
+
+    issue = next(issue for issue in issues if issue["code"] == "unresolved-relative-import")
+    assert issue["paths"] == ["tests/GameState.test.tsx", "src/hooks/useGameState.ts"]
+    assert "import `../src/hooks/useGameState`" in issue["repair_hint"]
+
+
 def test_validate_react_vite_checks_can_be_selected_by_stack_id(tmp_path) -> None:
     (tmp_path / "package.json").write_text('{"scripts":{"test":"vitest run"}}\n')
     (tmp_path / "vite.config.ts").write_text(

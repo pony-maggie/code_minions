@@ -496,6 +496,35 @@ def test_react_vite_scaffold_repairs_unique_relative_import_target(tmp_git_repo:
     assert not [finding for finding in findings if finding.code == "unresolved-relative-import"]
 
 
+def test_react_vite_scaffold_repairs_unique_relative_require_target(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src" / "hooks").mkdir(parents=True)
+    (tmp_git_repo / "src" / "hooks" / "useGameState.ts").write_text(
+        "export const checkDraw = () => false\n"
+    )
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "tests" / "GameState.test.tsx").write_text(
+        "import { describe, expect, it } from 'vitest'\n"
+        "describe('draw', () => {\n"
+        "  it('checks draw', () => {\n"
+        "    const { checkDraw } = require('../hooks/useGameState')\n"
+        "    expect(checkDraw()).toBe(false)\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "tests" / "GameState.test.tsx").read_text()
+    assert "tests/GameState.test.tsx" in changed
+    assert "require('../src/hooks/useGameState')" in text
+    passed, output, findings = entrypoint._run_delivery_profile_gate(tmp_git_repo, ticket)
+    assert passed is True
+    assert "unresolved-relative-import" not in output
+    assert not [finding for finding in findings if finding.code == "unresolved-relative-import"]
+
+
 def test_xcodegen_duplicate_product_name_failure_gets_repair_hint(tmp_git_repo: Path, monkeypatch):
     entrypoint = _load_entrypoint()
     (tmp_git_repo / "project.yml").write_text(

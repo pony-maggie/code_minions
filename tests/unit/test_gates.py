@@ -160,6 +160,46 @@ def test_runtime_findings_classify_implicit_any_diagnostics() -> None:
     assert "Annotate callback parameters" in findings[0].repair_hint
 
 
+def test_runtime_findings_classify_missing_winning_element_assertion() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  tests/GameState.test.tsx > 胜负判定与获胜棋子高亮 > 黑方横向五连",
+            "Error: expect(received).toBeInTheDocument()",
+            "received value must be an HTMLElement or an SVGElement.",
+            " ❯ tests/GameState.test.tsx:57:60",
+            "     57|         expect(cell.querySelector('.stone.black.winning')).toBeInTheDocument()",
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "react-testing-library-null-element-assertion"
+    ]
+    assert findings[0].paths == ["tests/GameState.test.tsx"]
+    assert "winningCells" in findings[0].repair_hint
+
+
+def test_runtime_findings_classify_turn_based_board_game_accidental_early_win() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  tests/GameState.test.tsx > 胜负判定与获胜棋子高亮 > 白方纵向五连",
+            "Error: expect(element).toHaveTextContent()",
+            "Expected element to have text content:",
+            "  /白方/",
+            "Received:",
+            "  胜者: 黑方",
+            " ❯ tests/GameState.test.tsx:94:26",
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "turn-based-board-game-accidental-early-win"
+    ]
+    assert findings[0].paths == ["tests/GameState.test.tsx"]
+    assert "filler moves" in findings[0].repair_hint
+
+
 def test_findings_to_text_groups_by_stage_and_severity() -> None:
     text = findings_to_text([
         GateFinding(

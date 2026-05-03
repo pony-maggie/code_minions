@@ -72,6 +72,7 @@ _TSC_DIAGNOSTIC_RE = re.compile(
     r"(?P<path>[^\s()]+\.(?:ts|tsx))\(\d+,\d+\): error TS(?P<ts_code>\d+): (?P<message>.+)"
 )
 _TSC_MISSING_NAME_RE = re.compile(r"Cannot find name '(?P<name>[^']+)'")
+_VITEST_FRAME_PATH_RE = re.compile(r"❯\s+(?P<path>[^\s:]+\.(?:ts|tsx)):\d+:\d+")
 REACT_HOOK_NAMES = {
     "useCallback",
     "useContext",
@@ -190,10 +191,66 @@ def _typescript_runtime_findings(output: str, *, source: str) -> list[GateFindin
     return findings
 
 
+def _first_vitest_frame_path(output: str) -> str:
+    match = _VITEST_FRAME_PATH_RE.search(output)
+    return match.group("path") if match else ""
+
+
+def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
+    findings: list[GateFinding] = []
+    path = _first_vitest_frame_path(output)
+    paths = [path] if path else []
+
+    if (
+        "received value must be an HTMLElement or an SVGElement" in output
+        and "querySelector(" in output
+    ):
+        findings.append(GateFinding(
+            code="react-testing-library-null-element-assertion",
+            severity="error",
+            stage="runtime",
+            message=(
+                "React Testing Library expected an element but a selector returned null."
+            ),
+            repair_hint=(
+                "Verify the product renders the asserted element/class, especially win-state props such "
+                "as `winningCells` being passed from App/state hooks into Board/Cell. If the product uses "
+                "a different stable DOM contract, update the test selector to match the rendered markup."
+            ),
+            source=source,
+            paths=paths,
+        ))
+
+    if (
+        "expect(element).toHaveTextContent()" in output
+        and "Expected element to have text content:" in output
+        and "Received:" in output
+        and "胜者:" in output
+    ):
+        findings.append(GateFinding(
+            code="turn-based-board-game-accidental-early-win",
+            severity="error",
+            stage="runtime",
+            message=(
+                "Turn-based board game test expected one winner but the rendered winner is the other player."
+            ),
+            repair_hint=(
+                "Re-check the move sequence. For alternating-turn games, use opponent filler moves that do "
+                "not block the target line and do not create an earlier win for the opponent. Then verify "
+                "the game logic only declares the winner after the intended fifth stone."
+            ),
+            source=source,
+            paths=paths,
+        ))
+
+    return findings
+
+
 def runtime_findings_for_output(output: str, *, source: str) -> list[GateFinding]:
     from code_minions.failure_playbook import failure_hints_for_output
 
     findings: list[GateFinding] = _typescript_runtime_findings(output, source=source)
+    findings.extend(_react_runtime_findings(output, source=source))
     for hint in failure_hints_for_output(output):
         code = _runtime_code(output, hint)
         findings.append(GateFinding(

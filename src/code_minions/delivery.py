@@ -27,7 +27,8 @@ LANGUAGE_BY_SUFFIX = {
 TS_RESOLVABLE_EXTENSIONS = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json")
 TS_IMPORT_RE = re.compile(
     r"""(?:import|export)\s+(?:type\s+)?(?:[^'"]+\s+from\s+)?['"](?P<path>\.{1,2}/[^'"]+)['"]|"""
-    r"""import\(\s*['"](?P<dynamic>\.{1,2}/[^'"]+)['"]\s*\)"""
+    r"""import\(\s*['"](?P<dynamic>\.{1,2}/[^'"]+)['"]\s*\)|"""
+    r"""require\(\s*['"](?P<require>\.{1,2}/[^'"]+)['"]\s*\)"""
 )
 DELIVERY_SEVERITIES = {"error", "warning"}
 JEST_DOM_MATCHERS = (
@@ -776,7 +777,7 @@ def _unresolved_relative_imports(workdir: Path) -> list[tuple[Path, str]]:
         except OSError:
             continue
         for match in TS_IMPORT_RE.finditer(text):
-            imported = match.group("path") or match.group("dynamic")
+            imported = match.group("path") or match.group("dynamic") or match.group("require")
             if imported and not _relative_import_resolves(path, imported):
                 unresolved.append((path, imported))
     return unresolved
@@ -795,7 +796,12 @@ def repair_unique_unresolved_relative_imports(workdir: Path) -> list[str]:
 
         replacements: list[tuple[int, int, str]] = []
         for match in TS_IMPORT_RE.finditer(text):
-            group = "path" if match.group("path") else "dynamic"
+            if match.group("path"):
+                group = "path"
+            elif match.group("dynamic"):
+                group = "dynamic"
+            else:
+                group = "require"
             imported = match.group(group)
             if not imported or _relative_import_resolves(path, imported):
                 continue
