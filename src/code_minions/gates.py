@@ -256,6 +256,26 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
     findings: list[GateFinding] = []
     path = _first_vitest_frame_path(output)
     paths = [path] if path else []
+    missing_function_match = re.search(
+        r"(?:__vite_ssr_import_\d+__\.)?(?P<name>[A-Za-z_$][\w$]*) is not a function",
+        output,
+    )
+
+    if missing_function_match:
+        name = missing_function_match.group("name")
+        findings.append(GateFinding(
+            code="react-runtime-missing-named-function-export",
+            severity="error",
+            stage="runtime",
+            message=f"React runtime called `{name}`, but the imported value is not a function.",
+            repair_hint=(
+                f"Trace the import for `{name}` from the failing component/test and make the source module "
+                f"export a real `{name}` function, or update the import/use site to the function that actually "
+                "exists. Do not leave a named import that TypeScript/Vitest can load as undefined at runtime."
+            ),
+            source=source,
+            paths=paths,
+        ))
 
     if (
         "received value must be an HTMLElement or an SVGElement" in output

@@ -132,11 +132,11 @@ def _llm_call(
     json_attempts = 0
     tool_rounds = 0
     read_calls = 0
-    close_after_mutation = False
+    tools_disabled = False
     while json_attempts < max_attempts and tool_rounds < max_tool_rounds:
         resp = ctx.llm.chat(
             messages=messages,
-            tools=None if close_after_mutation else tools,
+            tools=None if tools_disabled else tools,
             temperature=0.2,
             max_tokens=_llm_max_tokens(ctx),
         )
@@ -152,11 +152,13 @@ def _llm_call(
         if resp.message.tool_calls:
             tool_rounds += 1
             mutated = False
+            read_budget_exhausted = False
             for tc in resp.message.tool_calls:
                 try:
                     if tc.name == "Read":
                         read_calls += 1
                     if tc.name == "Read" and read_calls > max_read_calls:
+                        read_budget_exhausted = True
                         result = (
                             "[error] Read budget exceeded for this implementation step. "
                             "Stop calling Read. Use Write or Edit now, then finish with a small JSON object."
@@ -170,12 +172,22 @@ def _llm_call(
                     result = f"[error] {e}"
                 messages.append(Message(role="tool", tool_call_id=tc.id, content=result, name=tc.name))
             if mutated:
-                close_after_mutation = True
+                tools_disabled = True
                 messages.append(Message(
                     role="user",
                     content=(
                         "You have made file changes. Stop calling tools for this implementation pass; "
                         "reply with a small JSON object now, such as {\"reasoning\": \"done\"}."
+                    ),
+                ))
+            elif read_budget_exhausted:
+                tools_disabled = True
+                messages.append(Message(
+                    role="user",
+                    content=(
+                        "Read budget is exhausted for this implementation pass. Tools are now disabled. "
+                        "Reply with a valid JSON object now. If changes are still needed, include a non-empty "
+                        "files_written list with full path/content entries."
                     ),
                 ))
             continue

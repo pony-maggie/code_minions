@@ -1800,6 +1800,63 @@ def test_repeated_read_calls_can_recover_to_write(tmp_git_repo: Path, monkeypatc
     assert llm.chat.call_count == 15
 
 
+def test_read_budget_exhaustion_disables_tools_for_json_recovery(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    from code_minions.llm.types import Message, Response, ToolCall, Usage
+
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        Response(
+            message=Message(
+                role="assistant",
+                tool_calls=[ToolCall(
+                    id="read-1",
+                    name="Read",
+                    arguments={"path": "README.md"},
+                )],
+            ),
+            usage=Usage(10, 5),
+            model="MiniMax-M2.7",
+            stop_reason="tool_use",
+        ),
+        Response(
+            message=Message(
+                role="assistant",
+                tool_calls=[ToolCall(
+                    id="read-2",
+                    name="Read",
+                    arguments={"path": "README.md"},
+                )],
+            ),
+            usage=Usage(10, 5),
+            model="MiniMax-M2.7",
+            stop_reason="tool_use",
+        ),
+        Response(
+            message=Message(
+                role="assistant",
+                content='{"files_written": [{"path": "x.py", "content": "x = 1\\n"}], "reasoning": "done"}',
+            ),
+            usage=Usage(10, 5),
+            model="MiniMax-M2.7",
+            stop_reason="end_turn",
+        ),
+    ]
+
+    ctx = MagicMock()
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.skill = None
+
+    out = entrypoint._llm_call(ctx, "system", "user", max_read_calls=1)
+
+    assert out["files_written"] == [{"path": "x.py", "content": "x = 1\n"}]
+    assert llm.chat.call_args_list[0].kwargs["tools"]
+    assert llm.chat.call_args_list[1].kwargs["tools"]
+    assert llm.chat.call_args_list[2].kwargs["tools"] is None
+    assert "Read budget is exhausted" in llm.chat.call_args_list[2].kwargs["messages"][-2].content
+
+
 def test_invalid_coder_response_reports_provider_diagnostics(tmp_git_repo: Path):
     entrypoint = _load_entrypoint()
     from code_minions.llm.types import Message, Response, Usage

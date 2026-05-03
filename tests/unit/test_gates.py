@@ -253,6 +253,27 @@ def test_runtime_findings_classify_board_cell_class_contract_regression() -> Non
     assert "black" in findings[0].repair_hint
 
 
+def test_runtime_findings_classify_react_missing_named_export_function() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "TypeError: findWinningCells is not a function",
+            " ❯ src/App.tsx:27:21",
+            "     25|     if (winner) {",
+            "     26|       setGameStatus('won');",
+            "     27|       const cells = findWinningCells(newBoard, row, col, currentStone);",
+            "       |                     ^",
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "react-runtime-missing-named-function-export"
+    ]
+    assert findings[0].paths == ["src/App.tsx"]
+    assert "export" in findings[0].repair_hint
+    assert "findWinningCells" in findings[0].repair_hint
+
+
 def test_runtime_findings_classify_board_root_class_contract_mismatch() -> None:
     findings = runtime_findings_for_output(
         "\n".join([
