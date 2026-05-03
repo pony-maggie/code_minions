@@ -222,6 +222,25 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
 
     if (
         "received value must be an HTMLElement or an SVGElement" in output
+        and "aria-live" in output
+        and "assertive" in output
+    ):
+        findings.append(GateFinding(
+            code="react-a11y-live-region-missing",
+            severity="error",
+            stage="runtime",
+            message="A React accessibility test expected an assertive live region but the selector returned null.",
+            repair_hint=(
+                "Render a stable screen-reader live region with `aria-live=\"assertive\"` for status "
+                "announcements, including both in-progress turn changes and game-over results. Keep the "
+                "selector present even when the message text changes."
+            ),
+            source=source,
+            paths=paths,
+        ))
+
+    if (
+        "received value must be an HTMLElement or an SVGElement" in output
         and "querySelector(" in output
     ):
         findings.append(GateFinding(
@@ -235,6 +254,41 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
                 "Verify the product renders the asserted element/class, especially win-state props such "
                 "as `winningCells` being passed from App/state hooks into Board/Cell. If the product uses "
                 "a different stable DOM contract, update the test selector to match the rendered markup."
+            ),
+            source=source,
+            paths=paths,
+        ))
+
+    if "落子历史" in output and "getByText" in output:
+        findings.append(GateFinding(
+            code="react-status-panel-history-section-missing",
+            severity="error",
+            stage="runtime",
+            message="Status panel tests expected a move-history section, but the rendered text was missing.",
+            repair_hint=(
+                "Render a stable `落子历史` section when the status panel feature requires recent move "
+                "history, or update the test only if the accepted DOM contract intentionally uses a different "
+                "visible label."
+            ),
+            source=source,
+            paths=paths,
+        ))
+
+    if (
+        "AssertionError: expected" in output
+        and "to contain" in output
+        and any(term in output for term in ("黑子", "白子"))
+        and any(term in output for term in ("黑方", "白方"))
+    ):
+        findings.append(GateFinding(
+            code="react-status-panel-label-contract-mismatch",
+            severity="error",
+            stage="runtime",
+            message="Status panel rendered player/result text with terminology that does not match its tests.",
+            repair_hint=(
+                "Use the same player terminology across visible status text, live-region announcements, "
+                "and tests. For this Gomoku UI, do not mix `黑方/白方` with `黑子/白子` unless tests and "
+                "product copy are updated together."
             ),
             source=source,
             paths=paths,

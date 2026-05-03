@@ -228,6 +228,60 @@ def test_runtime_findings_classify_jsx_missing_required_props() -> None:
     assert "Pass the required props" in findings[0].repair_hint
 
 
+def test_runtime_findings_classify_missing_assertive_live_region() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  tests/StatusPanel.test.tsx > StatusPanel > 无障碍支持 > 有用于屏幕阅读器播报的 live region",
+            "Error: expect(received).toBeInTheDocument()",
+            "received value must be an HTMLElement or an SVGElement.",
+            "const liveRegion = document.querySelector('[aria-live=\"assertive\"]');",
+            "❯ tests/StatusPanel.test.tsx:180:26",
+        ]),
+        source="react-vite",
+    )
+
+    assert "react-a11y-live-region-missing" in [finding.code for finding in findings]
+    finding = next(item for item in findings if item.code == "react-a11y-live-region-missing")
+    assert finding.paths == ["tests/StatusPanel.test.tsx"]
+    assert "aria-live=\"assertive\"" in finding.repair_hint
+
+
+def test_runtime_findings_classify_status_panel_label_mismatch() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  tests/StatusPanel.test.tsx > StatusPanel > 无障碍支持 > 游戏结束时播报胜者或平局",
+            "AssertionError: expected '结果：黑方获胜' to contain '黑子获胜'",
+            "Expected: \"黑子获胜\"",
+            "Received: \"结果：黑方获胜\"",
+            "❯ tests/StatusPanel.test.tsx:194:39",
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "react-status-panel-label-contract-mismatch"
+    ]
+    assert findings[0].paths == ["tests/StatusPanel.test.tsx"]
+    assert "same player terminology" in findings[0].repair_hint
+
+
+def test_runtime_findings_classify_missing_status_history_section() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  tests/StatusPanel.test.tsx > StatusPanel > 落子历史显示 > 显示最近5步落子历史",
+            "expect(screen.getByText(/落子历史/)).toBeInTheDocument();",
+            "❯ tests/StatusPanel.test.tsx:151:21",
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "react-status-panel-history-section-missing"
+    ]
+    assert findings[0].paths == ["tests/StatusPanel.test.tsx"]
+    assert "落子历史" in findings[0].repair_hint
+
+
 def test_findings_to_text_groups_by_stage_and_severity() -> None:
     text = findings_to_text([
         GateFinding(
