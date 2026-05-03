@@ -836,6 +836,9 @@ GOMOKU_OVER_DETAILED_TEST_MARKERS = (
 )
 GOMOKU_BRITTLE_BOARD_TEST_MARKERS = (
     "渲染星位标记",
+    "星位",
+    "star points",
+    "STAR_POINTS",
     "桌面视口棋盘居中显示",
     "board-container",
     ".star-point",

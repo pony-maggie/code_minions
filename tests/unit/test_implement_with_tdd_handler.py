@@ -866,6 +866,37 @@ def test_react_vite_scaffold_prunes_brittle_gomoku_board_class_tests(tmp_git_rep
     assert ".last-move-mark" not in text
 
 
+def test_react_vite_scaffold_prunes_brittle_gomoku_star_point_text_tests(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src" / "tests").mkdir(parents=True)
+    (tmp_git_repo / "src" / "tests" / "Board.test.tsx").write_text(
+        "import { describe, expect, it } from 'vitest'\n"
+        "\n"
+        "describe('Board', () => {\n"
+        "  it('contains star points at correct coordinates', () => {\n"
+        "    const starPoints = screen.getAllByText('星位')\n"
+        "    expect(starPoints).toHaveLength(9)\n"
+        "  })\n"
+        "\n"
+        "  it('keeps a basic cell smoke test', () => {\n"
+        "    expect(screen.getByTestId('cell-0-0')).toBeTruthy()\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {
+        "delivery_profile": {"stack_id": "react-vite"},
+        "description": "五子棋 棋盘 渲染",
+    }
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "tests" / "Board.test.tsx").read_text()
+    assert "src/tests/Board.test.tsx" in changed
+    assert "contains star points" not in text
+    assert "星位" not in text
+    assert "basic cell smoke test" in text
+
+
 def test_react_vite_scaffold_prunes_brittle_gomoku_last_move_tests_without_turn_text(tmp_git_repo: Path):
     entrypoint = _load_entrypoint()
     (tmp_git_repo / "src" / "components").mkdir(parents=True)
