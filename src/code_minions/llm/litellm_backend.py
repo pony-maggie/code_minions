@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import os
 import time
 import urllib.error
 import urllib.request
@@ -20,6 +21,18 @@ from code_minions.llm.types import (
 )
 
 MINIMAX_DEFAULT_API_BASE = "https://api.minimaxi.com/v1"
+DEFAULT_LLM_REQUEST_TIMEOUT_SECONDS = 180
+
+
+def _request_timeout_seconds() -> int:
+    raw = os.environ.get("CODE_MINIONS_LLM_TIMEOUT_SECONDS")
+    if not raw:
+        return DEFAULT_LLM_REQUEST_TIMEOUT_SECONDS
+    try:
+        timeout = int(raw)
+    except ValueError:
+        return DEFAULT_LLM_REQUEST_TIMEOUT_SECONDS
+    return max(1, timeout)
 
 
 def _completion(**kwargs: Any) -> Any:
@@ -78,11 +91,17 @@ def _is_transient_http_error(exc: urllib.error.HTTPError) -> bool:
     return exc.code == 429 or exc.code == 529 or 500 <= exc.code <= 599
 
 
-def _urlopen_with_retries(req: urllib.request.Request, *, timeout: int = 600, max_attempts: int = 3) -> Any:
+def _urlopen_with_retries(
+    req: urllib.request.Request,
+    *,
+    timeout: int | None = None,
+    max_attempts: int = 3,
+) -> Any:
+    request_timeout = timeout if timeout is not None else _request_timeout_seconds()
     last_exc: Exception | None = None
     for attempt in range(1, max_attempts + 1):
         try:
-            return urllib.request.urlopen(req, timeout=timeout)
+            return urllib.request.urlopen(req, timeout=request_timeout)
         except urllib.error.HTTPError as e:
             last_exc = e
             if attempt == max_attempts or not _is_transient_http_error(e):
@@ -191,6 +210,7 @@ class LiteLLMBackend:
             "messages": sdk_msgs,
             "max_tokens": max_tokens,
             "api_key": self._api_key,
+            "timeout": _request_timeout_seconds(),
         }
         if not _openai_model_uses_default_temperature(self._provider, selected_model):
             kwargs["temperature"] = temperature
@@ -252,7 +272,7 @@ class LiteLLMBackend:
             method="POST",
         )
         try:
-            with _urlopen_with_retries(req, timeout=600) as response:
+            with _urlopen_with_retries(req) as response:
                 raw = json.loads(response.read().decode())
         except urllib.error.HTTPError as e:
             body = e.read().decode(errors="replace")

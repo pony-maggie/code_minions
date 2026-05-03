@@ -54,6 +54,27 @@ def test_chat_text_only(monkeypatch):
         assert mock_completion.call_args.kwargs["api_key"] == "sk-x"
 
 
+def test_chat_sets_default_request_timeout_for_litellm():
+    with patch("code_minions.llm.litellm_backend._completion") as mock_completion:
+        mock_completion.return_value = _fake_litellm_response(text="hello world")
+        be = LiteLLMBackend(provider="anthropic", default_model="claude-sonnet-4-6", api_key="sk-x")
+
+        be.chat([Message(role="user", content="hi")])
+
+        assert mock_completion.call_args.kwargs["timeout"] == 180
+
+
+def test_chat_request_timeout_can_be_overridden(monkeypatch):
+    monkeypatch.setenv("CODE_MINIONS_LLM_TIMEOUT_SECONDS", "45")
+    with patch("code_minions.llm.litellm_backend._completion") as mock_completion:
+        mock_completion.return_value = _fake_litellm_response(text="hello world")
+        be = LiteLLMBackend(provider="anthropic", default_model="claude-sonnet-4-6", api_key="sk-x")
+
+        be.chat([Message(role="user", content="hi")])
+
+        assert mock_completion.call_args.kwargs["timeout"] == 45
+
+
 def test_chat_with_tool_use():
     with patch("code_minions.llm.litellm_backend._completion") as mock_completion:
         mock_completion.return_value = _fake_litellm_response(
@@ -205,6 +226,7 @@ def test_minimax_uses_openai_compatible_endpoint_by_default():
         mock_completion.assert_not_called()
         req = mock_urlopen.call_args.args[0]
         assert req.full_url == "https://api.minimaxi.com/v1/chat/completions"
+        assert mock_urlopen.call_args.kwargs["timeout"] == 180
         assert req.headers["Authorization"] == "Bearer mini-x"
         assert req.headers["Content-type"] == "application/json"
         body = json.loads(req.data.decode())
