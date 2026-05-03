@@ -974,6 +974,33 @@ def test_react_vite_scaffold_removes_duplicate_cell_testids_from_wrappers(tmp_gi
     assert text.count('data-testid={`cell-${rowIndex}-${colIndex}`}') == 1
 
 
+def test_react_vite_scaffold_adds_noop_board_click_handler_in_tests(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src" / "components").mkdir(parents=True)
+    (tmp_git_repo / "src" / "components" / "Board.test.tsx").write_text(
+        "import { describe, it } from 'vitest'\n"
+        "import Board from './Board'\n"
+        "\n"
+        "describe('Board', () => {\n"
+        "  it('renders board', () => {\n"
+        "    render(<Board board={board} />)\n"
+        "    render(<Board board={board} lastMove={{ row: 1, col: 1 }} />)\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {
+        "delivery_profile": {"stack_id": "react-vite"},
+        "description": "五子棋 棋盘",
+    }
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "components" / "Board.test.tsx").read_text()
+    assert "src/components/Board.test.tsx" in changed
+    assert "render(<Board board={board} onCellClick={() => {}} />)" in text
+    assert "lastMove={{ row: 1, col: 1 }} onCellClick={() => {}}" in text
+
+
 def test_react_vite_scaffold_replaces_brittle_ready_smoke_test(tmp_git_repo: Path):
     entrypoint = _load_entrypoint()
     (tmp_git_repo / "src").mkdir()

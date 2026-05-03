@@ -854,6 +854,10 @@ REACT_VITE_OPENING_TAG_RE = re.compile(
     r"""<(?P<tag>[A-Za-z][\w.]*)\b(?P<attrs>[^<>]*?)>""",
     re.DOTALL,
 )
+REACT_VITE_BOARD_JSX_WITHOUT_CLICK_RE = re.compile(
+    r"""<Board\b(?P<attrs>(?:(?!onCellClick=)[^<>])*)/>""",
+    re.DOTALL,
+)
 
 REACT_VITE_POSITION_TYPE = """export interface Position {
   row: number
@@ -1237,6 +1241,30 @@ def _stabilize_turn_based_board_game_mvp_tests(workdir, ticket: dict[str, Any]) 
     return changed
 
 
+def _stabilize_board_test_noop_click_handlers(workdir, ticket: dict[str, Any]) -> set[str]:
+    if not (_looks_like_turn_based_board_game(ticket) or _looks_like_gomoku_project(ticket)):
+        return set()
+
+    changed: set[str] = set()
+    for path in _react_vite_test_files(workdir):
+        if "board" not in path.name.lower():
+            continue
+        original = path.read_text(errors="ignore")
+        if "<Board" not in original or "onCellClick" in original:
+            continue
+
+        def replace_board(match: re.Match[str]) -> str:
+            attrs = match.group("attrs").rstrip()
+            return f"<Board{attrs} onCellClick={{() => {{}}}} />"
+
+        updated = REACT_VITE_BOARD_JSX_WITHOUT_CLICK_RE.sub(replace_board, original)
+        if updated == original:
+            continue
+        path.write_text(updated)
+        changed.add(path.relative_to(workdir).as_posix())
+    return changed
+
+
 def _stabilize_duplicate_cell_testids(workdir, ticket: dict[str, Any]) -> set[str]:
     if not (_looks_like_turn_based_board_game(ticket) or _looks_like_gomoku_project(ticket)):
         return set()
@@ -1474,6 +1502,7 @@ def _stabilize_react_vite_scaffold(workdir, ticket: dict[str, Any]) -> set[str]:
             changed.add(written)
     changed.update(_stabilize_react_vite_tests(workdir))
     changed.update(_stabilize_turn_based_board_game_mvp_tests(workdir, ticket))
+    changed.update(_stabilize_board_test_noop_click_handlers(workdir, ticket))
     changed.update(_stabilize_duplicate_cell_testids(workdir, ticket))
     changed.update(_stabilize_react_vite_types_module(workdir))
     changed.update(_stabilize_react_vite_board_type_helpers(workdir))
