@@ -879,6 +879,31 @@ def _react_vite_test_files(workdir) -> list:
     return test_files
 
 
+def _test_file_contains_jsx(text: str) -> bool:
+    return bool(re.search(r"\b(?:render|rerender)\s*\(\s*<[A-Za-z]", text))
+
+
+def _rename_ts_tests_with_jsx(workdir) -> set[str]:
+    changed: set[str] = set()
+    for path in _react_vite_test_files(workdir):
+        if path.suffix != ".ts":
+            continue
+        text = path.read_text()
+        if not _test_file_contains_jsx(text):
+            continue
+        target = path.with_suffix(".tsx")
+        old_rel = path.relative_to(workdir).as_posix()
+        new_rel = target.relative_to(workdir).as_posix()
+        if target.exists():
+            path.unlink()
+            changed.add(old_rel)
+            continue
+        path.rename(target)
+        changed.add(old_rel)
+        changed.add(new_rel)
+    return changed
+
+
 def _vitest_imported_test_api_names(text: str) -> set[str]:
     imported: set[str] = set()
     for match in REACT_VITE_VITEST_IMPORT_RE.finditer(text):
@@ -1034,6 +1059,7 @@ def _stabilize_placeholder_app_smoke_test(path, text: str) -> str:
 
 def _stabilize_react_vite_tests(workdir) -> set[str]:
     changed: set[str] = set()
+    changed.update(_rename_ts_tests_with_jsx(workdir))
     for path in _react_vite_test_files(workdir):
         original = path.read_text()
         updated = _stabilize_bare_dom_clicks(

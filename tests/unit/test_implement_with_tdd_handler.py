@@ -752,6 +752,47 @@ def test_react_vite_scaffold_replaces_brittle_ready_smoke_test(tmp_git_repo: Pat
     assert "expect(container).toBeDefined()" in text
 
 
+def test_react_vite_scaffold_renames_ts_tests_that_contain_jsx(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "App.tsx").write_text("export default function App() { return <div /> }\n")
+    (tmp_git_repo / "src" / "useGameState.test.ts").write_text(
+        "import { render } from '@testing-library/react'\n"
+        "import App from './App'\n"
+        "\n"
+        "test('renders', () => render(<App />))\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    assert "src/useGameState.test.ts" in changed
+    assert "src/useGameState.test.tsx" in changed
+    assert not (tmp_git_repo / "src" / "useGameState.test.ts").exists()
+    assert (tmp_git_repo / "src" / "useGameState.test.tsx").read_text().endswith("render(<App />))\n")
+
+
+def test_react_vite_scaffold_removes_duplicate_ts_jsx_test_when_tsx_exists(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "App.tsx").write_text("export default function App() { return <div /> }\n")
+    (tmp_git_repo / "src" / "useGameState.test.ts").write_text(
+        "import { render } from '@testing-library/react'\n"
+        "import App from './App'\n"
+        "test('renders duplicate', () => render(<App />))\n"
+    )
+    (tmp_git_repo / "src" / "useGameState.test.tsx").write_text(
+        "test('existing tsx test', () => expect(true).toBe(true))\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    assert "src/useGameState.test.ts" in changed
+    assert not (tmp_git_repo / "src" / "useGameState.test.ts").exists()
+    assert "existing tsx test" in (tmp_git_repo / "src" / "useGameState.test.tsx").read_text()
+
+
 def test_xcodegen_duplicate_product_name_failure_gets_repair_hint(tmp_git_repo: Path, monkeypatch):
     entrypoint = _load_entrypoint()
     (tmp_git_repo / "project.yml").write_text(
