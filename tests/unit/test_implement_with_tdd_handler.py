@@ -556,6 +556,29 @@ def test_react_vite_scaffold_adds_missing_position_type_contract(tmp_git_repo: P
     assert "col: number" in types_text
 
 
+def test_react_vite_scaffold_repairs_user_event_dynamic_import(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "App.test.tsx").write_text(
+        "import { describe, expect, it } from 'vitest'\n"
+        "describe('App', () => {\n"
+        "  it('clicks', async () => {\n"
+        "    const { user } = await import('@testing-library/user-event')\n"
+        "    await user.click(document.body)\n"
+        "    expect(true).toBe(true)\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "App.test.tsx").read_text()
+    assert "src/App.test.tsx" in changed
+    assert "const user = (await import('@testing-library/user-event')).default" in text
+    assert "const { user }" not in text
+
+
 def test_xcodegen_duplicate_product_name_failure_gets_repair_hint(tmp_git_repo: Path, monkeypatch):
     entrypoint = _load_entrypoint()
     (tmp_git_repo / "project.yml").write_text(

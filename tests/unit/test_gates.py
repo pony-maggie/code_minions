@@ -200,6 +200,20 @@ def test_runtime_findings_classify_turn_based_board_game_accidental_early_win() 
     assert "filler moves" in findings[0].repair_hint
 
 
+def test_runtime_findings_classify_user_event_import_mismatch() -> None:
+    findings = runtime_findings_for_output(
+        'src/App.test.tsx(39,13): error TS2339: Property \'user\' does not exist on type '
+        '\'typeof import("/worktree/node_modules/@testing-library/user-event/dist/types/index")\'.',
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "testing-library-user-event-import-mismatch"
+    ]
+    assert findings[0].paths == ["src/App.test.tsx"]
+    assert "default export" in findings[0].repair_hint
+
+
 def test_findings_to_text_groups_by_stage_and_severity() -> None:
     text = findings_to_text([
         GateFinding(

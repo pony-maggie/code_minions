@@ -124,6 +124,18 @@ def _typescript_runtime_findings(output: str, *, source: str) -> list[GateFindin
                 "them from the module callers already use. Do not import a locally imported symbol as if "
                 "it were exported by that intermediate module."
             )
+        elif (
+            ts_code == "2339"
+            and "property 'user' does not exist" in lowered
+            and "@testing-library/user-event" in message
+        ):
+            code = "testing-library-user-event-import-mismatch"
+            repair_hint = (
+                "`@testing-library/user-event` exposes the userEvent object as the default export. "
+                "Use `import userEvent from '@testing-library/user-event'` or "
+                "`const user = (await import('@testing-library/user-event')).default`; do not "
+                "destructure a non-existent `user` property."
+            )
         elif ts_code == "7006" and "implicitly has an 'any' type" in message:
             if path not in implicit_any_paths:
                 implicit_any_paths.append(path)

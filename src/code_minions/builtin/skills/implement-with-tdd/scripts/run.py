@@ -663,6 +663,9 @@ REACT_VITE_POSITION_TYPE = """export interface Position {
   col: number
 }
 """
+REACT_VITE_BAD_USER_EVENT_DYNAMIC_IMPORT_RE = re.compile(
+    r"""const\s*\{\s*user\s*\}\s*=\s*await\s+import\(\s*['"]@testing-library/user-event['"]\s*\)"""
+)
 
 
 def _write_text_if_changed(workdir, rel_path: str, content: str) -> str | None:
@@ -785,11 +788,20 @@ def _anchor_board_coordinate_regex_queries(text: str) -> str:
     return REACT_VITE_REGEX_LITERAL_RE.sub(replace, text)
 
 
+def _stabilize_user_event_imports(text: str) -> str:
+    return REACT_VITE_BAD_USER_EVENT_DYNAMIC_IMPORT_RE.sub(
+        "const user = (await import('@testing-library/user-event')).default",
+        text,
+    )
+
+
 def _stabilize_react_vite_tests(workdir) -> set[str]:
     changed: set[str] = set()
     for path in _react_vite_test_files(workdir):
         original = path.read_text()
-        updated = _anchor_board_coordinate_regex_queries(_stabilize_vitest_imports(original))
+        updated = _stabilize_user_event_imports(
+            _anchor_board_coordinate_regex_queries(_stabilize_vitest_imports(original))
+        )
         if updated == original:
             continue
         path.write_text(updated)
