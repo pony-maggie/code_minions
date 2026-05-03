@@ -412,6 +412,28 @@ def test_runtime_findings_classify_missing_white_win_from_invalid_sequence() -> 
     assert "turns 2/4/6/8/10" in finding.repair_hint
 
 
+def test_runtime_findings_classify_missing_winner_display_from_invalid_sequence() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  tests/App.game.test.tsx > App 组件 - 胜负判定 > 白方获胜 - 纵向五子",
+            'TestingLibraryElementError: Unable to find an element by: [data-testid="winner-display"]',
+            "❯ tests/App.game.test.tsx:94:36",
+            "     94|       const winnerDisplay = screen.getByTestId('winner-display');",
+            "     95|       expect(winnerDisplay).toHaveTextContent('white');",
+        ]),
+        source="react-vite",
+    )
+
+    assert "turn-based-board-game-invalid-white-win-sequence" in [
+        finding.code for finding in findings
+    ]
+    finding = next(
+        f for f in findings if f.code == "turn-based-board-game-invalid-white-win-sequence"
+    )
+    assert finding.paths == ["tests/App.game.test.tsx"]
+    assert "turns 2/4/6/8/10" in finding.repair_hint
+
+
 def test_runtime_findings_classify_draw_text_missing_after_public_board_fill() -> None:
     findings = runtime_findings_for_output(
         "\n".join([
@@ -430,6 +452,29 @@ def test_runtime_findings_classify_draw_text_missing_after_public_board_fill() -
         f for f in findings if f.code == "turn-board-game-draw-test-created-accidental-win"
     )
     assert finding.paths == ["tests/App.test.tsx"]
+    assert "draw helper" in finding.repair_hint
+
+
+def test_runtime_findings_classify_draw_display_missing_after_accidental_win() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  tests/App.game.test.tsx > App 组件 - 胜负判定 > 平局判定",
+            'TestingLibraryElementError: Unable to find an element by: [data-testid="draw-display"]',
+            '          data-testid="winner-display"',
+            "        winner: black",
+            "❯ tests/App.game.test.tsx:217:34",
+            "    217|       const drawDisplay = screen.getByTestId('draw-display');",
+        ]),
+        source="react-vite",
+    )
+
+    assert "turn-board-game-draw-test-created-accidental-win" in [
+        finding.code for finding in findings
+    ]
+    finding = next(
+        f for f in findings if f.code == "turn-board-game-draw-test-created-accidental-win"
+    )
+    assert finding.paths == ["tests/App.game.test.tsx"]
     assert "draw helper" in finding.repair_hint
 
 
@@ -474,6 +519,28 @@ def test_runtime_findings_classify_presentational_board_test_expects_game_state(
     assert findings[0].paths == ["src/components/Board.test.tsx"]
     assert "App" in findings[0].repair_hint
     assert "winningCells" in findings[0].repair_hint
+
+
+def test_runtime_findings_classify_duplicate_rendered_board_cells() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  tests/App.game.test.tsx > App 组件 - 胜负判定 > 黑方获胜",
+            'TestingLibraryElementError: Found multiple elements by: [data-testid="cell-7-3"]',
+            "     28|       render(<App />);",
+            "     35|       render(<App />);",
+            "❯ tests/App.game.test.tsx:39:25",
+        ]),
+        source="react-vite",
+    )
+
+    assert "react-testing-library-duplicate-render-without-cleanup" in [
+        finding.code for finding in findings
+    ]
+    finding = next(
+        f for f in findings if f.code == "react-testing-library-duplicate-render-without-cleanup"
+    )
+    assert finding.paths == ["tests/App.game.test.tsx"]
+    assert "unmount" in finding.repair_hint
 
 
 def test_runtime_findings_classify_board_fill_timeout() -> None:

@@ -544,6 +544,26 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
         ))
 
     if (
+        "Found multiple elements by:" in output
+        and "data-testid=\"cell-" in output
+        and "render(<App" in output
+    ):
+        findings.append(GateFinding(
+            code="react-testing-library-duplicate-render-without-cleanup",
+            severity="error",
+            stage="runtime",
+            message="A React Testing Library test rendered the app twice and produced duplicate board cells.",
+            repair_hint=(
+                "Do not call `render(<App />)` multiple times in the same test without cleaning up the first "
+                "render. Use a single render, call the returned `unmount()` before rendering again, or use "
+                "Testing Library `cleanup()` between independent scenarios so `getByTestId('cell-r-c')` "
+                "does not match duplicate boards."
+            ),
+            source=source,
+            paths=paths,
+        ))
+
+    if (
         path.endswith("Board.test.tsx")
         and any(
             token in output
@@ -569,6 +589,47 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
                 "state or display `黑方获胜`/`白方获胜`/`平局`. Test win/draw integration through `App` or "
                 "`useGameState`, or pass explicit `winner`/`winningCells`/draw props to Board and assert only "
                 "the Board display contract."
+            ),
+            source=source,
+            paths=paths,
+        ))
+
+    if (
+        "Unable to find an element by: [data-testid=\"winner-display\"]" in output
+        and "winnerDisplay" in output
+        and "white" in output
+        and any(term in output for term in ("白方", "white", "胜负判定", "Gomoku", "五子棋"))
+    ):
+        findings.append(GateFinding(
+            code="turn-based-board-game-invalid-white-win-sequence",
+            severity="error",
+            stage="runtime",
+            message="A Gomoku test expected a white winner display, but the public move sequence did not produce one.",
+            repair_hint=(
+                "White wins through the public click API require five white target cells, all played on "
+                "turns 2/4/6/8/10. Do not count black's first move as part of the white target line, and "
+                "do not stop after only four white stones. Use black filler moves far from the white line, "
+                "for example black `(14,0)..(14,4)` and white target `(0,1)..(4,1)` for a vertical win."
+            ),
+            source=source,
+            paths=paths,
+        ))
+
+    if (
+        "Unable to find an element by: [data-testid=\"draw-display\"]" in output
+        and "winner-display" in output
+        and any(term in output for term in ("winner: black", "winner: white", "黑方", "白方", "black", "white"))
+    ):
+        findings.append(GateFinding(
+            code="turn-board-game-draw-test-created-accidental-win",
+            severity="error",
+            stage="runtime",
+            message="A full-board draw test expected draw display but rendered a winner instead.",
+            repair_hint=(
+                "Avoid sequentially filling a Gomoku board through the public click API for draw tests; "
+                "naive row-major, snake, or alternating patterns usually create five-in-a-row before the board "
+                "is full. Test draw detection with a pure draw helper/state setup or a proven no-five board "
+                "pattern, and assert the product's visible `平局`/draw contract after that deterministic setup."
             ),
             source=source,
             paths=paths,
