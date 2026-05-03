@@ -1145,6 +1145,38 @@ def _stabilize_react_vite_tests(workdir) -> set[str]:
     return changed
 
 
+def _stabilize_board_test_literal_fixture_types(workdir, ticket: dict[str, Any]) -> set[str]:
+    if not (_looks_like_turn_based_board_game(ticket) or _looks_like_gomoku_project(ticket)):
+        return set()
+    types_path = workdir / "src" / "types.ts"
+    if not types_path.is_file() or not REACT_VITE_BOARD_EXPORT_RE.search(types_path.read_text(errors="ignore")):
+        return set()
+
+    changed: set[str] = set()
+    for path in _react_vite_test_files(workdir):
+        original = path.read_text(errors="ignore")
+        if (
+            "const mockBoard =" not in original
+            or "board={mockBoard}" not in original
+            or "'empty'" not in original
+            or ("'black'" not in original and "'white'" not in original)
+        ):
+            continue
+
+        updated = _ensure_types_type_import(
+            workdir,
+            path,
+            original,
+            exported_symbol="Board",
+            local_symbol="BoardState",
+        )
+        updated = updated.replace("const mockBoard =", "const mockBoard: BoardState =", 1)
+        if updated != original:
+            path.write_text(updated)
+            changed.add(path.relative_to(workdir).as_posix())
+    return changed
+
+
 def _find_vitest_call_end(text: str, start: int) -> int | None:
     depth = 0
     quote: str | None = None
@@ -1623,6 +1655,7 @@ def _stabilize_react_vite_scaffold(workdir, ticket: dict[str, Any]) -> set[str]:
         if written:
             changed.add(written)
     changed.update(_stabilize_react_vite_tests(workdir))
+    changed.update(_stabilize_board_test_literal_fixture_types(workdir, ticket))
     changed.update(_stabilize_turn_based_board_game_mvp_tests(workdir, ticket))
     changed.update(_stabilize_board_test_noop_click_handlers(workdir, ticket))
     changed.update(_stabilize_duplicate_cell_testids(workdir, ticket))

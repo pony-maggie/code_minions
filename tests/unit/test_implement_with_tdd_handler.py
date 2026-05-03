@@ -1096,6 +1096,36 @@ def test_react_vite_scaffold_adds_button_role_to_clickable_cell_divs(tmp_git_rep
     assert "aria-label={label}" in text
 
 
+def test_react_vite_scaffold_types_board_test_literal_fixtures(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src" / "components").mkdir(parents=True)
+    (tmp_git_repo / "src" / "types.ts").write_text(
+        "export type CellState = 'empty' | 'black' | 'white'\n"
+        "export type Board = CellState[][]\n"
+    )
+    (tmp_git_repo / "src" / "components" / "Board.test.tsx").write_text(
+        "import Board from './Board'\n"
+        "\n"
+        "const mockBoard = [\n"
+        "  ['empty', 'black'],\n"
+        "  ['white', 'empty'],\n"
+        "]\n"
+        "\n"
+        "test('renders fixture', () => render(<Board board={mockBoard} />))\n"
+    )
+    ticket = {
+        "delivery_profile": {"stack_id": "react-vite"},
+        "description": "五子棋 棋盘 黑方 白方",
+    }
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "components" / "Board.test.tsx").read_text()
+    assert "src/components/Board.test.tsx" in changed
+    assert "import type { Board as BoardState } from '../types'" in text
+    assert "const mockBoard: BoardState = [" in text
+
+
 def test_react_vite_scaffold_replaces_brittle_ready_smoke_test(tmp_git_repo: Path):
     entrypoint = _load_entrypoint()
     (tmp_git_repo / "src").mkdir()
