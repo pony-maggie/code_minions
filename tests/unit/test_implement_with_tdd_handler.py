@@ -788,6 +788,44 @@ def test_react_vite_scaffold_prunes_over_detailed_gomoku_ui_tests(tmp_git_repo: 
     assert "左上到右下斜线" not in text
 
 
+def test_react_vite_scaffold_prunes_gomoku_tests_from_win_task_without_product_name(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "App.test.tsx").write_text(
+        "import { describe, it, expect } from 'vitest'\n"
+        "\n"
+        "describe('胜负判定与获胜棋子高亮', () => {\n"
+        "  it('Given 黑方横向连续五子，When 第五子落下，Then 显示黑方获胜并高亮这五子', async () => {\n"
+        "    expect(true).toBe(true)\n"
+        "  })\n"
+        "\n"
+        "  it('Given 白方纵向连续五子，When 第五子落下，Then 显示白方获胜并高亮这五子', async () => {\n"
+        "    expect(true).toBe(true)\n"
+        "  })\n"
+        "\n"
+        "  it('Given 棋盘已满且无人五连，When 最后一手落下，Then 显示平局', async () => {\n"
+        "    expect(screen.getByText('平局')).toBeInTheDocument()\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {
+        "delivery_profile": {"stack_id": "react-vite"},
+        "title": "胜负判定与获胜棋子高亮",
+        "acceptance_criteria": [
+            "Given 黑方横向连续五子，When 第五子落下，Then 显示黑方获胜",
+            "Given 白方纵向连续五子，When 第五子落下，Then 显示白方获胜",
+        ],
+    }
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "App.test.tsx").read_text()
+    assert "src/App.test.tsx" in changed
+    assert "黑方横向连续五子" in text
+    assert "白方纵向连续五子" not in text
+    assert "平局" not in text
+
+
 def test_react_vite_scaffold_prunes_brittle_gomoku_board_class_tests(tmp_git_repo: Path):
     entrypoint = _load_entrypoint()
     (tmp_git_repo / "tests").mkdir()

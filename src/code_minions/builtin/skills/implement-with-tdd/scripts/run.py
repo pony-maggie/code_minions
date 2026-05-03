@@ -458,14 +458,17 @@ def _ticket_text(ticket: dict[str, Any]) -> str:
 
 def _looks_like_turn_based_board_game(ticket: dict[str, Any]) -> bool:
     text = _ticket_text(ticket)
-    has_board_game = any(token in text for token in ("gomoku", "五子棋", "棋盘", "board game"))
-    has_turns = any(token in text for token in ("轮流", "回合", "turn", "currentplayer", "black", "white", "黑棋", "白棋"))
+    has_board_game = any(token in text for token in ("gomoku", "五子棋", "五子", "五连", "棋盘", "board game"))
+    has_turns = any(
+        token in text
+        for token in ("轮流", "回合", "turn", "currentplayer", "black", "white", "黑棋", "白棋", "黑方", "白方")
+    )
     return has_board_game and has_turns
 
 
 def _looks_like_gomoku_project(ticket: dict[str, Any]) -> bool:
     text = _ticket_text(ticket)
-    return any(token in text for token in ("gomoku", "五子棋"))
+    return any(token in text for token in ("gomoku", "五子棋", "五子", "五连"))
 
 
 def _delivery_guidance_context(ticket: dict[str, Any]) -> str:
