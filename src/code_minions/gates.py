@@ -273,6 +273,26 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
             paths=paths,
         ))
 
+    if (
+        "expect(element).toHaveClass" in output
+        and "Expected the element to have class:" in output
+        and any(player_class in output for player_class in ("black", "white"))
+    ):
+        findings.append(GateFinding(
+            code="react-board-cell-class-contract-regression",
+            severity="error",
+            stage="runtime",
+            message="A board interaction test expected the clicked cell to keep its player class.",
+            repair_hint=(
+                "Preserve previously passing board-cell DOM contracts across later tasks. If tests "
+                "assert clicked cells have `black`/`white` classes, keep those classes on the stable "
+                "cell element while adding win-state classes such as `winning`; do not move the only "
+                "player marker to a child element unless all existing tests are updated consistently."
+            ),
+            source=source,
+            paths=paths,
+        ))
+
     if "落子历史" in output and "getByText" in output:
         findings.append(GateFinding(
             code="react-status-panel-history-section-missing",
@@ -303,6 +323,26 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
                 "Use the same player terminology across visible status text, live-region announcements, "
                 "and tests. For this Gomoku UI, do not mix `黑方/白方` with `黑子/白子` unless tests and "
                 "product copy are updated together."
+            ),
+            source=source,
+            paths=paths,
+        ))
+
+    if (
+        "expect(element).toHaveTextContent()" in output
+        and "Expected element to have text content:" in output
+        and "Received:" in output
+        and any(term in output for term in ("黑棋胜", "白棋胜", "平局"))
+    ):
+        findings.append(GateFinding(
+            code="turn-based-board-game-winner-status-mismatch",
+            severity="error",
+            stage="runtime",
+            message="Turn-based board game status text does not match the expected winner or draw state.",
+            repair_hint=(
+                "Re-check the move sequence and win/draw state update path. Preserve alternating turns, "
+                "ensure the fifth stone triggers the intended winner, pass winner/highlight state through "
+                "to the board, and avoid test filler moves that create an earlier opponent win."
             ),
             source=source,
             paths=paths,

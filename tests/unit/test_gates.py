@@ -200,6 +200,49 @@ def test_runtime_findings_classify_turn_based_board_game_accidental_early_win() 
     assert "filler moves" in findings[0].repair_hint
 
 
+def test_runtime_findings_classify_board_cell_class_contract_regression() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  tests/GameInteraction.test.tsx > Given 空棋盘，When 黑方点击一个空交叉点",
+            "Error: expect(element).toHaveClass(\"black\")",
+            "Expected the element to have class:",
+            "  black",
+            "Received:",
+            "",
+            "❯ tests/GameInteraction.test.tsx:15:16",
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "react-board-cell-class-contract-regression"
+    ]
+    assert findings[0].paths == ["tests/GameInteraction.test.tsx"]
+    assert "Preserve" in findings[0].repair_hint
+    assert "black" in findings[0].repair_hint
+
+
+def test_runtime_findings_classify_turn_based_winner_status_mismatch() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  tests/game.test.tsx > Game Win Detection > 白方纵向连续五子",
+            "Error: expect(element).toHaveTextContent()",
+            "Expected element to have text content:",
+            "  白棋胜",
+            "Received:",
+            "  黑棋胜",
+            "❯ tests/game.test.tsx:53:44",
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "turn-based-board-game-winner-status-mismatch"
+    ]
+    assert findings[0].paths == ["tests/game.test.tsx"]
+    assert "move sequence" in findings[0].repair_hint
+
+
 def test_runtime_findings_classify_user_event_import_mismatch() -> None:
     findings = runtime_findings_for_output(
         'src/App.test.tsx(39,13): error TS2339: Property \'user\' does not exist on type '
