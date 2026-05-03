@@ -317,6 +317,63 @@ def test_runtime_findings_classify_board_cell_text_vs_accessible_name_mismatch()
     assert "accessible name" in findings[0].repair_hint
 
 
+def test_runtime_findings_classify_board_testid_contract_mismatch() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  src/App.test.tsx > App > renders the board centered on desktop",
+            "TestingLibraryElementError: Unable to find an element by: [data-testid=\"gomoku-board\"]",
+            '  <svg class="board-svg" data-testid="board-svg" viewBox="0 0 480 480">',
+            " ❯ src/App.test.tsx:12:28",
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "react-board-testid-contract-mismatch"
+    ]
+    assert findings[0].paths == ["src/App.test.tsx"]
+    assert "gomoku-board" in findings[0].repair_hint
+    assert "board-svg" in findings[0].repair_hint
+
+
+def test_runtime_findings_classify_broad_empty_cell_role_query() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            'FAIL  src/App.test.tsx > App > shows empty board initially',
+            'TestingLibraryElementError: Found multiple elements with the role "button" and name `/, 空$/`',
+            'Name "行1列1, 空":',
+            '  <button aria-label="行1列1, 空" data-testid="cell-0-0" />',
+            " ❯ src/App.test.tsx:18:25",
+        ]),
+        source="react-vite",
+    )
+
+    assert findings[0].code == "react-board-empty-cell-query-too-broad"
+    assert findings[0].paths == ["src/App.test.tsx"]
+    assert "getAllByRole" in findings[0].repair_hint
+    assert "cell-0-0" in findings[0].repair_hint
+
+
+def test_runtime_findings_classify_zero_based_coordinate_accessible_name() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  src/Board.test.tsx > Board > exposes coordinates",
+            "TestingLibraryElementError: Unable to find an accessible element with the role \"button\" and name `/^行0列0$/`",
+            'Name "行1列1, 空":',
+            '  <button aria-label="行1列1, 空" data-testid="cell-0-0" />',
+            " ❯ src/Board.test.tsx:25:32",
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "react-board-coordinate-accessible-name-mismatch"
+    ]
+    assert findings[0].paths == ["src/Board.test.tsx"]
+    assert "1-based" in findings[0].repair_hint
+    assert "state suffix" in findings[0].repair_hint
+
+
 def test_runtime_findings_classify_board_cell_data_stone_not_updated() -> None:
     findings = runtime_findings_for_output(
         "\n".join([

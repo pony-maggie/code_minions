@@ -366,6 +366,65 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
         ))
 
     if (
+        "gomoku-board" in output
+        and "board-svg" in output
+    ):
+        findings.append(GateFinding(
+            code="react-board-testid-contract-mismatch",
+            severity="error",
+            stage="runtime",
+            message="A board test expected a different stable test id than the rendered board uses.",
+            repair_hint=(
+                "Align the board test id contract. Either render `data-testid=\"gomoku-board\"` on the "
+                "interactive board/root element that tests expect, or update tests to use the existing "
+                "`board-svg`/cell test ids consistently. Keep one stable id for the board root across App "
+                "and Board tests."
+            ),
+            source=source,
+            paths=paths,
+        ))
+
+    if (
+        "Found multiple elements with the role" in output
+        and "button" in output
+        and "空" in output
+        and "cell-0-0" in output
+    ):
+        findings.append(GateFinding(
+            code="react-board-empty-cell-query-too-broad",
+            severity="error",
+            stage="runtime",
+            message="A board test queried empty cells with a broad accessible-name pattern.",
+            repair_hint=(
+                "Use `getAllByRole('button', { name: /, 空$/ })` only when asserting the empty-cell count. "
+                "For one cell, query an exact accessible name such as `行1列1, 空` or a stable test id such "
+                "as `cell-0-0`; broad empty-cell role queries match many board cells."
+            ),
+            source=source,
+            paths=paths,
+        ))
+
+    if (
+        "Unable to find an accessible element" in output
+        and 'role "button"' in output
+        and "行0列0" in output
+        and "行1列1, 空" in output
+    ):
+        findings.append(GateFinding(
+            code="react-board-coordinate-accessible-name-mismatch",
+            severity="error",
+            stage="runtime",
+            message="A board test used a coordinate accessible name that does not match rendered cells.",
+            repair_hint=(
+                "Keep board coordinate accessible names consistent. User-facing aria labels should usually "
+                "be 1-based and include the state suffix, for example `行1列1, 空`; do not query "
+                "0-based labels such as `行0列0` unless the component actually renders that exact contract."
+            ),
+            source=source,
+            paths=paths,
+        ))
+
+    if (
         "expect(element).toHaveAttribute" in output
         and "data-stone=" in output
         and "Received:" in output
