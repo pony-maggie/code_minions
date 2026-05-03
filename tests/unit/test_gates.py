@@ -228,6 +228,24 @@ def test_runtime_findings_classify_jsx_missing_required_props() -> None:
     assert "Pass the required props" in findings[0].repair_hint
 
 
+def test_runtime_findings_classify_board_cell_state_player_type_mismatch() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "src/components/Board.tsx(31,52): error TS2345: Argument of type 'StoneColor' is not assignable to parameter of type '\"black\" | \"white\"'.",
+            "  Type '\"empty\"' is not assignable to type '\"black\" | \"white\"'.",
+            "src/utils/checkWinner.ts(11,7): error TS2367: This comparison appears to be unintentional because the types '\"black\" | \"white\"' and '\"empty\"' have no overlap.",
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "turn-board-cell-state-player-type-mismatch"
+    ]
+    assert findings[0].paths == ["src/components/Board.tsx"]
+    assert "CellState" in findings[0].repair_hint
+    assert "Player" in findings[0].repair_hint
+
+
 def test_runtime_findings_classify_missing_assertive_live_region() -> None:
     findings = runtime_findings_for_output(
         "\n".join([

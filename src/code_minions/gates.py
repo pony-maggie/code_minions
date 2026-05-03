@@ -147,6 +147,19 @@ def _typescript_runtime_findings(output: str, *, source: str) -> list[GateFindin
                 "contract to match its callers. When a child component gains required props, "
                 "update the parent state and handlers in the same change."
             )
+        elif (
+            ts_code in {"2345", "2367"}
+            and '"empty"' in output
+            and '"black" | "white"' in output
+            and ("stonecolor" in lowered or "no overlap" in lowered)
+        ):
+            code = "turn-board-cell-state-player-type-mismatch"
+            repair_hint = (
+                "Separate playable stone/player types from empty board-cell state. Use a `Player` "
+                "or `Stone` type of `'black' | 'white'`, and a distinct `CellState` type such as "
+                "`Player | 'empty'` or `Player | null`. Winner/check functions should accept only "
+                "the playable `Player` type, while board arrays should use `CellState`."
+            )
         elif ts_code in {"2322", "2345"} and "not assignable to" in lowered:
             code = "typescript-type-contract-mismatch"
             repair_hint = (
@@ -163,7 +176,8 @@ def _typescript_runtime_findings(output: str, *, source: str) -> list[GateFindin
         else:
             continue
 
-        key = (code, path)
+        key_path = "" if code == "turn-board-cell-state-player-type-mismatch" else path
+        key = (code, key_path)
         if key in seen:
             continue
         seen.add(key)
