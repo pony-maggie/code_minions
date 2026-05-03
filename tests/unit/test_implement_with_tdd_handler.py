@@ -881,6 +881,31 @@ def test_react_vite_scaffold_prunes_over_specific_game_over_undo_turn_test(tmp_g
     assert "当前回合: 白子" not in text
 
 
+def test_react_vite_scaffold_removes_duplicate_cell_testids_from_wrappers(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src" / "components").mkdir(parents=True)
+    (tmp_git_repo / "src" / "components" / "Board.tsx").write_text(
+        "export function Board({ rowIndex, colIndex }) {\n"
+        "  return (\n"
+        "    <div data-testid={`cell-${rowIndex}-${colIndex}`} className=\"cell-wrapper\">\n"
+        "      <button data-testid={`cell-${rowIndex}-${colIndex}`} aria-label=\"行1列1, 空\" />\n"
+        "    </div>\n"
+        "  )\n"
+        "}\n"
+    )
+    ticket = {
+        "delivery_profile": {"stack_id": "react-vite"},
+        "description": "五子棋 棋盘",
+    }
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "components" / "Board.tsx").read_text()
+    assert "src/components/Board.tsx" in changed
+    assert '<div className="cell-wrapper">' in text
+    assert text.count('data-testid={`cell-${rowIndex}-${colIndex}`}') == 1
+
+
 def test_react_vite_scaffold_replaces_brittle_ready_smoke_test(tmp_git_repo: Path):
     entrypoint = _load_entrypoint()
     (tmp_git_repo / "src").mkdir()

@@ -826,6 +826,7 @@ GOMOKU_OVER_DETAILED_TEST_MARKERS = (
     "右上到左下斜线",
     "棋盘已满",
     "平局",
+    "已存在游戏结束状态",
     "游戏结束后悔棋",
     "取消胜负状态并回到可继续对局状态",
 )
@@ -841,6 +842,13 @@ GOMOKU_BRITTLE_BOARD_TEST_MARKERS = (
     "last-move",
     "toHaveClass('last-move')",
     'toHaveClass("last-move")',
+)
+REACT_VITE_CELL_TESTID_ATTR_RE = re.compile(
+    r"""\s+data-testid=\{`cell-\$\{[^}]+\}-\$\{[^}]+\}`\}"""
+)
+REACT_VITE_OPENING_TAG_RE = re.compile(
+    r"""<(?P<tag>[A-Za-z][\w.]*)\b(?P<attrs>[^<>]*?)>""",
+    re.DOTALL,
 )
 
 REACT_VITE_POSITION_TYPE = """export interface Position {
@@ -1225,6 +1233,39 @@ def _stabilize_turn_based_board_game_mvp_tests(workdir, ticket: dict[str, Any]) 
     return changed
 
 
+def _stabilize_duplicate_cell_testids(workdir, ticket: dict[str, Any]) -> set[str]:
+    if not (_looks_like_turn_based_board_game(ticket) or _looks_like_gomoku_project(ticket)):
+        return set()
+
+    src_dir = workdir / "src"
+    if not src_dir.is_dir():
+        return set()
+
+    changed: set[str] = set()
+    for path in src_dir.rglob("*.tsx"):
+        if ".test." in path.name.lower() or ".spec." in path.name.lower():
+            continue
+        original = path.read_text(errors="ignore")
+        if "<button" not in original or original.count("data-testid={`cell-${") < 2:
+            continue
+
+        def replace_tag(match: re.Match[str]) -> str:
+            if match.group("tag") == "button":
+                return match.group(0)
+            attrs = match.group("attrs")
+            if "data-testid={`cell-${" not in attrs:
+                return match.group(0)
+            updated_attrs = REACT_VITE_CELL_TESTID_ATTR_RE.sub("", attrs)
+            return f"<{match.group('tag')}{updated_attrs}>"
+
+        updated = REACT_VITE_OPENING_TAG_RE.sub(replace_tag, original)
+        if updated == original:
+            continue
+        path.write_text(updated)
+        changed.add(path.relative_to(workdir).as_posix())
+    return changed
+
+
 def _imported_symbol_name(raw_name: str) -> str:
     name = raw_name.strip()
     if name.startswith("type "):
@@ -1429,6 +1470,7 @@ def _stabilize_react_vite_scaffold(workdir, ticket: dict[str, Any]) -> set[str]:
             changed.add(written)
     changed.update(_stabilize_react_vite_tests(workdir))
     changed.update(_stabilize_turn_based_board_game_mvp_tests(workdir, ticket))
+    changed.update(_stabilize_duplicate_cell_testids(workdir, ticket))
     changed.update(_stabilize_react_vite_types_module(workdir))
     changed.update(_stabilize_react_vite_board_type_helpers(workdir))
     changed.update(_stabilize_position_type_contract(workdir))
