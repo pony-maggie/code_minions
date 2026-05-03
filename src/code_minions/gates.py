@@ -824,6 +824,26 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
         ))
 
     if (
+        any(pattern in output for pattern in ("getByText('平局')", 'getByText("平局")'))
+        and 'data-winning="true"' in output
+        and any(term in output for term in ("棋盘已满", "平局", "draw"))
+    ):
+        findings.append(GateFinding(
+            code="turn-board-game-draw-test-created-accidental-win",
+            severity="error",
+            stage="runtime",
+            message="A full-board draw UI test rendered a winning board before finding draw text.",
+            repair_hint=(
+                "Do not let a full-board Gomoku draw UI test block the MVP. Omit automated draw tests "
+                "for this workflow unless the implementation already exposes a simple pure helper or "
+                "deterministic no-five board state; keep win detection coverage to one lightweight "
+                "acceptance-level smoke test."
+            ),
+            source=source,
+            paths=paths,
+        ))
+
+    if (
         "expected 'white-wins' to be 'draw'" in output
         or "expected 'black-wins' to be 'draw'" in output
         or "expected 'white' to be 'draw'" in output

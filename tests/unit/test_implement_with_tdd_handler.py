@@ -806,6 +806,8 @@ def test_turn_based_board_game_guidance_limits_complex_gomoku_rule_tests():
     assert "acceptance-level" in guidance
     assert "Avoid exhaustive public-click tests" in guidance
     assert "Do not let synthetic full-board" in guidance
+    assert "Do not write UI tests that fill or click the whole board to prove a draw" in guidance
+    assert "omit automated draw tests for the Gomoku MVP" in guidance
 
 
 def test_turn_based_board_game_guidance_keeps_gomoku_tests_lightweight():

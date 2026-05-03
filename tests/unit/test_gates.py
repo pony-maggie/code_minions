@@ -752,6 +752,28 @@ def test_runtime_findings_classify_draw_text_missing_after_public_board_fill() -
     assert "draw helper" in finding.repair_hint
 
 
+def test_runtime_findings_classify_truncated_draw_text_missing_after_public_board_fill() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  tests/WinDetection.test.tsx > 胜负判定 > 棋盘已满且无人五连则显示平局",
+            '          data-testid="cell-0-0"',
+            '          data-winning="true"',
+            "❯ tests/WinDetection.test.tsx:215:21",
+            "    215|       expect(screen.getByText('平局')).toBeInTheDocument();",
+        ]),
+        source="react-vite",
+    )
+
+    assert "turn-board-game-draw-test-created-accidental-win" in [
+        finding.code for finding in findings
+    ]
+    finding = next(
+        f for f in findings if f.code == "turn-board-game-draw-test-created-accidental-win"
+    )
+    assert finding.paths == ["tests/WinDetection.test.tsx"]
+    assert "omit" in finding.repair_hint.lower()
+
+
 def test_runtime_findings_classify_draw_display_missing_after_accidental_win() -> None:
     findings = runtime_findings_for_output(
         "\n".join([
