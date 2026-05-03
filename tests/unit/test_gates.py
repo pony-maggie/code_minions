@@ -396,6 +396,27 @@ def test_runtime_findings_classify_board_cell_data_stone_not_updated() -> None:
     assert "data-stone" in findings[0].repair_hint
 
 
+def test_runtime_findings_classify_board_cell_accessible_state_not_updated() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  tests/App.test.tsx > 胜负判定与获胜棋子高亮 > 黑方横向五子获胜并高亮",
+            "TestingLibraryElementError: Unable to find an accessible element with the role \"button\" and name `行1列1, 黑子`",
+            '  <button aria-label="行1列1, 空" data-stone="empty" />',
+            '  <button aria-label="行1列2, 空" data-stone="empty" />',
+            " ❯ getCellWithStone tests/App.test.tsx:12:17",
+            "     12|   return screen.getByRole('button', { name: `行${row + 1}列${col + 1}, ${stone}` })",
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "react-board-cell-accessible-state-not-updated"
+    ]
+    assert findings[0].paths == ["tests/App.test.tsx"]
+    assert "aria-label" in findings[0].repair_hint
+    assert "data-stone" in findings[0].repair_hint
+
+
 def test_runtime_findings_classify_presentational_board_occupied_click_contract() -> None:
     findings = runtime_findings_for_output(
         "\n".join([

@@ -72,7 +72,9 @@ _TSC_DIAGNOSTIC_RE = re.compile(
     r"(?P<path>[^\s()]+\.(?:ts|tsx))\(\d+,\d+\): error TS(?P<ts_code>\d+): (?P<message>.+)"
 )
 _TSC_MISSING_NAME_RE = re.compile(r"Cannot find name '(?P<name>[^']+)'")
-_VITEST_FRAME_PATH_RE = re.compile(r"❯\s+(?P<path>[^\s:]+\.(?:ts|tsx)):\d+:\d+")
+_VITEST_FRAME_PATH_RE = re.compile(
+    r"❯\s+(?:\S+\s+)?(?P<path>[^\s:]+\.(?:ts|tsx)):\d+:\d+"
+)
 REACT_HOOK_NAMES = {
     "useCallback",
     "useContext",
@@ -552,6 +554,29 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
                 "`data-stone=\"black\"` or `data-stone=\"white\"` after moves. If board cells are objects "
                 "such as `{ stone, isLastMove }`, check occupancy with `cell.stone !== null` rather than "
                 "`cell !== null`; otherwise empty object cells will block every move before state updates."
+            ),
+            source=source,
+            paths=paths,
+        ))
+
+    if (
+        "getCellWithStone" in output
+        and "getByRole" in output
+        and "data-stone" in output
+        and 'aria-label="行' in output
+        and "空" in output
+        and any(stone in output for stone in ("黑子", "白子", "black", "white"))
+    ):
+        findings.append(GateFinding(
+            code="react-board-cell-accessible-state-not-updated",
+            severity="error",
+            stage="runtime",
+            message="A board test could not find the moved stone by its accessible cell state.",
+            repair_hint=(
+                "Keep every board cell's rendered stone, `data-stone`, and `aria-label` derived from the "
+                "same board state after each move. A cell containing black should expose a stable state "
+                "such as `data-stone=\"black\"` and `aria-label=\"行1列1, 黑子\"`; white cells should "
+                "likewise announce `白子`, while only truly empty cells announce `空`."
             ),
             source=source,
             paths=paths,
