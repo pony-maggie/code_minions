@@ -1064,6 +1064,38 @@ def test_react_vite_scaffold_allows_nullable_win_result_state(tmp_git_repo: Path
     assert "useState<WinResult | null>(null)" in text
 
 
+def test_react_vite_scaffold_adds_button_role_to_clickable_cell_divs(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src" / "components").mkdir(parents=True)
+    (tmp_git_repo / "src" / "components" / "Board.tsx").write_text(
+        "export function Board({ board, onCellClick }) {\n"
+        "  return <div>{board.map((row, rowIndex) => row.map((cellState, colIndex) => {\n"
+        "    const label = getCellLabel(rowIndex, colIndex, cellState)\n"
+        "    return (\n"
+        "      <div\n"
+        "        key={`${rowIndex}-${colIndex}`}\n"
+        "        data-testid={`cell-${rowIndex}-${colIndex}`}\n"
+        "        className=\"cell\"\n"
+        "        onClick={() => onCellClick?.(rowIndex, colIndex)}\n"
+        "      />\n"
+        "    )\n"
+        "  }))}</div>\n"
+        "}\n"
+    )
+    ticket = {
+        "delivery_profile": {"stack_id": "react-vite"},
+        "description": "五子棋 棋盘 交叉点 aria-label",
+    }
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "components" / "Board.tsx").read_text()
+    assert "src/components/Board.tsx" in changed
+    assert 'role="button"' in text
+    assert "tabIndex={0}" in text
+    assert "aria-label={label}" in text
+
+
 def test_react_vite_scaffold_replaces_brittle_ready_smoke_test(tmp_git_repo: Path):
     entrypoint = _load_entrypoint()
     (tmp_git_repo / "src").mkdir()
