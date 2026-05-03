@@ -525,6 +525,37 @@ def test_react_vite_scaffold_repairs_unique_relative_require_target(tmp_git_repo
     assert not [finding for finding in findings if finding.code == "unresolved-relative-import"]
 
 
+def test_react_vite_scaffold_adds_missing_position_type_contract(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src" / "components").mkdir(parents=True)
+    (tmp_git_repo / "src" / "types.ts").write_text(
+        "export type Player = 'black' | 'white'\n"
+        "export type BoardState = (Player | null)[][]\n"
+    )
+    (tmp_git_repo / "src" / "components" / "Board.tsx").write_text(
+        "import { type BoardState } from '../types'\n"
+        "interface BoardProps {\n"
+        "  board: BoardState\n"
+        "  lastMove: Position | null\n"
+        "}\n"
+        "export function Board({ board, lastMove }: BoardProps) {\n"
+        "  return <div>{board.length}{lastMove?.row}</div>\n"
+        "}\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    board_text = (tmp_git_repo / "src" / "components" / "Board.tsx").read_text()
+    types_text = (tmp_git_repo / "src" / "types.ts").read_text()
+    assert "src/components/Board.tsx" in changed
+    assert "src/types.ts" in changed
+    assert "type Position" in board_text
+    assert "export interface Position" in types_text
+    assert "row: number" in types_text
+    assert "col: number" in types_text
+
+
 def test_xcodegen_duplicate_product_name_failure_gets_repair_hint(tmp_git_repo: Path, monkeypatch):
     entrypoint = _load_entrypoint()
     (tmp_git_repo / "project.yml").write_text(

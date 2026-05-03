@@ -651,6 +651,18 @@ REACT_VITE_BOARD_COORDINATE_RE = re.compile(
     re.IGNORECASE,
 )
 REACT_VITE_REGEX_LITERAL_RE = re.compile(r"""/(?P<pattern>\^(?:\\.|[^/\n])*)(?P<suffix>/[a-z]*)""")
+REACT_VITE_TYPES_IMPORT_RE = re.compile(
+    r"""import\s*\{(?P<names>[^}]+)\}\s*from\s*['"](?P<source>\.{1,2}/[^'"]*types)['"]\s*;?""",
+    re.MULTILINE | re.DOTALL,
+)
+REACT_VITE_POSITION_EXPORT_RE = re.compile(r"""\bexport\s+(?:interface|type)\s+Position\b""")
+REACT_VITE_POSITION_LOCAL_RE = re.compile(r"""\b(?:interface|type)\s+Position\b""")
+
+REACT_VITE_POSITION_TYPE = """export interface Position {
+  row: number
+  col: number
+}
+"""
 
 
 def _write_text_if_changed(workdir, rel_path: str, content: str) -> str | None:
@@ -785,6 +797,67 @@ def _stabilize_react_vite_tests(workdir) -> set[str]:
     return changed
 
 
+def _uses_position_without_local_definition(text: str) -> bool:
+    return bool(re.search(r"\bPosition\b", text)) and not REACT_VITE_POSITION_LOCAL_RE.search(text)
+
+
+def _types_import_specifier(workdir, path) -> str:
+    rel = os.path.relpath(workdir / "src" / "types", start=path.parent)
+    specifier = rel.replace(os.sep, "/")
+    if not specifier.startswith("."):
+        specifier = f"./{specifier}"
+    return specifier
+
+
+def _stabilize_position_type_contract(workdir) -> set[str]:
+    src = workdir / "src"
+    types_path = src / "types.ts"
+    if not src.is_dir() or not types_path.is_file():
+        return set()
+
+    source_files = [
+        path
+        for path in src.rglob("*")
+        if path.is_file()
+        and path.suffix in {".ts", ".tsx"}
+        and ".test." not in path.name.lower()
+        and ".spec." not in path.name.lower()
+        and path != types_path
+    ]
+    position_users = [
+        path for path in source_files if _uses_position_without_local_definition(path.read_text(errors="ignore"))
+    ]
+    if not position_users:
+        return set()
+
+    changed: set[str] = set()
+    types_text = types_path.read_text(errors="ignore")
+    if not REACT_VITE_POSITION_EXPORT_RE.search(types_text):
+        types_path.write_text(types_text.rstrip() + "\n\n" + REACT_VITE_POSITION_TYPE)
+        changed.add("src/types.ts")
+
+    for path in position_users:
+        text = path.read_text(errors="ignore")
+        if re.search(r"""\bimport\s*\{[^}]*\bPosition\b[^}]*\}\s*from\s*['"][^'"]*types['"]""", text, re.DOTALL):
+            continue
+
+        match = REACT_VITE_TYPES_IMPORT_RE.search(text)
+        if match:
+            names = [name.strip() for name in match.group("names").split(",") if name.strip()]
+            names.append("type Position")
+            replacement = f"import {{ {', '.join(names)} }} from '{match.group('source')}'"
+            updated = text[:match.start()] + replacement + text[match.end():]
+        else:
+            specifier = _types_import_specifier(workdir, path)
+            updated = f"import {{ type Position }} from '{specifier}'\n{text}"
+
+        if updated != text:
+            path.write_text(updated)
+            changed.add(path.relative_to(workdir).as_posix())
+
+    return changed
+
+
 def _stabilize_react_vite_scaffold(workdir, ticket: dict[str, Any]) -> set[str]:
     if not _looks_like_react_vite_profile(_ticket_delivery_profile(ticket)):
         return set()
@@ -819,6 +892,7 @@ def _stabilize_react_vite_scaffold(workdir, ticket: dict[str, Any]) -> set[str]:
         if written:
             changed.add(written)
     changed.update(_stabilize_react_vite_tests(workdir))
+    changed.update(_stabilize_position_type_contract(workdir))
     changed.update(repair_unique_unresolved_relative_imports(workdir))
 
     return changed
