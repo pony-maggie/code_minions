@@ -2630,3 +2630,29 @@ def test_tool_call_round_limit_reports_diagnostics(tmp_git_repo: Path):
     assert "tool_calls=[Read]" in error
     assert "stop_reason=tool_use" in error
     assert "model=gemini-3.1-pro-preview" in error
+
+
+def test_python_cli_stabilizer_removes_modules_that_shadow_src_package(tmp_path: Path):
+    entrypoint = _load_entrypoint()
+    package_dir = tmp_path / "src" / "calc_lite"
+    package_dir.mkdir(parents=True)
+    (package_dir / "__init__.py").write_text("def main():\n    print('ok')\n")
+    (tmp_path / "calc_lite.py").write_text("from src.calc_lite import main\n")
+    (tmp_path / "src" / "calc_lite.py").write_text("print('shadow')\n")
+    ticket = {
+        "delivery_profile": {
+            "stack_id": "python-cli",
+            "kind": "cli",
+            "language": "python",
+            "build_system": "python",
+        }
+    }
+
+    changed = entrypoint._stabilize_python_cli_scaffold(tmp_path, ticket)
+
+    assert "calc_lite.py" in changed
+    assert "src/calc_lite.py" in changed
+    assert "src/calc_lite/__main__.py" in changed
+    assert not (tmp_path / "calc_lite.py").exists()
+    assert not (tmp_path / "src" / "calc_lite.py").exists()
+    assert "from . import main" in (package_dir / "__main__.py").read_text()

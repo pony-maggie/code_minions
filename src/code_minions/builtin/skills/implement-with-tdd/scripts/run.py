@@ -444,6 +444,16 @@ def _looks_like_react_vite_profile(profile: dict[str, Any]) -> bool:
     return "typescript" in text and "react" in text and "vite" in text
 
 
+def _looks_like_python_cli_profile(profile: dict[str, Any]) -> bool:
+    if stack_id_for_delivery(profile) == "python-cli":
+        return True
+    text = "\n".join(
+        str(profile.get(key, ""))
+        for key in ("kind", "language", "framework", "build_system", "test_command")
+    ).lower()
+    return "python" in text and ("cli" in text or "command line" in text)
+
+
 def _looks_like_swift_xcodegen_profile(profile: dict[str, Any]) -> bool:
     text = "\n".join(
         str(profile.get(key, ""))
@@ -552,6 +562,16 @@ def _delivery_guidance_context(ticket: dict[str, Any]) -> str:
             "For Swift/XcodeGen projects, every application and `bundle.unit-test` target must either "
             "set `GENERATE_INFOPLIST_FILE: YES` in target settings or provide an explicit "
             "`INFOPLIST_FILE`/`info.path`; do this for the test bundle as well as the app target."
+        )
+    if _looks_like_python_cli_profile(profile):
+        lines.append(
+            "For Python CLI projects, keep one canonical import layout across all tasks. If the project "
+            "uses a `src/<package>/` package, extend that package instead of adding top-level "
+            "`<package>.py` or `src/<package>.py` files with the same name; those shadow the package and "
+            "break imports such as `from <package>.parser import ...`. For `python -m <package>`, add "
+            "`<package>/__main__.py` inside the package. Ensure tests add `src/` to `PYTHONPATH` or "
+            "`sys.path` when using a src layout, and keep subprocess CLI tests consistent with the same "
+            "package/module entrypoint."
         )
     if _looks_like_turn_based_board_game(ticket):
         lines.append(
@@ -1672,6 +1692,49 @@ def _stabilize_position_type_contract(workdir) -> set[str]:
     return changed
 
 
+def _python_src_packages(workdir) -> list[tuple[str, Any]]:
+    src_dir = workdir / "src"
+    if not src_dir.is_dir():
+        return []
+    packages: list[tuple[str, Any]] = []
+    for init_file in src_dir.glob("*/__init__.py"):
+        packages.append((init_file.parent.name, init_file.parent))
+    return packages
+
+
+def _python_package_main_content(package_dir) -> str:
+    init_text = (package_dir / "__init__.py").read_text(errors="ignore")
+    if re.search(r"(?m)^def\s+main\s*\(", init_text):
+        return "from . import main\n\nif __name__ == '__main__':\n    main()\n"
+    if (package_dir / "cli.py").is_file():
+        return "from .cli import main\n\nif __name__ == '__main__':\n    main()\n"
+    return ""
+
+
+def _stabilize_python_cli_scaffold(workdir, ticket: dict[str, Any]) -> set[str]:
+    if not _looks_like_python_cli_profile(_ticket_delivery_profile(ticket)):
+        return set()
+
+    changed: set[str] = set()
+    for package_name, package_dir in _python_src_packages(workdir):
+        for shadow_path in (workdir / f"{package_name}.py", workdir / "src" / f"{package_name}.py"):
+            if shadow_path.is_file():
+                shadow_path.unlink()
+                changed.add(shadow_path.relative_to(workdir).as_posix())
+
+        main_content = _python_package_main_content(package_dir)
+        if main_content:
+            written = _write_text_if_changed(
+                workdir,
+                (package_dir / "__main__.py").relative_to(workdir).as_posix(),
+                main_content,
+            )
+            if written:
+                changed.add(written)
+
+    return changed
+
+
 def _stabilize_react_vite_scaffold(workdir, ticket: dict[str, Any]) -> set[str]:
     if not _looks_like_react_vite_profile(_ticket_delivery_profile(ticket)):
         return set()
@@ -2003,6 +2066,7 @@ def run(ctx):
     test_output: str = ""
     review: dict[str, Any] = {}
     latest_gate_findings: list[GateFinding] = []
+    all_paths.update(_stabilize_python_cli_scaffold(workdir, ticket))
     all_paths.update(_stabilize_react_vite_scaffold(workdir, ticket))
 
     reviewer_loops = max(1, reviewer_max)
@@ -2024,6 +2088,7 @@ def run(ctx):
         plan = _llm_call(ctx, CODER_SYS, coder_user)
         paths = _write_files(workdir, plan.get("files_written", []))
         all_paths.update(paths)
+        all_paths.update(_stabilize_python_cli_scaffold(workdir, ticket))
         all_paths.update(_stabilize_react_vite_scaffold(workdir, ticket))
 
         passed, test_output = False, ""
@@ -2063,6 +2128,7 @@ def run(ctx):
             )
             paths = _write_files(workdir, plan.get("files_written", []))
             all_paths.update(paths)
+            all_paths.update(_stabilize_python_cli_scaffold(workdir, ticket))
             all_paths.update(_stabilize_react_vite_scaffold(workdir, ticket))
 
         if not passed:
