@@ -793,7 +793,7 @@ def test_react_vite_scaffold_removes_duplicate_ts_jsx_test_when_tsx_exists(tmp_g
     assert "existing tsx test" in (tmp_git_repo / "src" / "useGameState.test.tsx").read_text()
 
 
-def test_turn_based_board_game_guidance_includes_safe_white_win_fillers():
+def test_turn_based_board_game_guidance_limits_complex_gomoku_rule_tests():
     entrypoint = _load_entrypoint()
     ticket = {
         "delivery_profile": {"stack_id": "react-vite"},
@@ -802,10 +802,24 @@ def test_turn_based_board_game_guidance_includes_safe_white_win_fillers():
 
     guidance = entrypoint._delivery_guidance_context(ticket)
 
-    assert "must not share one row" in guidance
-    assert "(10,10)" in guidance
-    assert "(14,13)" in guidance
-    assert "A full board is not automatically a draw" in guidance
+    assert "Keep Gomoku tests lightweight" in guidance
+    assert "acceptance-level" in guidance
+    assert "Avoid exhaustive public-click tests" in guidance
+    assert "Do not let synthetic full-board" in guidance
+
+
+def test_turn_based_board_game_guidance_keeps_gomoku_tests_lightweight():
+    entrypoint = _load_entrypoint()
+    ticket = {
+        "delivery_profile": {"stack_id": "react-vite"},
+        "description": "五子棋，黑白轮流落子，支持基础胜负判定",
+    }
+
+    guidance = entrypoint._delivery_guidance_context(ticket)
+
+    assert "Keep Gomoku tests lightweight" in guidance
+    assert "one black horizontal win" in guidance
+    assert "(10,10)" not in guidance
 
 
 def test_xcodegen_duplicate_product_name_failure_gets_repair_hint(tmp_git_repo: Path, monkeypatch):
@@ -1186,10 +1200,10 @@ def test_turn_based_board_game_ticket_adds_valid_move_sequence_guidance(tmp_git_
 
     coder_user = llm.chat.call_args.kwargs["messages"][1].content
     assert "turn-based board game" in coder_user
-    assert "filler moves" in coder_user
-    assert "impossible same-player consecutive moves" in coder_user
-    assert "9-click black-win sequence" in coder_user
-    assert "pure board-state" in coder_user
+    assert "Keep Gomoku tests lightweight" in coder_user
+    assert "one black horizontal win" in coder_user
+    assert "Avoid exhaustive public-click tests" in coder_user
+    assert "pure helper test" in coder_user
 
 
 def test_swift_xcodegen_profile_adds_infoplist_guidance_to_coder_prompt(tmp_git_repo: Path, monkeypatch):
