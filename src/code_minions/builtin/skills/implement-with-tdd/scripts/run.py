@@ -98,6 +98,75 @@ def _written_files_from_paths(workdir, changed_paths: set[str]) -> list[dict[str
     return files
 
 
+def _is_recoverable_worktree_file(path: str) -> bool:
+    normalized = path.replace("\\", "/").lstrip("./")
+    ignored_prefixes = (
+        ".devflow/",
+        ".git/",
+        "build/",
+        "coverage/",
+        "dist/",
+        "node_modules/",
+    )
+    if not normalized or normalized.startswith(ignored_prefixes):
+        return False
+    if normalized.endswith("package-lock.json"):
+        return False
+    allowed_suffixes = (
+        ".css",
+        ".go",
+        ".html",
+        ".js",
+        ".jsx",
+        ".json",
+        ".md",
+        ".py",
+        ".swift",
+        ".toml",
+        ".ts",
+        ".tsx",
+        ".yaml",
+        ".yml",
+    )
+    allowed_names = {"go.mod", "go.sum", "Package.swift", "yarn.lock", "pnpm-lock.yaml"}
+    name = normalized.rsplit("/", 1)[-1]
+    return name in allowed_names or normalized.endswith(allowed_suffixes)
+
+
+def _current_worktree_changed_paths(workdir) -> set[str]:
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "ls-files",
+                "--modified",
+                "--others",
+                "--exclude-standard",
+                "--",
+                ".",
+                ":(exclude).devflow",
+                ":(exclude)build",
+                ":(exclude)coverage",
+                ":(exclude)dist",
+                ":(exclude)node_modules",
+            ],
+            cwd=workdir,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    except Exception:
+        return set()
+    if result.returncode != 0:
+        return set()
+    paths: set[str] = set()
+    for line in result.stdout.splitlines():
+        path = line.strip().lstrip("./")
+        if _is_recoverable_worktree_file(path) and (workdir / path).is_file():
+            paths.add(path)
+    return paths
+
+
 def _llm_call(
     ctx,
     system: str,
@@ -209,6 +278,12 @@ def _llm_call(
             json_attempts += 1
             last_error = f"{e}; {diagnostics}"
             if json_attempts >= max_attempts:
+                recovered_paths = _current_worktree_changed_paths(ctx.workdir)
+                if recovered_paths:
+                    return {
+                        "files_written": _written_files_from_paths(ctx.workdir, recovered_paths),
+                        "reasoning": resp.message.content[:1000],
+                    }
                 raise RuntimeError(last_error) from e
             messages.append(Message(
                 role="user",

@@ -1585,6 +1585,48 @@ def test_tool_written_files_do_not_require_final_json(tmp_git_repo: Path, monkey
     assert (tmp_git_repo / "x.py").read_text() == "x = 1\n"
 
 
+def test_invalid_json_response_recovers_existing_worktree_changes(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    from code_minions.llm.types import Message, Response, Usage
+
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "App.tsx").write_text("export default function App() { return null }\n")
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "tests" / "useGame.test.ts").write_text("render(<App />)\n")
+    (tmp_git_repo / "node_modules").mkdir()
+    (tmp_git_repo / "node_modules" / "ignored.js").write_text("do not snapshot\n")
+
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        Response(
+            message=Message(role="assistant", content="<think>I will write the files.</think>"),
+            usage=Usage(10, 5),
+            model="MiniMax-M2.7",
+            stop_reason="stop",
+        ),
+        Response(
+            message=Message(role="assistant", content="<think>Still no JSON.</think>"),
+            usage=Usage(10, 5),
+            model="MiniMax-M2.7",
+            stop_reason="stop",
+        ),
+    ]
+
+    ctx = MagicMock()
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.skill = None
+    ctx.extras = {}
+
+    out = entrypoint._llm_call(ctx, "system", "user", max_attempts=2)
+
+    assert out["reasoning"].startswith("<think>Still no JSON")
+    assert out["files_written"] == [
+        {"path": "src/App.tsx", "content": "export default function App() { return null }\n"},
+        {"path": "tests/useGame.test.ts", "content": "render(<App />)\n"},
+    ]
+
+
 def test_coder_llm_calls_are_recorded(tmp_git_repo: Path, monkeypatch):
     entrypoint = _load_entrypoint()
     from code_minions.llm.types import Message, Response, Usage

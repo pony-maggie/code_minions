@@ -260,10 +260,37 @@ def _vitest_frame_path_containing(output: str, needle: str) -> str:
     return ""
 
 
+def _relative_display_path(path: str) -> str:
+    normalized = path.replace("\\", "/")
+    for marker in ("/src/", "/tests/"):
+        if marker in normalized:
+            return f"{marker.strip('/')}/{normalized.split(marker, 1)[1]}"
+    return normalized.lstrip("./")
+
+
 def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
     findings: list[GateFinding] = []
     path = _first_vitest_frame_path(output)
     paths = [path] if path else []
+    jsx_in_ts_match = re.search(
+        r"(?P<path>[^\s]+\.test\.ts):\d+:\d+:\s+ERROR:\s+Expected [\"']?>[\"']? but found [\"']?/[\"']?",
+        output,
+    )
+    if jsx_in_ts_match and "Transform failed" in output:
+        test_path = _relative_display_path(jsx_in_ts_match.group("path"))
+        findings.append(GateFinding(
+            code="react-vite-jsx-in-ts-test-file",
+            severity="error",
+            stage="runtime",
+            message=f"Vite/esbuild parsed JSX inside TypeScript test file `{test_path}`.",
+            repair_hint=(
+                f"Rename `{test_path}` to use a `.tsx` extension, or remove JSX from that test file. "
+                "React Testing Library tests that call `render(<App />)` must live in `*.test.tsx` "
+                "so Vite parses JSX correctly."
+            ),
+            source=source,
+            paths=[test_path],
+        ))
     missing_function_match = re.search(
         r"(?:__vite_ssr_import_\d+__\.)?(?P<name>[A-Za-z_$][\w$]*) is not a function",
         output,

@@ -786,6 +786,25 @@ def test_runtime_findings_classify_missing_status_history_section() -> None:
     assert "落子历史" in findings[0].repair_hint
 
 
+def test_runtime_findings_classify_jsx_inside_ts_test_file() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  tests/useGame.test.ts [ tests/useGame.test.ts ]",
+            "Error: Transform failed with 1 error:",
+            "/worktree/tests/useGame.test.ts:10:18: ERROR: Expected \">\" but found \"/\"",
+            "  10 |        render(<App />);",
+            "     |                    ^",
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "react-vite-jsx-in-ts-test-file"
+    ]
+    assert findings[0].paths == ["tests/useGame.test.ts"]
+    assert ".tsx" in findings[0].repair_hint
+
+
 def test_findings_to_text_groups_by_stage_and_severity() -> None:
     text = findings_to_text([
         GateFinding(
