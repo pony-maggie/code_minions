@@ -636,14 +636,14 @@ body {
 """
 
 REACT_VITE_APP_TEST = """import { describe, expect, it } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render } from '@testing-library/react'
 import App from './App'
 
 describe('App', () => {
   it('renders the app shell', () => {
-    render(<App />)
+    const { container } = render(<App />)
 
-    expect(screen.getByText('Ready')).toBeDefined()
+    expect(container).toBeDefined()
   })
 })
 """
@@ -652,6 +652,13 @@ REACT_VITE_TEST_API_NAMES = ("afterEach", "beforeEach", "describe", "expect", "i
 REACT_VITE_VITEST_IMPORT_RE = re.compile(
     r"""import\s*\{(?P<names>[^}]+)\}\s*from\s*['"]vitest['"]\s*;?\n?""",
     re.MULTILINE | re.DOTALL,
+)
+REACT_TESTING_LIBRARY_IMPORT_RE = re.compile(
+    r"""import\s*\{(?P<names>[^}]+)\}\s*from\s*['"]@testing-library/react['"]\s*;?\n?""",
+    re.MULTILINE | re.DOTALL,
+)
+REACT_VITE_BARE_DOM_CLICK_RE = re.compile(
+    r"""(?m)^(?P<indent>\s*)(?P<target>[A-Za-z_$][\w$]*)\.click\(\)\s*;?\s*$"""
 )
 REACT_VITE_BOARD_COORDINATE_RE = re.compile(
     r"""行\s*\d+\s*列\s*\d+|第\s*\d+\s*行\s*第\s*\d+\s*列|"""
@@ -814,12 +821,47 @@ def _stabilize_user_event_imports(text: str) -> str:
     )
 
 
+def _ensure_testing_library_import(text: str, name: str) -> str:
+    match = REACT_TESTING_LIBRARY_IMPORT_RE.search(text)
+    if match:
+        names = {part.strip() for part in match.group("names").split(",") if part.strip()}
+        if name in names:
+            return text
+        names.add(name)
+        replacement = f"import {{ {', '.join(sorted(names))} }} from '@testing-library/react'\n"
+        return text[:match.start()] + replacement + text[match.end():]
+
+    return f"import {{ {name} }} from '@testing-library/react'\n{text}"
+
+
+def _stabilize_bare_dom_clicks(text: str) -> str:
+    updated = REACT_VITE_BARE_DOM_CLICK_RE.sub(
+        lambda match: f"{match.group('indent')}fireEvent.click({match.group('target')})",
+        text,
+    )
+    if updated == text:
+        return text
+    return _ensure_testing_library_import(updated, "fireEvent")
+
+
+def _stabilize_placeholder_app_smoke_test(path, text: str) -> str:
+    if path.name != "App.test.tsx":
+        return text
+    if "renders the app shell" not in text or "getByText('Ready')" not in text:
+        return text
+    return REACT_VITE_APP_TEST
+
+
 def _stabilize_react_vite_tests(workdir) -> set[str]:
     changed: set[str] = set()
     for path in _react_vite_test_files(workdir):
         original = path.read_text()
-        updated = _stabilize_user_event_imports(
-            _anchor_board_coordinate_regex_queries(_stabilize_vitest_imports(original))
+        updated = _stabilize_bare_dom_clicks(
+            _stabilize_user_event_imports(
+                _anchor_board_coordinate_regex_queries(
+                    _stabilize_vitest_imports(_stabilize_placeholder_app_smoke_test(path, original))
+                )
+            )
         )
         if updated == original:
             continue

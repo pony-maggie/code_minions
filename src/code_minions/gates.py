@@ -293,6 +293,28 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
             paths=paths,
         ))
 
+    if (
+        "expect(element).toHaveTextContent()" in output
+        and "Expected element to have text content:" in output
+        and "Received:" in output
+        and re.search(r"(?m)^\s*/(?:空\$|黑|白)/\s*$", output)
+        and ("●" in output or "Received:\n" in output)
+    ):
+        findings.append(GateFinding(
+            code="react-board-cell-text-accessible-name-mismatch",
+            severity="error",
+            stage="runtime",
+            message="A board-cell test asserted visible text that the rendered cell exposes through aria-label.",
+            repair_hint=(
+                "Keep board-cell tests aligned with the DOM contract. If the cell uses graphical stones "
+                "and exposes state via aria-label, assert the accessible name or stable classes instead "
+                "of `toHaveTextContent(/空|黑|白/)`; alternatively render matching visible text if that is "
+                "the intended product contract."
+            ),
+            source=source,
+            paths=paths,
+        ))
+
     if "落子历史" in output and "getByText" in output:
         findings.append(GateFinding(
             code="react-status-panel-history-section-missing",

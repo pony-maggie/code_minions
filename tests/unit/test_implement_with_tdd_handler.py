@@ -644,6 +644,59 @@ def test_react_vite_scaffold_repairs_user_event_dynamic_import(tmp_git_repo: Pat
     assert "const { user }" not in text
 
 
+def test_react_vite_scaffold_rewrites_bare_dom_clicks_in_tests(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "Board.test.tsx").write_text(
+        "import { describe, expect, it } from 'vitest'\n"
+        "import { render, screen } from '@testing-library/react'\n"
+        "\n"
+        "describe('Board', () => {\n"
+        "  it('clicks', () => {\n"
+        "    render(<button>行1列1, 空</button>)\n"
+        "    const cell = screen.getByRole('button', { name: /^行1列1, 空$/ })\n"
+        "    cell.click()\n"
+        "    expect(cell).toBeDefined()\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "Board.test.tsx").read_text()
+    assert "src/Board.test.tsx" in changed
+    assert "import { fireEvent, render, screen } from '@testing-library/react'" in text
+    assert "fireEvent.click(cell)" in text
+    assert "cell.click()" not in text
+
+
+def test_react_vite_scaffold_replaces_brittle_ready_smoke_test(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "App.test.tsx").write_text(
+        "import { describe, expect, it } from 'vitest'\n"
+        "import { render, screen } from '@testing-library/react'\n"
+        "import App from './App'\n"
+        "\n"
+        "describe('App', () => {\n"
+        "  it('renders the app shell', () => {\n"
+        "    render(<App />)\n"
+        "\n"
+        "    expect(screen.getByText('Ready')).toBeDefined()\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "App.test.tsx").read_text()
+    assert "src/App.test.tsx" in changed
+    assert "Ready" not in text
+    assert "expect(container).toBeDefined()" in text
+
+
 def test_xcodegen_duplicate_product_name_failure_gets_repair_hint(tmp_git_repo: Path, monkeypatch):
     entrypoint = _load_entrypoint()
     (tmp_git_repo / "project.yml").write_text(

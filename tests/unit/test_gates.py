@@ -222,6 +222,27 @@ def test_runtime_findings_classify_board_cell_class_contract_regression() -> Non
     assert "black" in findings[0].repair_hint
 
 
+def test_runtime_findings_classify_board_cell_text_vs_accessible_name_mismatch() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  src/Board.test.tsx > Board > stone placement > places black stone on click",
+            "Error: expect(element).toHaveTextContent()",
+            "Expected element to have text content:",
+            "  /黑/",
+            "Received:",
+            "  ●",
+            "❯ src/Board.test.tsx:48:25",
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "react-board-cell-text-accessible-name-mismatch"
+    ]
+    assert findings[0].paths == ["src/Board.test.tsx"]
+    assert "accessible name" in findings[0].repair_hint
+
+
 def test_runtime_findings_classify_turn_based_winner_status_mismatch() -> None:
     findings = runtime_findings_for_output(
         "\n".join([
