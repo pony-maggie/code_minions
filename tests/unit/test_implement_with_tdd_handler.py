@@ -328,6 +328,7 @@ def test_react_vite_scaffold_creates_stable_project_files(tmp_git_repo: Path):
     assert "tsconfig.json" in changed
     assert "tsconfig.node.json" in changed
     assert "src/setupTests.ts" in changed
+    assert "src/vite-env.d.ts" in changed
     assert "src/index.css" in changed
     assert "src/App.test.tsx" in changed
     assert "src/main.tsx" in changed
@@ -336,6 +337,7 @@ def test_react_vite_scaffold_creates_stable_project_files(tmp_git_repo: Path):
     assert '"vite": "5.4.11"' in package_json
     assert "afterEach(cleanup)" in (tmp_git_repo / "src" / "setupTests.ts").read_text()
     assert "afterEach(cleanup())" not in (tmp_git_repo / "src" / "setupTests.ts").read_text()
+    assert (tmp_git_repo / "src" / "vite-env.d.ts").read_text() == "/// <reference types=\"vite/client\" />\n"
 
 
 def test_react_vite_scaffold_repairs_llm_modified_harness_files(tmp_git_repo: Path):
@@ -365,6 +367,7 @@ def test_react_vite_scaffold_repairs_llm_modified_harness_files(tmp_git_repo: Pa
         "src/index.css",
         "src/main.tsx",
         "src/setupTests.ts",
+        "src/vite-env.d.ts",
         "tsconfig.json",
         "tsconfig.node.json",
         "vite.config.ts",

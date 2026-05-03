@@ -140,6 +140,18 @@ def _typescript_runtime_findings(output: str, *, source: str) -> list[GateFindin
             if path not in implicit_any_paths:
                 implicit_any_paths.append(path)
             continue
+        elif (
+            ts_code == "2307"
+            and "cannot find module" in lowered
+            and ".module.css" in lowered
+            and "corresponding type declarations" in lowered
+        ):
+            code = "react-vite-css-module-types-missing"
+            repair_hint = (
+                "React/Vite TypeScript projects that import CSS modules need Vite client ambient types. "
+                "Add `src/vite-env.d.ts` containing `/// <reference types=\"vite/client\" />`, or add an "
+                "equivalent `declare module '*.module.css'` type declaration included by `tsconfig.json`."
+            )
         elif ts_code == "2739" and "missing the following properties from type" in lowered:
             code = "typescript-jsx-missing-required-props"
             repair_hint = (

@@ -551,6 +551,9 @@ import { afterEach } from 'vitest'
 afterEach(cleanup)
 """
 
+REACT_VITE_VITE_ENV = """/// <reference types="vite/client" />
+"""
+
 REACT_VITE_VITE_CONFIG = """import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
@@ -1138,6 +1141,7 @@ def _stabilize_react_vite_scaffold(workdir, ticket: dict[str, Any]) -> set[str]:
         "tsconfig.json": REACT_VITE_TSCONFIG,
         "tsconfig.node.json": REACT_VITE_TSCONFIG_NODE,
         "src/setupTests.ts": REACT_VITE_SETUP_TESTS,
+        "src/vite-env.d.ts": REACT_VITE_VITE_ENV,
     }.items():
         written = _write_text_if_changed(workdir, rel_path, content)
         if written:

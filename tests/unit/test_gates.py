@@ -145,6 +145,20 @@ def test_runtime_findings_classify_missing_local_symbol() -> None:
     assert "Define or import `isWinningCell`" in findings[0].repair_hint
 
 
+def test_runtime_findings_classify_missing_css_module_declarations() -> None:
+    findings = runtime_findings_for_output(
+        "src/components/Board.tsx(2,20): error TS2307: Cannot find module './Board.module.css' "
+        "or its corresponding type declarations.",
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "react-vite-css-module-types-missing"
+    ]
+    assert findings[0].paths == ["src/components/Board.tsx"]
+    assert "vite/client" in findings[0].repair_hint
+
+
 def test_runtime_findings_classify_local_declaration_not_exported() -> None:
     findings = runtime_findings_for_output(
         'src/hooks/useGame.ts(2,31): error TS2459: Module \'"../utils/gameLogic"\' '
