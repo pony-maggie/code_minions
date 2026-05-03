@@ -393,6 +393,29 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
         ))
 
     if (
+        "expect(element).toHaveTextContent()" in output
+        and "Expected element to have text content:" in output
+        and "Received:" in output
+        and "游戏结束" in output
+        and "获胜" in output
+        and "当前回合" in output
+    ):
+        findings.append(GateFinding(
+            code="turn-based-board-game-winner-state-not-updated",
+            severity="error",
+            stage="runtime",
+            message="Turn-based board game UI still shows the current turn after a winning move sequence.",
+            repair_hint=(
+                "Wire win detection into the same state path that handles normal moves. In `placeStone` "
+                "or the click handler, evaluate the board after adding the latest stone, call `setWinner(...)` "
+                "when five-in-a-row is found, and stop toggling to the next player after a win. Undo should "
+                "clear `winner` and restore `currentPlayer` to the undone stone's player."
+            ),
+            source=source,
+            paths=paths,
+        ))
+
+    if (
         "Test timed out in 5000ms" in output
         and any(term in output for term in ("棋盘已满", "平局", "draw"))
     ):

@@ -286,6 +286,28 @@ def test_runtime_findings_classify_turn_based_winner_status_mismatch() -> None:
     assert "move sequence" in findings[0].repair_hint
 
 
+def test_runtime_findings_classify_winner_state_not_updated() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  tests/UndoRedo.test.tsx > Undo and Restart functionality > AC3: 游戏已经结束，用户点击悔棋",
+            "Error: expect(element).toHaveTextContent()",
+            "Expected element to have text content:",
+            "  游戏结束，黑方获胜",
+            "Received:",
+            "  当前回合: 白方",
+            "❯ tests/UndoRedo.test.tsx:76:45",
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "turn-based-board-game-winner-state-not-updated"
+    ]
+    assert findings[0].paths == ["tests/UndoRedo.test.tsx"]
+    assert "setWinner" in findings[0].repair_hint
+    assert "placeStone" in findings[0].repair_hint
+
+
 def test_runtime_findings_classify_board_fill_timeout() -> None:
     findings = runtime_findings_for_output(
         "\n".join([
