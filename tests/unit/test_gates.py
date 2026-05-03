@@ -841,6 +841,27 @@ def test_runtime_findings_classify_current_turn_status_contract_drift() -> None:
     assert "当前回合" in finding.repair_hint
 
 
+def test_runtime_findings_classify_regex_current_turn_after_early_game_over_sequence() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  tests/App.test.tsx > App - 落子交互与回合管理 > Given 已存在游戏结束状态",
+            "❯ tests/App.test.tsx:61:19",
+            "     61|     expect(screen.getByText(/当前回合: 黑子/)).toBeInTheDocument();",
+        ]),
+        source="react-vite",
+    )
+
+    assert "turn-based-board-game-current-turn-status-contract-drift" in [
+        finding.code for finding in findings
+    ]
+    finding = next(
+        f for f in findings
+        if f.code == "turn-based-board-game-current-turn-status-contract-drift"
+    )
+    assert finding.paths == ["tests/App.test.tsx"]
+    assert "defer" in finding.repair_hint.lower()
+
+
 def test_runtime_findings_classify_hook_winner_state_not_updated() -> None:
     findings = runtime_findings_for_output(
         "\n".join([

@@ -563,7 +563,9 @@ def _delivery_guidance_context(ticket: dict[str, Any]) -> str:
             "Do not test game-over "
             "behavior by constructing a five-in-row sequence in an early move/turn-management task; "
             "defer that assertion to the win-detection task, or test an already-ended state only when "
-            "the implementation already exposes such a state directly."
+            "the implementation already exposes such a state directly. Do not write or keep tests named "
+            "`已存在游戏结束状态` or `游戏结束后禁止继续落子` in the core move/turn task when they require "
+            "creating a five-in-row through normal clicks."
         )
 
     return "\n".join(lines) if lines else "No delivery-specific guidance."

@@ -712,8 +712,12 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
         ))
 
     if (
-        any(pattern in output for pattern in ("getByText('当前回合:", 'getByText("当前回合:'))
-        and any(term in output for term in ("data-testid=\"game-status\"", "当前回合", "核心落子交互"))
+        any(pattern in output for pattern in (
+            "getByText('当前回合:",
+            'getByText("当前回合:',
+            "getByText(/当前回合:",
+        ))
+        and any(term in output for term in ("data-testid=\"game-status\"", "当前回合", "核心落子交互", "已存在游戏结束状态"))
     ):
         findings.append(GateFinding(
             code="turn-based-board-game-current-turn-status-contract-drift",
@@ -724,7 +728,8 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
                 "Preserve the existing visible current-turn contract across tasks. If earlier tests assert "
                 "`当前回合: 黑子` or `当前回合: 白子`, keep rendering that text for in-progress turns and add "
                 "winner/draw text only for ended games, or update the UI and all existing tests consistently "
-                "in the same task."
+                "in the same task. In core move/turn tasks, defer tests that construct a five-in-row game-over "
+                "sequence; remove them and leave win/game-over coverage to the win-detection task."
             ),
             source=source,
             paths=paths,

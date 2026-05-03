@@ -870,6 +870,7 @@ def test_turn_based_board_game_guidance_defers_game_over_sequences_before_win_de
 
     assert "Do not test game-over behavior by constructing a five-in-row sequence" in guidance
     assert "defer that assertion to the win-detection task" in guidance
+    assert "Do not write or keep tests named `已存在游戏结束状态`" in guidance
 
 
 def test_xcodegen_duplicate_product_name_failure_gets_repair_hint(tmp_git_repo: Path, monkeypatch):
