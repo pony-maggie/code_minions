@@ -463,6 +463,11 @@ def _looks_like_turn_based_board_game(ticket: dict[str, Any]) -> bool:
     return has_board_game and has_turns
 
 
+def _looks_like_gomoku_project(ticket: dict[str, Any]) -> bool:
+    text = _ticket_text(ticket)
+    return any(token in text for token in ("gomoku", "五子棋"))
+
+
 def _delivery_guidance_context(ticket: dict[str, Any]) -> str:
     profile = _ticket_delivery_profile(ticket)
     if not profile:
@@ -832,6 +837,8 @@ GOMOKU_BRITTLE_BOARD_TEST_MARKERS = (
     ".stone.black",
     ".stone.white",
     ".last-move-mark",
+    "last-move class",
+    "last-move",
     "toHaveClass('last-move')",
     'toHaveClass("last-move")',
 )
@@ -1201,7 +1208,7 @@ def _remove_vitest_test_blocks_containing(text: str, markers: tuple[str, ...]) -
 
 
 def _stabilize_turn_based_board_game_mvp_tests(workdir, ticket: dict[str, Any]) -> set[str]:
-    if not _looks_like_turn_based_board_game(ticket):
+    if not (_looks_like_turn_based_board_game(ticket) or _looks_like_gomoku_project(ticket)):
         return set()
 
     changed: set[str] = set()

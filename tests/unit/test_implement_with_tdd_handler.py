@@ -828,6 +828,35 @@ def test_react_vite_scaffold_prunes_brittle_gomoku_board_class_tests(tmp_git_rep
     assert ".last-move-mark" not in text
 
 
+def test_react_vite_scaffold_prunes_brittle_gomoku_last_move_tests_without_turn_text(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src" / "components").mkdir(parents=True)
+    (tmp_git_repo / "src" / "components" / "Board.test.tsx").write_text(
+        "import { describe, it, expect } from 'vitest'\n"
+        "\n"
+        "describe('Board', () => {\n"
+        "  it('renders 15x15 grid with all lines', () => {\n"
+        "    expect(true).toBe(true)\n"
+        "  })\n"
+        "\n"
+        "  it('shows last-move class on the most recent stone', async () => {\n"
+        "    expect(cell2).toHaveClass('last-move')\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {
+        "delivery_profile": {"stack_id": "react-vite"},
+        "description": "搭建五子棋棋盘渲染",
+    }
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "components" / "Board.test.tsx").read_text()
+    assert "src/components/Board.test.tsx" in changed
+    assert "renders 15x15 grid" in text
+    assert "last-move" not in text
+
+
 def test_react_vite_scaffold_prunes_over_specific_game_over_undo_turn_test(tmp_git_repo: Path):
     entrypoint = _load_entrypoint()
     (tmp_git_repo / "tests").mkdir()
