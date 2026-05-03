@@ -543,6 +543,26 @@ def test_runtime_findings_classify_white_win_sequence_that_gives_black_early_win
     assert "do not share one row" in findings[0].repair_hint
 
 
+def test_runtime_findings_classify_hook_white_win_sequence_that_gives_black_early_win() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  src/__tests__/useGameState.test.ts > useGameState > win detection > detects diagonal win for white",
+            "AssertionError: expected 'black' to be 'white' // Object.is equality",
+            "Expected: \"white\"",
+            "Received: \"black\"",
+            "❯ src/__tests__/useGameState.test.ts:198:37",
+            "  198|       expect(result.current.winner).toBe('white');",
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "turn-based-board-game-invalid-white-win-sequence"
+    ]
+    assert findings[0].paths == ["src/__tests__/useGameState.test.ts"]
+    assert "White wins through the public move/click API" in findings[0].repair_hint
+
+
 def test_runtime_findings_classify_draw_test_created_accidental_win() -> None:
     findings = runtime_findings_for_output(
         "\n".join([

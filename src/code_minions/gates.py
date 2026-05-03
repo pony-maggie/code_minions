@@ -706,6 +706,8 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
         and (
             "white makes 5-in-a-row" in output
             or "White player wins" in output
+            or "win for white" in output
+            or "winner).toBe('white')" in output
             or "白方" in output
         )
         and any(term in output for term in ("winner", "获胜", "win/draw", "Gomoku", "五子棋"))
