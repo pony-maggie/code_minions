@@ -441,6 +441,27 @@ def test_runtime_findings_classify_winner_state_not_updated() -> None:
     assert "placeStone" in findings[0].repair_hint
 
 
+def test_runtime_findings_classify_presentational_board_test_expects_game_state() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  src/components/Board.test.tsx > Board > Black horizontal win > declares winner",
+            "TestingLibraryElementError: Unable to find an element with the text: /黑方获胜/i.",
+            " ❯ src/components/Board.test.tsx:37:33",
+            "     35|       render(<Board board={board} onCellClick={() => {}} />)",
+            "     36|",
+            "     37|       const winnerText = screen.getByText(/黑方获胜/i)",
+        ]),
+        source="react-vite",
+    )
+
+    assert [finding.code for finding in findings] == [
+        "react-presentational-board-test-expects-game-state"
+    ]
+    assert findings[0].paths == ["src/components/Board.test.tsx"]
+    assert "App" in findings[0].repair_hint
+    assert "winningCells" in findings[0].repair_hint
+
+
 def test_runtime_findings_classify_board_fill_timeout() -> None:
     findings = runtime_findings_for_output(
         "\n".join([

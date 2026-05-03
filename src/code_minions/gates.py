@@ -532,6 +532,37 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
         ))
 
     if (
+        path.endswith("Board.test.tsx")
+        and any(
+            token in output
+            for token in (
+                "screen.getByText(/黑方获胜",
+                "screen.getByText(/白方获胜",
+                "screen.getByText(/平局",
+                "Unable to find an element with the text: /黑方获胜",
+                "Unable to find an element with the text: /白方获胜",
+                "Unable to find an element with the text: /平局",
+            )
+        )
+        and ("<Board" in output or "Board >" in output or "data-testid=\"cell-" in output)
+    ):
+        findings.append(GateFinding(
+            code="react-presentational-board-test-expects-game-state",
+            severity="error",
+            stage="runtime",
+            message="A Board component test expected winner or draw game status from a controlled board render.",
+            repair_hint=(
+                "Keep component tests at the right level. If `Board` is a presentational/controlled component, "
+                "do not render `<Board board={board} onCellClick={() => {}} />` and expect clicks to mutate "
+                "state or display `黑方获胜`/`白方获胜`/`平局`. Test win/draw integration through `App` or "
+                "`useGameState`, or pass explicit `winner`/`winningCells`/draw props to Board and assert only "
+                "the Board display contract."
+            ),
+            source=source,
+            paths=paths,
+        ))
+
+    if (
         "Test timed out in 5000ms" in output
         and any(term in output for term in ("棋盘已满", "平局", "draw"))
     ):
