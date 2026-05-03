@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from contextlib import suppress
@@ -1711,11 +1712,73 @@ def _python_package_main_content(package_dir) -> str:
     return ""
 
 
+PYTHON_CLI_BRITTLE_TEST_MARKERS = (
+    '"-m", "src"',
+    "'-m', 'src'",
+    "python -m src",
+)
+
+
+def _remove_python_test_functions_containing(text: str, markers: tuple[str, ...]) -> str:
+    lines = text.splitlines(keepends=True)
+    updated: list[str] = []
+    index = 0
+    while index < len(lines):
+        match = re.match(r"^(?P<indent>\s*)def\s+test_[A-Za-z0-9_]+\s*\(", lines[index])
+        if not match:
+            updated.append(lines[index])
+            index += 1
+            continue
+
+        indent = len(match.group("indent"))
+        end = index + 1
+        while end < len(lines):
+            line = lines[end]
+            if line.strip():
+                current_indent = len(line) - len(line.lstrip(" "))
+                if current_indent <= indent and not line.lstrip().startswith(("#", "@")):
+                    break
+            end += 1
+
+        block = "".join(lines[index:end])
+        if not any(marker in block for marker in markers):
+            updated.append(block)
+        index = end
+
+    return "".join(updated)
+
+
+def _stabilize_python_cli_tests(workdir) -> set[str]:
+    tests_dir = workdir / "tests"
+    if not tests_dir.is_dir():
+        return set()
+
+    changed: set[str] = set()
+    for path in tests_dir.rglob("test*.py"):
+        text = path.read_text(errors="ignore")
+        updated = _remove_python_test_functions_containing(text, PYTHON_CLI_BRITTLE_TEST_MARKERS)
+        if updated != text:
+            path.write_text(updated)
+            changed.add(path.relative_to(workdir).as_posix())
+    return changed
+
+
+def _remove_nested_python_shadow_projects(workdir) -> set[str]:
+    changed: set[str] = set()
+    for name in ("worktree", "workspace"):
+        path = workdir / name
+        if path.is_dir() and any(child.suffix == ".py" for child in path.rglob("*.py")):
+            shutil.rmtree(path)
+            changed.add(name)
+    return changed
+
+
 def _stabilize_python_cli_scaffold(workdir, ticket: dict[str, Any]) -> set[str]:
     if not _looks_like_python_cli_profile(_ticket_delivery_profile(ticket)):
         return set()
 
     changed: set[str] = set()
+    changed.update(_remove_nested_python_shadow_projects(workdir))
     for package_name, package_dir in _python_src_packages(workdir):
         for shadow_path in (workdir / f"{package_name}.py", workdir / "src" / f"{package_name}.py"):
             if shadow_path.is_file():
@@ -1732,6 +1795,7 @@ def _stabilize_python_cli_scaffold(workdir, ticket: dict[str, Any]) -> set[str]:
             if written:
                 changed.add(written)
 
+    changed.update(_stabilize_python_cli_tests(workdir))
     return changed
 
 

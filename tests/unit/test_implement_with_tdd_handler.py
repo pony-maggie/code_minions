@@ -2656,3 +2656,40 @@ def test_python_cli_stabilizer_removes_modules_that_shadow_src_package(tmp_path:
     assert not (tmp_path / "calc_lite.py").exists()
     assert not (tmp_path / "src" / "calc_lite.py").exists()
     assert "from . import main" in (package_dir / "__main__.py").read_text()
+
+
+def test_python_cli_stabilizer_removes_nested_worktree_and_src_module_cli_tests(tmp_path: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_path / "src" / "calc_lite").mkdir(parents=True)
+    (tmp_path / "src" / "calc_lite" / "__init__.py").write_text("")
+    (tmp_path / "worktree" / "src").mkdir(parents=True)
+    (tmp_path / "worktree" / "src" / "cli.py").write_text("print('nested')\n")
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    test_path = tests_dir / "test_cli.py"
+    test_path.write_text(
+        "class TestCLI:\n"
+        "    def test_cli_module_division_by_zero(self):\n"
+        "        result = subprocess.run([sys.executable, '-m', 'src', '1 / 0'])\n"
+        "        assert result.returncode != 0\n"
+        "\n"
+        "    def test_real_behavior(self):\n"
+        "        assert True\n"
+    )
+    ticket = {
+        "delivery_profile": {
+            "stack_id": "python-cli",
+            "kind": "cli",
+            "language": "python",
+            "build_system": "python",
+        }
+    }
+
+    changed = entrypoint._stabilize_python_cli_scaffold(tmp_path, ticket)
+
+    assert "worktree" in changed
+    assert not (tmp_path / "worktree").exists()
+    updated = test_path.read_text()
+    assert "python -m', 'src" not in updated
+    assert "test_cli_module_division_by_zero" not in updated
+    assert "test_real_behavior" in updated
