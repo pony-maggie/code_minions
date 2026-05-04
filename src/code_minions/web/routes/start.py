@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json as _json
+import os
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
@@ -50,18 +52,20 @@ def _local_file_options(limit: int = 300) -> list[str]:
     from code_minions.web.deps import _project_root
     root = _project_root()
     options: list[str] = []
-    for path in sorted(root.rglob("*")):
-        try:
-            rel = path.relative_to(root)
-        except ValueError:
-            continue
-        if any(part in IGNORED_FILE_DIRS for part in rel.parts):
-            continue
-        if not path.is_file() or path.suffix.lower() not in LOCAL_FILE_SUFFIXES:
-            continue
-        options.append(rel.as_posix())
-        if len(options) >= limit:
-            break
+    for dirpath, dirnames, filenames in os.walk(root, topdown=True):
+        dirnames[:] = sorted(name for name in dirnames if name not in IGNORED_FILE_DIRS)
+        base = Path(dirpath)
+        for filename in sorted(filenames):
+            path = base / filename
+            if not path.is_file() or path.suffix.lower() not in LOCAL_FILE_SUFFIXES:
+                continue
+            try:
+                rel = path.relative_to(root)
+            except ValueError:
+                continue
+            options.append(rel.as_posix())
+            if len(options) >= limit:
+                return options
     return options
 
 
@@ -136,10 +140,9 @@ async def new_run_submit(request: Request, background_tasks: BackgroundTasks):
             inputs[key] = raw
 
     from code_minions.web.background import start_run_in_background
-    from code_minions.web.deps import get_engine, get_store
+    from code_minions.web.deps import get_store, project_llm_display
     store = get_store()
-    engine = get_engine()
-    run_id = store.create_run(workflow=wf.name, inputs=inputs, llm=engine.llm_display)
-    background_tasks.add_task(start_run_in_background, engine, run_id, wf.name, inputs)
+    run_id = store.create_run(workflow=wf.name, inputs=inputs, llm=project_llm_display())
+    background_tasks.add_task(start_run_in_background, run_id, wf.name, inputs)
 
     return RedirectResponse(url=f"/runs/{run_id}", status_code=303)

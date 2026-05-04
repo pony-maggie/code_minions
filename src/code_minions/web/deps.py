@@ -8,11 +8,16 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from code_minions.config import load_devflow_config
 from code_minions.engine.engine import Engine
 from code_minions.engine.skill_runtime import SkillRuntime
 from code_minions.store.run_store import RunStore
+
+if TYPE_CHECKING:
+    from code_minions.llm.base import LLMBackend
+    from code_minions.mcp.pool import MCPClientPool
 
 
 @lru_cache(maxsize=1)
@@ -37,6 +42,60 @@ def skill_search_paths() -> list[Path]:
     return [*cfg.skill_search_paths, _builtin_root() / "skills"]
 
 
+def _make_llm_backend(root: Path) -> LLMBackend | None:
+    devflow = root / "devflow.yaml"
+    if not devflow.exists():
+        return None
+    try:
+        from code_minions.llm.config import load_llm_config
+        from code_minions.llm.litellm_backend import LiteLLMBackend
+
+        cfg = load_llm_config(devflow)
+        provider = cfg.providers[cfg.default]
+        return LiteLLMBackend(
+            provider=cfg.default,
+            default_model=provider.model,
+            api_key=provider.api_key,
+            api_base=provider.api_base,
+        )
+    except Exception:
+        return None
+
+
+def _make_mcp_pool(root: Path) -> MCPClientPool | None:
+    mcp_json = root / ".mcp.json"
+    if not mcp_json.exists():
+        return None
+    try:
+        from code_minions.mcp.config import load_mcp_config
+        from code_minions.mcp.pool import MCPClientPool
+
+        pool = MCPClientPool(load_mcp_config(mcp_json))
+        pool.start()
+        import atexit
+
+        atexit.register(pool.stop)
+        return pool
+    except Exception:
+        return None
+
+
+def project_llm_display() -> str:
+    devflow = _project_root() / "devflow.yaml"
+    if not devflow.exists():
+        return "not configured"
+    try:
+        from code_minions.llm.config import load_llm_config
+
+        cfg = load_llm_config(devflow)
+    except Exception as e:
+        return f"not configured ({e})"
+    provider = cfg.providers[cfg.default]
+    if provider.model:
+        return f"{cfg.default}/{provider.model}"
+    return cfg.default
+
+
 @lru_cache(maxsize=1)
 def get_engine() -> Engine:
     """Return a process-wide Engine tied to the cwd's project layout."""
@@ -47,6 +106,8 @@ def get_engine() -> Engine:
         skill_search_paths=skill_search_paths(),
         workflow_search_paths=workflow_search_paths(),
         runtime=SkillRuntime(),
+        llm_backend=_make_llm_backend(root),
+        mcp_pool=_make_mcp_pool(root),
         event_bus=get_event_bus(),
     )
 

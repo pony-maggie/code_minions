@@ -101,3 +101,33 @@ def test_run_detail_shows_gate_findings(client: TestClient) -> None:
     assert "react-vite/implementer" in resp.text
     assert "missing-postcss-plugin-dependency" in resp.text
     assert "Add tailwindcss or remove PostCSS config." in resp.text
+
+
+def test_web_engine_loads_llm_from_project_devflow(
+    client: TestClient,
+    tmp_git_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_git_repo / "devflow.yaml").write_text(
+        """
+version: 1
+llm:
+  default: minimax
+  providers:
+    minimax:
+      model: MiniMax-M2.7
+      api_key_env: MINIMAX_API_KEY
+workflow:
+  default: hello-world
+  search_paths: []
+skills:
+  search_paths: []
+""".lstrip()
+    )
+    monkeypatch.setenv("MINIMAX_API_KEY", "test-key")
+
+    from code_minions.web import deps
+
+    deps.get_engine.cache_clear()
+
+    assert deps.get_engine().llm_display == "minimax/MiniMax-M2.7"

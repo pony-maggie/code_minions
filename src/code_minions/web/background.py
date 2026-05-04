@@ -11,7 +11,6 @@ import os
 from pathlib import Path
 from typing import Any
 
-from code_minions.engine.engine import Engine
 from code_minions.store.run_store import RunStore
 from code_minions.types import RunStatus, StepStatus
 
@@ -67,9 +66,7 @@ def scan_orphans(store: RunStore, pid_file: Path) -> None:
     pid_file.write_text(str(os.getpid()))
 
 
-def start_run_in_background(
-    engine: Engine, run_id: str, workflow: str, inputs: dict[str, Any]
-) -> None:
+def start_run_in_background(run_id: str, workflow: str, inputs: dict[str, Any]) -> None:
     """Used as a FastAPI BackgroundTasks target.
 
     Caller has already created the run row; we just drive execution.
@@ -77,4 +74,7 @@ def start_run_in_background(
     step), so we swallow anything else as paranoia.
     """
     with contextlib.suppress(Exception):
+        from code_minions.web.deps import get_engine
+
+        engine = get_engine()
         engine.execute_run(run_id, workflow, inputs)
