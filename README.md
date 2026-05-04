@@ -15,6 +15,9 @@ use isolated git worktrees; lightweight smoke tests can run without git.
 
 The core product model:
 
+- **Model-provider agnostic:** LLM calls go through LiteLLM, so the same
+  workflows can run on most mainstream model providers by changing
+  `devflow.yaml` and exporting the matching API key.
 - **External systems via MCP:** Jira, GitHub, and similar products are connected through `.mcp.json`.
 - **Composable skills:** each workflow step is a skill. Skills use Claude-style `SKILL.md` frontmatter plus optional deterministic `entrypoint-script` code.
 - **Project-aware prompts:** `AGENTS.md` is injected into LLM-driven skill prompts so runs follow your repo conventions.
@@ -57,7 +60,39 @@ command, required files, and forbidden product languages. See
 [PRD template](docs/prd-template.md) for Swift macOS, Go service, Python CLI,
 and React examples.
 
-For LLM provider setup, Jira/GitHub MCP examples, and full PRD-to-PR
+## Model Providers
+
+`code_minions` is designed to be model-provider agnostic. It uses LiteLLM under
+the hood, so OpenAI, Anthropic, Gemini, DeepSeek, MiniMax, Ollama, and other
+LiteLLM-compatible providers share the same workflow engine. In the common
+cloud-provider case, setup is just:
+
+1. Add the provider/model to `devflow.yaml`.
+2. Export the referenced API key environment variable.
+3. Set `llm.default` to the provider you want to use.
+
+Example:
+
+```yaml
+llm:
+  default: minimax
+  providers:
+    openai:
+      model: gpt-5.5
+      api_key_env: OPENAI_API_KEY
+    anthropic:
+      model: claude-sonnet-4-6
+      api_key_env: ANTHROPIC_API_KEY
+    gemini:
+      model: gemini-3.1-pro-preview
+      api_key_env: GEMINI_API_KEY
+    minimax:
+      model: MiniMax-M2.7
+      api_key_env: MINIMAX_API_KEY
+      api_base: https://api.minimaxi.com/v1
+```
+
+For provider details, Jira/GitHub MCP examples, and full PRD-to-PR
 prerequisites, follow the [quickstart](docs/quickstart.md).
 
 ## Built-In Workflows

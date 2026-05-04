@@ -14,6 +14,8 @@
 
 核心模型：
 
+- **不绑定具体大模型**：LLM 调用统一走 LiteLLM；只要在 `devflow.yaml`
+  里切换 provider/model，并导出对应 API key，同一套 workflow 就能跑在大多数主流模型上。
 - **外部系统走 MCP**：Jira、GitHub 等产品通过 `.mcp.json` 接入。
 - **skill 可装配**：每个 workflow step 都是一个 skill。skill 使用 Claude 风格的 `SKILL.md` frontmatter，也可以声明确定性的 `entrypoint-script`。
 - **理解项目约定**：LLM skill prompt 会注入 `AGENTS.md`，让执行过程遵守当前 repo 的约定。
@@ -53,7 +55,39 @@ PRD workflow 建议在 PRD 中写清 `Delivery Contract` / `delivery_profile`，
 模板和示例见 [PRD template](docs/prd-template.md)，里面包含 Swift macOS、Go service、
 Python CLI、React app 示例。
 
-LLM provider 配置、Jira/GitHub MCP 示例、完整 PRD-to-PR 前置条件，请看
+## 模型 Provider
+
+`code_minions` 的设计重点之一是不绑定某一家大模型。底层通过 LiteLLM 调用模型，
+所以 OpenAI、Anthropic、Gemini、DeepSeek、MiniMax、Ollama，以及其他
+LiteLLM 兼容 provider，都可以复用同一套 workflow engine。对常见云模型来说，
+配置通常只需要三步：
+
+1. 在 `devflow.yaml` 里加入 provider/model。
+2. 导出该 provider 对应的 API key 环境变量。
+3. 把 `llm.default` 切到你想使用的 provider。
+
+示例：
+
+```yaml
+llm:
+  default: minimax
+  providers:
+    openai:
+      model: gpt-5.5
+      api_key_env: OPENAI_API_KEY
+    anthropic:
+      model: claude-sonnet-4-6
+      api_key_env: ANTHROPIC_API_KEY
+    gemini:
+      model: gemini-3.1-pro-preview
+      api_key_env: GEMINI_API_KEY
+    minimax:
+      model: MiniMax-M2.7
+      api_key_env: MINIMAX_API_KEY
+      api_base: https://api.minimaxi.com/v1
+```
+
+LLM provider 细节、Jira/GitHub MCP 示例、完整 PRD-to-PR 前置条件，请看
 [快速上手](docs/quickstart.md)。
 
 ## 内置 Workflows
