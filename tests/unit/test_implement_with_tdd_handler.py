@@ -2695,6 +2695,44 @@ def test_python_cli_stabilizer_removes_nested_worktree_and_src_module_cli_tests(
     assert "test_real_behavior" in updated
 
 
+def test_python_cli_stabilizer_removes_generic_src_cli_shims_when_package_exists(tmp_path: Path):
+    entrypoint = _load_entrypoint()
+    package_dir = tmp_path / "src" / "textcount"
+    package_dir.mkdir(parents=True)
+    (package_dir / "__init__.py").write_text("")
+    (tmp_path / "src" / "__init__.py").write_text("")
+    (tmp_path / "src" / "cli.py").write_text("print('shadow cli')\n")
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    test_path = tests_dir / "test_cli.py"
+    test_path.write_text(
+        "def test_shadow_src_cli():\n"
+        "    result = subprocess.run([sys.executable, '-m', 'src.cli', 'hello world'])\n"
+        "    assert '10' in result.stdout\n"
+        "\n"
+        "def test_existing_package():\n"
+        "    assert True\n"
+    )
+    ticket = {
+        "delivery_profile": {
+            "stack_id": "python-cli",
+            "kind": "cli",
+            "language": "python",
+            "build_system": "python",
+        }
+    }
+
+    changed = entrypoint._stabilize_python_cli_scaffold(tmp_path, ticket)
+
+    assert "src/cli.py" in changed
+    assert "src/__init__.py" in changed
+    assert not (tmp_path / "src" / "cli.py").exists()
+    assert not (tmp_path / "src" / "__init__.py").exists()
+    updated = test_path.read_text()
+    assert "src.cli" not in updated
+    assert "test_existing_package" in updated
+
+
 def test_python_cli_stabilizer_keeps_public_tokenize_from_returning_eof(tmp_path: Path):
     entrypoint = _load_entrypoint()
     package_dir = tmp_path / "src" / "calc_lite"

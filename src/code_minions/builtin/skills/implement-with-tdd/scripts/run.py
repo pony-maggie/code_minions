@@ -1794,7 +1794,10 @@ def _stabilize_python_canonical_package_layout(workdir) -> set[str]:
 PYTHON_CLI_BRITTLE_TEST_MARKERS = (
     '"-m", "src"',
     "'-m', 'src'",
+    '"-m", "src.cli"',
+    "'-m', 'src.cli'",
     "python -m src",
+    "python -m src.cli",
 )
 
 
@@ -1882,6 +1885,20 @@ def _remove_nested_python_shadow_projects(workdir) -> set[str]:
     return changed
 
 
+def _remove_generic_src_cli_shims(workdir) -> set[str]:
+    src_dir = workdir / "src"
+    if not src_dir.is_dir() or not _python_src_packages(workdir):
+        return set()
+
+    changed: set[str] = set()
+    for rel_path in ("__init__.py", "__main__.py", "cli.py", "main.py"):
+        path = src_dir / rel_path
+        if path.is_file():
+            path.unlink()
+            changed.add(path.relative_to(workdir).as_posix())
+    return changed
+
+
 def _stabilize_python_cli_scaffold(workdir, ticket: dict[str, Any]) -> set[str]:
     if not _looks_like_python_cli_profile(_ticket_delivery_profile(ticket)):
         return set()
@@ -1889,6 +1906,7 @@ def _stabilize_python_cli_scaffold(workdir, ticket: dict[str, Any]) -> set[str]:
     changed: set[str] = set()
     changed.update(_remove_nested_python_shadow_projects(workdir))
     changed.update(_stabilize_python_canonical_package_layout(workdir))
+    changed.update(_remove_generic_src_cli_shims(workdir))
     for package_name, package_dir in _python_src_packages(workdir):
         for shadow_path in (workdir / f"{package_name}.py", workdir / "src" / f"{package_name}.py"):
             if shadow_path.is_file():
