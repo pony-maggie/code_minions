@@ -80,19 +80,67 @@ def _base_branch(workdir: Path, current_branch: str) -> str:
     return "main"
 
 
+def _extract_pull_url(text: str) -> tuple[int, str] | None:
+    match = re.search(r"https://github\.com/[^/\s]+/[^/\s]+/pull/(?P<number>\d+)", text)
+    if match:
+        return int(match.group("number")), match.group(0)
+    return None
+
+
 def _parse_create_pr_response(raw: str) -> tuple[int, str]:
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
-        match = re.search(r"https://github\.com/[^/\s]+/[^/\s]+/pull/(?P<number>\d+)", raw)
-        if match:
-            return int(match.group("number")), match.group(0)
+        extracted = _extract_pull_url(raw)
+        if extracted:
+            return extracted
         preview = raw[:500] if raw else "<empty response>"
         raise RuntimeError(f"github MCP returned non-JSON PR response: {preview}") from exc
+    url = data.get("html_url") or data.get("url")
+    number = data.get("number")
+    if number is None and isinstance(url, str):
+        match = re.search(r"/pull/(?P<number>\d+)(?:$|[/?#])", url)
+        if match:
+            number = match.group("number")
     try:
-        return int(data["number"]), data["html_url"]
+        return int(number), url
     except (KeyError, TypeError, ValueError) as exc:
-        raise RuntimeError(f"github MCP PR response missing number/html_url: {data!r}") from exc
+        raise RuntimeError(f"github MCP PR response missing PR number/url: {data!r}") from exc
+
+
+def _find_existing_pr(mcp_pool: Any, owner: str, repo: str, head: str) -> tuple[int, str] | None:
+    for tool in ("list_pull_requests", "search_pull_requests"):
+        try:
+            raw = mcp_pool.call_tool(
+                "github",
+                tool,
+                {
+                    "owner": owner,
+                    "repo": repo,
+                    "head": f"{owner}:{head}",
+                    "state": "open",
+                },
+            )
+        except Exception:
+            continue
+        extracted = _extract_pull_url(raw)
+        if extracted:
+            return extracted
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        items = data if isinstance(data, list) else data.get("items") or data.get("pull_requests") or []
+        for item in items:
+            url = item.get("html_url") or item.get("url")
+            number = item.get("number")
+            if number is None and isinstance(url, str):
+                match = re.search(r"/pull/(?P<number>\d+)(?:$|[/?#])", url)
+                if match:
+                    number = match.group("number")
+            if number is not None and url:
+                return int(number), url
+    return None
 
 
 def _push_branch(workdir: Path, branch: str) -> None:
@@ -158,19 +206,26 @@ def _create_pr(
     body: str,
 ) -> tuple[int, str]:
     tool = _resolve_create_pr_tool(mcp_pool)
-    raw = mcp_pool.call_tool(
-        "github",
-        tool,
-        {
-            "owner": owner,
-            "repo": repo,
-            "title": title,
-            "head": head,
-            "base": base,
-            "body": body,
-        },
-    )
-    return _parse_create_pr_response(raw)
+    try:
+        raw = mcp_pool.call_tool(
+            "github",
+            tool,
+            {
+                "owner": owner,
+                "repo": repo,
+                "title": title,
+                "head": head,
+                "base": base,
+                "body": body,
+            },
+        )
+        return _parse_create_pr_response(raw)
+    except RuntimeError as exc:
+        if "pull request already exists" in str(exc).lower():
+            existing = _find_existing_pr(mcp_pool, owner, repo, head)
+            if existing:
+                return existing
+        raise
 
 
 def run(ctx):

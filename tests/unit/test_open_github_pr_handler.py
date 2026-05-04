@@ -260,3 +260,44 @@ def test_parse_create_pr_response_reports_non_json_raw_preview() -> None:
 
     with pytest.raises(RuntimeError, match="github MCP returned non-JSON PR response: denied"):
         entrypoint._parse_create_pr_response("denied")  # noqa: SLF001
+
+
+def test_parse_create_pr_response_accepts_github_mcp_url_only_shape() -> None:
+    entrypoint = _load_entrypoint()
+
+    number, url = entrypoint._parse_create_pr_response(  # noqa: SLF001
+        '{"id": "3621496493", "url": "https://github.com/acme/demo/pull/1"}'
+    )
+
+    assert number == 1
+    assert url == "https://github.com/acme/demo/pull/1"
+
+
+def test_create_pr_returns_existing_pr_when_github_reports_duplicate() -> None:
+    entrypoint = _load_entrypoint()
+    mcp = MagicMock()
+    mcp.list_tools.return_value = {
+        "github": [{"name": "create_pull_request", "description": "Create a PR", "input_schema": {}}]
+    }
+    mcp.call_tool.side_effect = [
+        (
+            "failed to create pull request: POST https://api.github.com/repos/acme/demo/pulls: "
+            "422 Validation Failed [{Resource:PullRequest Field: Code:custom "
+            "Message:A pull request already exists for acme:code-minions/r_123.}]"
+        ),
+        '[{"number": 9, "html_url": "https://github.com/acme/demo/pull/9"}]',
+    ]
+
+    number, url = entrypoint._create_pr(  # noqa: SLF001
+        mcp,
+        "acme",
+        "demo",
+        "Title",
+        "code-minions/r_123",
+        "main",
+        "Body",
+    )
+
+    assert number == 9
+    assert url == "https://github.com/acme/demo/pull/9"
+    assert mcp.call_tool.call_args_list[1].args[1] == "list_pull_requests"
