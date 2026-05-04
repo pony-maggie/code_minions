@@ -1,6 +1,3 @@
-[![CI](https://github.com/malu/code-minions/actions/workflows/ci.yml/badge.svg)](https://github.com/malu/code-minions/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-
 # code_minions
 
 > AI dev workflow engine. Open-source. Configurable. Plug-in skills.
