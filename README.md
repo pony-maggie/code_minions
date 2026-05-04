@@ -67,7 +67,9 @@ prerequisites, follow the [quickstart](docs/quickstart.md).
 | `swift-xcodegen-prd-to-commit` | You want the same local commit flow, but with Swift + SwiftUI + XcodeGen rules pinned up front. | `code-minions run swift-xcodegen-prd-to-commit --input prd=./my-prd.md` |
 | `go-service-prd-to-commit` | You want the same local commit flow, but with Go service rules pinned up front. | `code-minions run go-service-prd-to-commit --input prd=./my-prd.md` |
 | `python-cli-prd-to-commit` | You want the same local commit flow, but with Python CLI rules pinned up front. | `code-minions run python-cli-prd-to-commit --input prd=./my-prd.md` |
-| `prd-to-pr` | You want the full path: PRD -> Jira issues -> implementation commits -> report -> GitHub PR. | See [quickstart](docs/quickstart.md#run-a-workflow). |
+| `react-vite-prd-to-pr` | You want the full PR path with React + TypeScript + Vite rules pinned up front. | `code-minions run react-vite-prd-to-pr --input prd=./my-prd.md --input project_key=ABC --input epic_title="Feature"` |
+| `python-cli-prd-to-pr` | You want the full PR path with Python CLI rules pinned up front. | `code-minions run python-cli-prd-to-pr --input prd=./my-prd.md --input project_key=ABC --input epic_title="Feature"` |
+| `prd-to-pr` | You want the full PR path for a custom stack or a PRD that already includes a complete delivery contract. | See [quickstart](docs/quickstart.md#run-a-workflow). |
 
 `prd-to-commit` is the generic entry point. It does not default to React/Vite;
 it uses the PRD's `delivery_profile` when present and otherwise relies on stack
@@ -79,6 +81,22 @@ stack from the start. The generic workflow can also be pinned explicitly:
 code-minions run prd-to-commit \
   --input prd=./my-prd.md \
   --input delivery_stack_id=react-vite
+```
+
+For PRD-to-PR runs, prefer a stack-specific workflow when one matches the
+project. These use the same Jira/GitHub flow as `prd-to-pr`, but pin the stack
+before parsing and planning:
+
+```bash
+code-minions run python-cli-prd-to-pr \
+  --input prd=./my-prd.md \
+  --input project_key=ABC \
+  --input epic_title="Text count CLI"
+
+code-minions run react-vite-prd-to-pr \
+  --input prd=./my-prd.md \
+  --input project_key=ABC \
+  --input epic_title="Gomoku web app"
 ```
 
 After a run:
