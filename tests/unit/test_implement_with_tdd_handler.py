@@ -114,6 +114,22 @@ def test_extract_json_object_allows_reasoning_prefix_and_trailing_text() -> None
     }
 
 
+def test_extract_minimax_inline_write_tool_call_as_files_written() -> None:
+    entrypoint = _load_entrypoint()
+
+    files = entrypoint._extract_inline_write_tool_files(
+        "<think>writing</think>\n"
+        "<minimax:tool_call>\n"
+        '<invoke name="Write">\n'
+        '<parameter name="path">tests/test_cli.py</parameter>\n'
+        '<parameter name="content">print(&quot;ok&quot;)\\n</parameter>\n'
+        "</invoke>\n"
+        "</minimax:tool_call>"
+    )
+
+    assert files == [{"path": "tests/test_cli.py", "content": 'print("ok")\\n'}]
+
+
 def test_retries_when_llm_returns_no_files_written(tmp_git_repo: Path, monkeypatch):
     entrypoint = _load_entrypoint()
 

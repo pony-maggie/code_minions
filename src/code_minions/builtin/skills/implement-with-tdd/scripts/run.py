@@ -13,6 +13,7 @@ Orchestrates the TDD + review double loop:
 """
 from __future__ import annotations
 
+import html
 import json
 import os
 import re
@@ -79,6 +80,24 @@ def _extract_json_object(content: str, *, require_files: bool) -> dict[str, Any]
         if not isinstance(files, list) or not files:
             raise ValueError("LLM JSON must include non-empty files_written list")
     return data
+
+
+INLINE_WRITE_TOOL_RE = re.compile(
+    r"""<invoke\s+name=["']Write["']>\s*"""
+    r""".*?<parameter\s+name=["']path["']>(?P<path>.*?)</parameter>\s*"""
+    r""".*?<parameter\s+name=["']content["']>(?P<content>.*?)</parameter>""",
+    re.DOTALL,
+)
+
+
+def _extract_inline_write_tool_files(content: str) -> list[dict[str, str]]:
+    files: list[dict[str, str]] = []
+    for match in INLINE_WRITE_TOOL_RE.finditer(content):
+        path = html.unescape(match.group("path")).strip()
+        file_content = html.unescape(match.group("content"))
+        if path:
+            files.append({"path": path, "content": file_content})
+    return files
 
 
 def _response_diagnostics(resp) -> str:
@@ -271,6 +290,9 @@ def _llm_call(
                 ))
             continue
         try:
+            inline_files = _extract_inline_write_tool_files(resp.message.content)
+            if inline_files and not changed_paths:
+                return {"files_written": inline_files, "reasoning": resp.message.content[:1000]}
             data = _extract_json_object(resp.message.content, require_files=not changed_paths)
             if changed_paths:
                 data["files_written"] = [
