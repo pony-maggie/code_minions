@@ -198,3 +198,65 @@ def test_open_github_pr_falls_back_to_create_pr_tool_name(
     assert ctx.mcp_pool.call_tool.call_args.args[1] == "create_pr"
     assert out["pr_number"] == 77
     assert out["pr_url"] == "https://github.com/acme/demo/pull/77"
+
+
+def test_open_github_pr_ignores_unknown_or_current_remote_head_for_base_branch(
+    tmp_git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "report.md").write_text("# Report\n\nFallback base\n")
+
+    def fake_run(cmd, cwd=None, capture_output=None, text=None, check=False, timeout=None):
+        joined = " ".join(cmd)
+        if joined == "git rev-parse --abbrev-ref HEAD":
+            return MagicMock(returncode=0, stdout="code-minions/r_789\n", stderr="")
+        if joined == "git remote get-url origin":
+            return MagicMock(returncode=0, stdout="https://github.com/acme/demo.git\n", stderr="")
+        if joined == "git symbolic-ref refs/remotes/origin/HEAD":
+            return MagicMock(returncode=1, stdout="", stderr="not a symbolic ref")
+        if joined == "git remote show origin":
+            return MagicMock(returncode=0, stdout="  HEAD branch: code-minions/r_789\n", stderr="")
+        if joined == "git show-ref --verify --quiet refs/remotes/origin/main":
+            return MagicMock(returncode=0, stdout="", stderr="")
+        if joined == "git push -u origin code-minions/r_789":
+            return MagicMock(returncode=0, stdout="pushed\n", stderr="")
+        raise AssertionError(joined)
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    ctx = _ctx(tmp_git_repo)
+    ctx.mcp_pool.list_tools.return_value = {
+        "github": [
+            {
+                "name": "create_pull_request",
+                "description": "Create a PR",
+                "input_schema": {"type": "object"},
+            }
+        ]
+    }
+    ctx.mcp_pool.call_tool.return_value = (
+        '{"number": 88, "html_url": "https://github.com/acme/demo/pull/88"}'
+    )
+
+    out = entrypoint.run(ctx)
+
+    assert out["base_branch"] == "main"
+    assert ctx.mcp_pool.call_tool.call_args.args[2]["base"] == "main"
+
+
+def test_parse_create_pr_response_accepts_github_pull_url_text() -> None:
+    entrypoint = _load_entrypoint()
+
+    number, url = entrypoint._parse_create_pr_response(  # noqa: SLF001
+        "Pull request created: https://github.com/acme/demo/pull/123"
+    )
+
+    assert number == 123
+    assert url == "https://github.com/acme/demo/pull/123"
+
+
+def test_parse_create_pr_response_reports_non_json_raw_preview() -> None:
+    entrypoint = _load_entrypoint()
+
+    with pytest.raises(RuntimeError, match="github MCP returned non-JSON PR response: denied"):
+        entrypoint._parse_create_pr_response("denied")  # noqa: SLF001

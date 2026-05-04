@@ -42,19 +42,57 @@ def _parse_github_repo(origin_url: str) -> tuple[str, str]:
     raise RuntimeError(f"origin is not a GitHub remote: {origin_url}")
 
 
-def _base_branch(workdir: Path) -> str:
+def _is_usable_base_branch(branch: str, current_branch: str) -> bool:
+    return bool(branch) and branch != "(unknown)" and branch != current_branch
+
+
+def _ref_exists(workdir: Path, ref: str) -> bool:
+    try:
+        _run_git(workdir, "show-ref", "--verify", "--quiet", ref)
+    except RuntimeError:
+        return False
+    return True
+
+
+def _base_branch(workdir: Path, current_branch: str) -> str:
     try:
         ref = _run_git(workdir, "symbolic-ref", "refs/remotes/origin/HEAD")
-        return ref.rsplit("/", 1)[-1]
+        branch = ref.rsplit("/", 1)[-1]
+        if _is_usable_base_branch(branch, current_branch):
+            return branch
     except RuntimeError:
-        try:
-            out = _run_git(workdir, "remote", "show", "origin")
-        except RuntimeError:
-            return "main"
-        for line in out.splitlines():
-            if "HEAD branch:" in line:
-                return line.split("HEAD branch:", 1)[1].strip()
-        return "main"
+        pass
+
+    try:
+        out = _run_git(workdir, "remote", "show", "origin")
+    except RuntimeError:
+        out = ""
+    for line in out.splitlines():
+        if "HEAD branch:" in line:
+            branch = line.split("HEAD branch:", 1)[1].strip()
+            if _is_usable_base_branch(branch, current_branch):
+                return branch
+
+    for candidate in ("main", "master"):
+        if _ref_exists(workdir, f"refs/remotes/origin/{candidate}") or _ref_exists(workdir, f"refs/heads/{candidate}"):
+            return candidate
+
+    return "main"
+
+
+def _parse_create_pr_response(raw: str) -> tuple[int, str]:
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        match = re.search(r"https://github\.com/[^/\s]+/[^/\s]+/pull/(?P<number>\d+)", raw)
+        if match:
+            return int(match.group("number")), match.group(0)
+        preview = raw[:500] if raw else "<empty response>"
+        raise RuntimeError(f"github MCP returned non-JSON PR response: {preview}") from exc
+    try:
+        return int(data["number"]), data["html_url"]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RuntimeError(f"github MCP PR response missing number/html_url: {data!r}") from exc
 
 
 def _push_branch(workdir: Path, branch: str) -> None:
@@ -132,8 +170,7 @@ def _create_pr(
             "body": body,
         },
     )
-    data = json.loads(raw)
-    return int(data["number"]), data["html_url"]
+    return _parse_create_pr_response(raw)
 
 
 def run(ctx):
@@ -141,7 +178,7 @@ def run(ctx):
     branch = _current_branch(workdir)
     origin_url = _origin_url(workdir)
     owner, repo = _parse_github_repo(origin_url)
-    base_branch = _base_branch(workdir)
+    base_branch = _base_branch(workdir, branch)
     title = _build_pr_title(ctx.inputs["epic_title"])
     report_text = _read_report(workdir, ctx.inputs["report_path"])
     body = _build_pr_body(
