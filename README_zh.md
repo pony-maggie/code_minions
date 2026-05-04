@@ -20,7 +20,7 @@
 
 ## 架构图
 
-[![code_minions 架构图](docs/assets/architecture.svg)](docs/assets/architecture.svg)
+[![code_minions 分层架构图](docs/assets/architecture-zh.svg)](docs/assets/architecture-zh.svg)
 
 ## 安装
 

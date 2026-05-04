@@ -21,7 +21,7 @@ The core product model:
 
 ## Architecture
 
-[![code_minions architecture](docs/assets/architecture.svg)](docs/assets/architecture.svg)
+[![code_minions layered architecture](docs/assets/architecture-en.svg)](docs/assets/architecture-en.svg)
 
 ## Install
 

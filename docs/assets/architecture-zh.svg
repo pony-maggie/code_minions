@@ -1,0 +1,132 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="920" viewBox="0 0 1320 920" role="img" aria-labelledby="title desc">
+  <title id="title">code_minions 分层架构图</title>
+  <desc id="desc">分层架构图，强调规格输入、workflow 编排、skills、门禁、运行状态和外部集成。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/>
+    </marker>
+    <style>
+      .bg { fill: #f8fafc; }
+      .layer { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; rx: 10; }
+      .input { fill: #eff6ff; stroke: #2563eb; stroke-width: 1.4; rx: 8; }
+      .orch { fill: #f0f9ff; stroke: #0284c7; stroke-width: 1.4; rx: 8; }
+      .skill { fill: #f0fdf4; stroke: #16a34a; stroke-width: 1.4; rx: 8; }
+      .gate { fill: #fff1f2; stroke: #e11d48; stroke-width: 1.4; rx: 8; }
+      .runtime { fill: #f5f3ff; stroke: #7c3aed; stroke-width: 1.4; rx: 8; }
+      .external { fill: #fff7ed; stroke: #ea580c; stroke-width: 1.4; rx: 8; }
+      .output { fill: #fdf2f8; stroke: #db2777; stroke-width: 1.4; rx: 8; }
+      .title { fill: #0f172a; font: 700 28px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .layerTitle { fill: #0f172a; font: 700 18px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .label { fill: #0f172a; font: 650 16px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .text { fill: #334155; font: 13px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .small { fill: #64748b; font: 12px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .arrow { stroke: #475569; stroke-width: 1.7; fill: none; marker-end: url(#arrow); }
+      .soft { stroke: #94a3b8; stroke-width: 1.3; fill: none; stroke-dasharray: 5 5; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect class="bg" width="1320" height="920"/>
+  <text x="40" y="48" class="title">code_minions 分层架构</text>
+  <text x="40" y="74" class="text">以 PRD/spec 为输入的研发工作流引擎：YAML 编排、stack-aware skills、确定性门禁、可恢复状态和 MCP 集成。</text>
+
+  <rect x="40" y="105" width="1240" height="120" class="layer"/>
+  <text x="60" y="132" class="layerTitle">1. 规格与项目上下文</text>
+  <rect x="70" y="150" width="210" height="52" class="input"/>
+  <text x="88" y="173" class="label">PRD / Spec</text>
+  <text x="88" y="192" class="small">目标、用户、功能、约束</text>
+  <rect x="310" y="150" width="230" height="52" class="input"/>
+  <text x="328" y="173" class="label">Delivery Profile</text>
+  <text x="328" y="192" class="small">技术栈、测试命令、门禁严格度</text>
+  <rect x="570" y="150" width="210" height="52" class="input"/>
+  <text x="588" y="173" class="label">AGENTS.md</text>
+  <text x="588" y="192" class="small">注入 prompt 的项目约定</text>
+  <rect x="810" y="150" width="210" height="52" class="input"/>
+  <text x="828" y="173" class="label">devflow.yaml</text>
+  <text x="828" y="192" class="small">默认 workflow、LLM、搜索路径</text>
+  <rect x="1050" y="150" width="190" height="52" class="input"/>
+  <text x="1068" y="173" class="label">.mcp.json</text>
+  <text x="1068" y="192" class="small">Jira、GitHub、自定义 MCP</text>
+
+  <rect x="40" y="260" width="1240" height="135" class="layer"/>
+  <text x="60" y="288" class="layerTitle">2. 入口与 Workflow 编排</text>
+  <rect x="70" y="310" width="195" height="58" class="orch"/>
+  <text x="88" y="334" class="label">CLI / Web UI</text>
+  <text x="88" y="354" class="small">Typer 命令；FastAPI + HTMX 面板</text>
+  <rect x="300" y="310" width="215" height="58" class="orch"/>
+  <text x="318" y="334" class="label">Workflow Loader</text>
+  <text x="318" y="354" class="small">内置/项目 YAML；extends + presets</text>
+  <rect x="550" y="310" width="210" height="58" class="orch"/>
+  <text x="568" y="334" class="label">DAGRunner</text>
+  <text x="568" y="354" class="small">依赖、for_each、resume 边界</text>
+  <rect x="795" y="310" width="210" height="58" class="orch"/>
+  <text x="813" y="334" class="label">ContextAssembler</text>
+  <text x="813" y="354" class="small">PRD + AGENTS + 上游输出</text>
+  <rect x="1040" y="310" width="205" height="58" class="orch"/>
+  <text x="1058" y="334" class="label">EventBus</text>
+  <text x="1058" y="354" class="small">CLI 进度、Web 状态、门禁发现</text>
+
+  <rect x="40" y="430" width="1240" height="150" class="layer"/>
+  <text x="60" y="458" class="layerTitle">3. Skills 与技术栈预设</text>
+  <rect x="70" y="482" width="190" height="70" class="skill"/>
+  <text x="88" y="506" class="label">解析与规划</text>
+  <text x="88" y="526" class="small">parse-prd -> 结构化 JSON</text>
+  <text x="88" y="544" class="small">plan-tasks -> 有序任务</text>
+  <rect x="290" y="482" width="225" height="70" class="skill"/>
+  <text x="308" y="506" class="label">Stack-aware PRD Flow</text>
+  <text x="308" y="526" class="small">react-vite-prd-to-*</text>
+  <text x="308" y="544" class="small">python-cli-prd-to-* 预设</text>
+  <rect x="545" y="482" width="205" height="70" class="skill"/>
+  <text x="563" y="506" class="label">Implement with TDD</text>
+  <text x="563" y="526" class="small">Coder loop、测试、自愈</text>
+  <text x="563" y="544" class="small">每个 task 一个提交</text>
+  <rect x="780" y="482" width="205" height="70" class="skill"/>
+  <text x="798" y="506" class="label">Jira + Report</text>
+  <text x="798" y="526" class="small">create-jira-tickets</text>
+  <text x="798" y="544" class="small">compile-report</text>
+  <rect x="1015" y="482" width="220" height="70" class="skill"/>
+  <text x="1033" y="506" class="label">Open PR</text>
+  <text x="1033" y="526" class="small">推送分支到 origin</text>
+  <text x="1033" y="544" class="small">创建或识别 GitHub PR</text>
+
+  <rect x="40" y="615" width="1240" height="120" class="layer"/>
+  <text x="60" y="642" class="layerTitle">4. 门禁与 Review Surface</text>
+  <rect x="70" y="662" width="220" height="48" class="gate"/>
+  <text x="88" y="684" class="label">交付门禁</text>
+  <text x="88" y="702" class="small">必需文件、禁用语言、技术栈检查</text>
+  <rect x="325" y="662" width="220" height="48" class="gate"/>
+  <text x="343" y="684" class="label">测试门禁</text>
+  <text x="343" y="702" class="small">profile test command；pytest、Vitest 等</text>
+  <rect x="580" y="662" width="230" height="48" class="gate"/>
+  <text x="598" y="684" class="label">运行时 Findings</text>
+  <text x="598" y="702" class="small">标准化 gate_findings + repair hints</text>
+  <rect x="845" y="662" width="220" height="48" class="gate"/>
+  <text x="863" y="684" class="label">产品验收</text>
+  <text x="863" y="702" class="small">commit flow 对 PRD 合约做最终验收</text>
+  <rect x="1100" y="662" width="140" height="48" class="gate"/>
+  <text x="1118" y="684" class="label">Review UI</text>
+  <text x="1118" y="702" class="small">CLI + Web 面板</text>
+
+  <rect x="40" y="770" width="1240" height="105" class="layer"/>
+  <text x="60" y="798" class="layerTitle">5. 运行时、外部集成与输出</text>
+  <rect x="70" y="820" width="205" height="38" class="runtime"/>
+  <text x="88" y="844" class="label">SQLite RunStore</text>
+  <rect x="305" y="820" width="215" height="38" class="runtime"/>
+  <text x="323" y="844" class="label">Git Worktrees</text>
+  <rect x="550" y="820" width="205" height="38" class="external"/>
+  <text x="568" y="844" class="label">LLM Providers</text>
+  <rect x="785" y="820" width="205" height="38" class="external"/>
+  <text x="803" y="844" class="label">MCP: Jira + GitHub</text>
+  <rect x="1020" y="820" width="220" height="38" class="output"/>
+  <text x="1038" y="844" class="label">Commits、report.md、PR</text>
+
+  <path class="arrow" d="M 660 225 L 660 260"/>
+  <path class="arrow" d="M 660 395 L 660 430"/>
+  <path class="arrow" d="M 660 580 L 660 615"/>
+  <path class="arrow" d="M 660 735 L 660 770"/>
+  <path class="soft" d="M 420 202 C 460 248 495 275 610 310"/>
+  <path class="soft" d="M 185 202 C 210 270 250 410 375 482"/>
+  <path class="soft" d="M 650 552 C 650 595 635 630 690 662"/>
+  <path class="soft" d="M 750 552 C 850 600 925 615 955 662"/>
+  <path class="soft" d="M 895 552 C 930 650 890 760 890 820"/>
+  <path class="soft" d="M 1115 552 C 1130 650 1130 760 1130 820"/>
+</svg>
