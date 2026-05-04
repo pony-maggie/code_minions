@@ -114,6 +114,25 @@ def test_builtin_stack_prd_to_commit_aliases_extend_generic_workflow(workflow_na
     assert wf.steps[0].inputs["delivery_stack_id"] == "$inputs.delivery_stack_id"
 
 
+@pytest.mark.parametrize(
+    ("workflow_name", "stack_id"),
+    [
+        ("react-vite-prd-to-pr", "react-vite"),
+        ("python-cli-prd-to-pr", "python-cli"),
+    ],
+)
+def test_builtin_stack_prd_to_pr_aliases_extend_generic_workflow(workflow_name: str, stack_id: str) -> None:
+    path = Path(f"src/code_minions/builtin/workflows/{workflow_name}.yaml")
+
+    wf = load_workflow(path)
+
+    assert wf.name == workflow_name
+    assert wf.preset_inputs == {"delivery_stack_id": stack_id}
+    assert [step.id for step in wf.steps] == ["parse", "plan", "tickets", "implement", "report", "open_pr"]
+    assert wf.steps[0].inputs["delivery_stack_id"] == "$inputs.delivery_stack_id"
+    assert wf.steps[3].for_each == "$steps.tickets.output.tickets"
+
+
 def test_load_workflow_duplicate_step_ids_fails(tmp_path: Path) -> None:
     yaml_file = _write(
         tmp_path / "wf.yaml",

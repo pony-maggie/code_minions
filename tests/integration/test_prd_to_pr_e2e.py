@@ -33,8 +33,11 @@ def test_prd_to_pr_yaml_loads() -> None:
     """Structural: the default workflow parses without errors and lists expected steps."""
     wf = load_workflow(_builtin_root() / "workflows" / "prd-to-pr.yaml")
     assert wf.name == "prd-to-pr"
+    assert set(wf.inputs) == {"prd", "delivery_stack_id", "project_key", "epic_title"}
+    assert wf.inputs["delivery_stack_id"].required is False
     step_ids = [s.id for s in wf.steps]
     assert step_ids == ["parse", "plan", "tickets", "implement", "report", "open_pr"]
+    assert wf.steps[0].inputs["delivery_stack_id"] == "$inputs.delivery_stack_id"
 
 
 def test_prd_to_commit_yaml_loads() -> None:

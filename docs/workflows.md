@@ -113,7 +113,9 @@ built-in-fallback shape.
 | `swift-xcodegen-prd-to-commit` | Same DAG as `prd-to-commit`, with `delivery_stack_id=swift-xcodegen` preset. | `code-minions run swift-xcodegen-prd-to-commit --input prd=./my-prd.md` |
 | `go-service-prd-to-commit` | Same DAG as `prd-to-commit`, with `delivery_stack_id=go-service` preset. | `code-minions run go-service-prd-to-commit --input prd=./my-prd.md` |
 | `python-cli-prd-to-commit` | Same DAG as `prd-to-commit`, with `delivery_stack_id=python-cli` preset. | `code-minions run python-cli-prd-to-commit --input prd=./my-prd.md` |
-| `prd-to-pr` | Run the full opinionated path: PRD → Jira tickets → implementation commits → report → pushed branch → GitHub pull request. | See below. |
+| `react-vite-prd-to-pr` | Same PR flow as `prd-to-pr`, with `delivery_stack_id=react-vite` preset. | See below. |
+| `python-cli-prd-to-pr` | Same PR flow as `prd-to-pr`, with `delivery_stack_id=python-cli` preset. | See below. |
+| `prd-to-pr` | Base PR flow for custom stacks or PRDs that already include a delivery contract. Prefer a stack-specific wrapper when available. | See below. |
 
 For `summarize-file`, the `file` input is relative to the project root visible
 from your shell. It uses `workspace.mode: project-readonly`, so the file does
@@ -121,8 +123,12 @@ not need to be committed.
 
 ## `prd-to-pr` prerequisites
 
-The built-in `prd-to-pr` workflow is the most opinionated workflow in the repo.
-It assumes all of the following are already true before you run it:
+The built-in PRD-to-PR workflows are the most opinionated workflows in the repo.
+Prefer `react-vite-prd-to-pr` or `python-cli-prd-to-pr` when one matches your
+project. Use the generic `prd-to-pr` as a base workflow for custom stacks or
+PRDs that already include a complete delivery contract.
+
+They assume all of the following are already true before you run one:
 
 - you are inside a local git repository with at least one commit
 - that repository has an `origin` remote
@@ -135,6 +141,7 @@ It assumes all of the following are already true before you run it:
 Inputs:
 
 - `prd` — path to the PRD file relative to the project root; it must be committed so the git worktree can read it
+- `delivery_stack_id` — optional on `prd-to-pr`; preset automatically by stack-specific PR workflows
 - `project_key` — Jira project key, for example `ABC`
 - `epic_title` — Jira Epic title and the basis for the PR title
 

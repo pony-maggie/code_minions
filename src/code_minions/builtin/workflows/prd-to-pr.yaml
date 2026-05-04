@@ -1,16 +1,19 @@
 name: prd-to-pr
-description: End-to-end PRD -> reviewed branch -> GitHub pull request.
+description: Base PRD -> Jira tickets -> implementation commits -> GitHub pull request workflow.
 workspace:
   mode: git-worktree
 inputs:
   prd: {type: string, required: true}           # path relative to project root; must be committed
+  delivery_stack_id: {type: string, required: false}
   project_key: {type: string, required: true}
   epic_title: {type: string, required: true}
 
 steps:
   - id: parse
     skill: parse-prd
-    inputs: {prd_file: $inputs.prd}
+    inputs:
+      prd_file: $inputs.prd
+      delivery_stack_id: $inputs.delivery_stack_id
 
   - id: plan
     skill: plan-tasks

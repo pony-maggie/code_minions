@@ -31,8 +31,15 @@ Create a Jira Epic + Stories for each task, return the created ticket references
 - Create ONE Epic first, capture its key, then create all stories with `customfield_*` = Epic link or
   parent reference (whichever the MCP supports).
 - If a Jira API call returns an error, record it in `errors` rather than retrying blindly.
+- Preserve the original planned task data in every returned ticket object. The
+  downstream implementer consumes `tickets` directly, so each ticket must keep
+  the task `id`, `title`, `description`, `acceptance_criteria`, `depends_on`,
+  and any `delivery_profile` exactly as received.
+- Add Jira metadata to the preserved task object instead of replacing the task
+  with a thin reference. Use `task_id` for the original task id and include
+  `ticket_key` plus `url` when available.
 
 ## Outputs
-- `tickets` (object[]): `{task_id, ticket_key, url}`
+- `tickets` (object[]): original task objects enriched with `{task_id, ticket_key, url}`
 - `epic` (object): `{key, url}`
 - `errors` (string[])

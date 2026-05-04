@@ -1,0 +1,5 @@
+name: python-cli-prd-to-pr
+description: PRD -> Jira tickets -> implementation commits -> GitHub PR for Python CLI projects.
+extends: prd-to-pr.yaml
+preset_inputs:
+  delivery_stack_id: python-cli

@@ -143,10 +143,12 @@ Notes:
 - The Jira example uses `answerai-jira-mcp` as one concrete local stdio option. `code_minions` only requires a server named `jira` that can create and query Jira issues.
 - Atlassian's remote Rovo MCP is a different integration style; `code_minions` currently expects local stdio MCP servers in `.mcp.json`.
 
-## End-to-end prerequisites for `prd-to-pr`
+## End-to-end prerequisites for PRD-to-PR
 
-Before you try the full PRD-to-PR workflow in a real project, make sure all of
-these are in place:
+Before you try a full PRD-to-PR workflow in a real project, choose a
+stack-specific wrapper such as `react-vite-prd-to-pr` or `python-cli-prd-to-pr`
+when possible. Use the generic `prd-to-pr` only for custom stacks or PRDs with a
+complete delivery contract. Then make sure all of these are in place:
 
 - local tools:
   - Python 3.11+
@@ -241,9 +243,15 @@ code-minions run go-service-prd-to-commit --input prd=./my-prd.md
 code-minions run python-cli-prd-to-commit --input prd=./my-prd.md
 ```
 
-Full PRD-to-GitHub-PR flow:
+Full PRD-to-GitHub-PR flow. Prefer a stack-specific wrapper when one matches
+the project:
 ```bash
-code-minions run prd-to-pr \
+code-minions run react-vite-prd-to-pr \
+  --input prd=./my-prd.md \
+  --input project_key=ABC \
+  --input epic_title="Q2 feature pack"
+
+code-minions run python-cli-prd-to-pr \
   --input prd=./my-prd.md \
   --input project_key=ABC \
   --input epic_title="Q2 feature pack"
@@ -255,6 +263,8 @@ In this workflow:
 - the current directory must already be a git repo with at least one commit
 - that repo must have an `origin` remote pointing at the target GitHub repository
 - `prd` is relative to the project root and must be committed so the run worktree can read it
+- the generic `prd-to-pr` workflow is still available for custom stacks or PRDs
+  that already include a complete delivery contract
 
 What happens:
 - `code_minions` creates a local worktree and branch like `code-minions/<run-id>`

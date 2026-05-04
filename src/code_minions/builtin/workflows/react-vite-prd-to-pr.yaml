@@ -1,0 +1,5 @@
+name: react-vite-prd-to-pr
+description: PRD -> Jira tickets -> implementation commits -> GitHub PR for React + TypeScript + Vite projects.
+extends: prd-to-pr.yaml
+preset_inputs:
+  delivery_stack_id: react-vite
