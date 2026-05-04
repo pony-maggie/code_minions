@@ -1,0 +1,1373 @@
+"""Test implement-with-tdd entrypoint with a fake LLM + monkeypatched subprocess."""
+from __future__ import annotations
+
+import importlib.util
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+import pytest
+
+
+def _load_entrypoint():
+    import code_minions
+    root = Path(code_minions.__file__).resolve().parent / "builtin" / "skills" / "implement-with-tdd"
+    spec = importlib.util.spec_from_file_location("iwt_entrypoint", root / "scripts" / "run.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_happy_path_one_round(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+
+    from code_minions.llm.types import Message, Response, Usage
+    llm = MagicMock()
+    fake_content = '{"files_written": [{"path": "x.py", "content": "x = 1\\n"}], "reasoning": "ok"}'
+    llm.chat.return_value = Response(
+        message=Message(role="assistant", content=fake_content),
+        usage=Usage(1, 1), model="fake", stop_reason="end_turn",
+    )
+
+    def invoke_skill(name, inputs):
+        assert name == "ai-code-review"
+        return {"issues": [], "summary": "lgtm", "approved": True}
+
+    def fake_run(cmd, **kw):
+        return MagicMock(returncode=0, stdout="abc123\n", stderr="")
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    ctx = MagicMock()
+    ctx.inputs = {"ticket": {"id": "T1", "title": "hello"}}
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.invoke_skill = invoke_skill
+
+    out = entrypoint.run(ctx)
+    assert out["test_result"]["passed"] is True
+    assert out["rounds_used"] == 1
+    assert out["review_report"]["approved"] is True
+
+
+def test_retries_when_llm_returns_invalid_json(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+
+    from code_minions.llm.types import Message, Response, Usage
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        Response(
+            message=Message(role="assistant", content="{\n  files_written: []\n}"),
+            usage=Usage(1, 1),
+            model="gemini",
+            stop_reason="end_turn",
+        ),
+        Response(
+            message=Message(
+                role="assistant",
+                content='{"files_written": [{"path": "x.py", "content": "x = 1\\n"}], "reasoning": "ok"}',
+            ),
+            usage=Usage(1, 1),
+            model="gemini",
+            stop_reason="end_turn",
+        ),
+    ]
+
+    def invoke_skill(name, inputs):
+        assert name == "ai-code-review"
+        return {"issues": [], "summary": "lgtm", "approved": True}
+
+    def fake_run(cmd, **kw):
+        return MagicMock(returncode=0, stdout="abc123\n", stderr="")
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    ctx = MagicMock()
+    ctx.inputs = {"ticket": {"id": "T1", "title": "hello"}}
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.invoke_skill = invoke_skill
+
+    out = entrypoint.run(ctx)
+
+    assert out["test_result"]["passed"] is True
+    assert llm.chat.call_count == 2
+    retry_messages = llm.chat.call_args_list[1].kwargs["messages"]
+    assert any("valid JSON object only" in m.content for m in retry_messages)
+
+
+def test_retries_when_llm_returns_no_files_written(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+
+    from code_minions.llm.types import Message, Response, Usage
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        Response(
+            message=Message(role="assistant", content='{"files_written": [], "reasoning": "no changes"}'),
+            usage=Usage(1, 1),
+            model="fake",
+            stop_reason="end_turn",
+        ),
+        Response(
+            message=Message(
+                role="assistant",
+                content='{"files_written": [{"path": "x.py", "content": "x = 1\\n"}], "reasoning": "ok"}',
+            ),
+            usage=Usage(1, 1),
+            model="fake",
+            stop_reason="end_turn",
+        ),
+    ]
+
+    def fake_run(cmd, **kw):
+        return MagicMock(returncode=0, stdout="abc123\n", stderr="")
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    ctx = MagicMock()
+    ctx.inputs = {"ticket": {"id": "T1", "title": "hello"}}
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.invoke_skill = lambda name, inputs: {"issues": [], "summary": "lgtm", "approved": True}
+
+    out = entrypoint.run(ctx)
+
+    assert out["files_changed"] == ["x.py"]
+    assert llm.chat.call_count == 2
+    retry_messages = llm.chat.call_args_list[1].kwargs["messages"]
+    assert "files_written" in retry_messages[-1].content
+
+
+def test_bails_when_tests_never_green(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+    from code_minions.engine.skill_runtime import SkillExecutionError
+    from code_minions.llm.types import Message, Response, Usage
+    llm = MagicMock()
+    llm.chat.return_value = Response(
+        message=Message(role="assistant",
+                        content='{"files_written": [{"path":"x.py","content":"boom\\n"}]}'),
+        usage=Usage(1, 1), model="fake", stop_reason="end_turn",
+    )
+
+    def fake_run(cmd, **kw):
+        return MagicMock(returncode=1, stdout="fail", stderr="")
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    ctx = MagicMock()
+    ctx.inputs = {"ticket": {"id": "T1"}}
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.invoke_skill = lambda name, inputs: {}
+    ctx.skill = None
+
+    try:
+        entrypoint.run(ctx)
+    except SkillExecutionError as e:
+        assert e.output is not None
+        assert e.output["test_result"]["passed"] is False
+        assert "aborted" in e.output["review_report"]["summary"]
+    else:
+        raise AssertionError("expected SkillExecutionError")
+
+
+def test_python_projects_run_pytest_with_current_interpreter_and_workdir_on_pythonpath(
+    tmp_git_repo: Path,
+    monkeypatch,
+):
+    entrypoint = _load_entrypoint()
+    seen: dict = {}
+
+    def fake_run(cmd, **kw):
+        seen["cmd"] = cmd
+        seen["cwd"] = kw["cwd"]
+        seen["env"] = kw["env"]
+        return MagicMock(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    passed, output = entrypoint._run_tests(tmp_git_repo)
+
+    assert passed is True
+    assert output == "ok\n"
+    assert seen["cmd"] == [sys.executable, "-m", "pytest", "-q"]
+    assert seen["cwd"] == tmp_git_repo
+    assert str(tmp_git_repo) in seen["env"]["PYTHONPATH"].split(":")
+
+
+def test_xcodegen_projects_run_xcodegen_and_xcodebuild(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "project.yml").write_text(
+        """name: MacCalc
+schemes:
+  MacCalc:
+    test:
+      targets:
+        - MacCalcTests
+"""
+    )
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        return MagicMock(returncode=0, stdout=f"{' '.join(cmd)} ok", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    passed, output = entrypoint._run_tests(tmp_git_repo)
+
+    assert passed is True
+    assert calls == [
+        ["xcodegen", "generate"],
+        ["xcodebuild", "test", "-scheme", "MacCalc"],
+    ]
+    assert "xcodegen generate ok" in output
+    assert "xcodebuild test -scheme MacCalc ok" in output
+
+
+def test_node_projects_install_dependencies_before_npm_test(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "package.json").write_text(
+        '{"scripts": {"test": "vitest"}, "devDependencies": {"vitest": "^1.6.0"}}\n'
+    )
+    calls: list[list[str]] = []
+    envs: list[dict[str, str]] = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        envs.append(kw.get("env") or {})
+        return MagicMock(returncode=0, stdout=f"{' '.join(cmd)} ok", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    passed, output = entrypoint._run_tests(tmp_git_repo)
+
+    assert passed is True
+    assert calls == [
+        ["npm", "install", "--no-audit", "--fund=false"],
+        ["npm", "test"],
+    ]
+    assert "npm install --no-audit --fund=false ok" in output
+    assert "npm test ok" in output
+    assert envs[1]["CI"] == "true"
+
+
+def test_delivery_profile_test_command_overrides_node_fallback(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "package.json").write_text(
+        '{"scripts": {"test:unit": "vitest run"}, "devDependencies": {"vitest": "^1.6.0"}}\n'
+    )
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        return MagicMock(returncode=0, stdout=f"{' '.join(cmd)} ok", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    profile = {
+        "kind": "web-app",
+        "language": "typescript",
+        "framework": "react",
+        "build_system": "vite",
+        "test_command": "npm run test:unit",
+    }
+
+    passed, output = entrypoint._run_tests(tmp_git_repo, profile)
+
+    assert passed is True
+    assert calls == [
+        ["npm", "install", "--no-audit", "--fund=false"],
+        ["npx", "tsc", "--noEmit", "--noUnusedLocals", "false", "--noUnusedParameters", "false"],
+        ["npm", "run", "test:unit"],
+    ]
+    assert "npx tsc --noEmit --noUnusedLocals false --noUnusedParameters false ok" in output
+    assert "npm run test:unit ok" in output
+
+
+def test_delivery_profile_typecheck_failure_stops_before_npm_test(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "package.json").write_text(
+        '{"scripts": {"test": "vitest run"}, "devDependencies": {"typescript": "^5.0.0", "vitest": "^1.6.0"}}\n'
+    )
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        if cmd[:2] == ["npx", "tsc"]:
+            return MagicMock(
+                returncode=2,
+                stdout="src/App.tsx(24,32): error TS2339: Property 'cells' does not exist on type 'true'.",
+                stderr="",
+            )
+        return MagicMock(returncode=0, stdout=f"{' '.join(cmd)} ok", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    profile = {
+        "kind": "web-app",
+        "language": "typescript",
+        "framework": "react",
+        "build_system": "vite",
+        "test_command": "npm test",
+    }
+
+    passed, output = entrypoint._run_tests(tmp_git_repo, profile)
+
+    assert passed is False
+    assert calls == [
+        ["npm", "install", "--no-audit", "--fund=false"],
+        ["npx", "tsc", "--noEmit", "--noUnusedLocals", "false", "--noUnusedParameters", "false"],
+    ]
+    assert "Property 'cells' does not exist" in output
+
+
+def test_xcodegen_duplicate_product_name_failure_gets_repair_hint(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "project.yml").write_text(
+        """name: MacCalc
+settings:
+  base:
+    PRODUCT_NAME: MacCalc
+targets:
+  MacCalc:
+    type: application
+    platform: macOS
+    sources:
+      - path: src
+  MacCalcTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: tests
+    dependencies:
+      - target: MacCalc
+schemes:
+  MacCalc:
+    test:
+      targets:
+        - MacCalcTests
+"""
+    )
+
+    def fake_run(cmd, **kw):
+        if cmd[:2] == ["xcodegen", "generate"]:
+            return MagicMock(returncode=0, stdout="generated", stderr="")
+        return MagicMock(
+            returncode=65,
+            stdout="",
+            stderr=(
+                "Testing failed:\n"
+                "\tMultiple commands produce '/DerivedData/MacCalc.swiftmodule/arm64-apple-macos.swiftmodule'\n"
+            ),
+        )
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    passed, output = entrypoint._run_tests(tmp_git_repo)
+
+    assert passed is False
+    assert "XcodeGen diagnostic" in output
+    assert "PRODUCT_NAME" in output
+    assert "test target" in output
+
+
+def test_project_context_includes_authoritative_xcodegen_file(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "project.yml").write_text(
+        """name: MacCalc
+packages:
+  BigNumber:
+    url: https://github.com/abedshafii/BigNumber.git
+"""
+    )
+
+    context = entrypoint._project_context(tmp_git_repo)
+
+    assert "project.yml" in context
+    assert "Authoritative build/test configuration" in context
+    assert "https://github.com/abedshafii/BigNumber.git" in context
+
+
+def test_project_context_includes_existing_source_contract_excerpts(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "types.ts").write_text("export type Player = 'black' | 'white'\n")
+    (tmp_git_repo / "src" / "App.tsx").write_text("export default function App() { return <div /> }\n")
+
+    context = entrypoint._project_context(tmp_git_repo)
+
+    assert "Existing source files" in context
+    assert "src/types.ts" in context
+    assert "export type Player = 'black' | 'white'" in context
+    assert "src/App.tsx" in context
+
+
+def test_self_heal_prompt_includes_current_build_file_after_failure(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+    from code_minions.llm.types import Message, Response, Usage
+
+    (tmp_git_repo / "project.yml").write_text(
+        """name: MacCalc
+packages:
+  BigNumber:
+    url: https://github.com/abedshafii/BigNumber.git
+"""
+    )
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        Response(
+            message=Message(
+                role="assistant",
+                content='{"files_written": [{"path": "x.swift", "content": "broken\\n"}], "reasoning": "initial"}',
+            ),
+            usage=Usage(1, 1),
+            model="MiniMax-M2.7",
+            stop_reason="end_turn",
+        ),
+        Response(
+            message=Message(
+                role="assistant",
+                content='{"files_written": [{"path": "x.swift", "content": "fixed\\n"}], "reasoning": "repair"}',
+            ),
+            usage=Usage(1, 1),
+            model="MiniMax-M2.7",
+            stop_reason="end_turn",
+        ),
+    ]
+    monkeypatch.setattr(entrypoint, "_run_tests", MagicMock(side_effect=[
+        (False, "Failed to clone repository https://github.com/abedshafii/BigNumber.git"),
+        (True, "green"),
+    ]))
+    monkeypatch.setattr(entrypoint, "_git_commit", lambda workdir, msg, **kwargs: "abc123")
+
+    ctx = MagicMock()
+    ctx.inputs = {"ticket": {"id": "T1", "title": "hello"}}
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.invoke_skill = MagicMock()
+    ctx.skill = SimpleNamespace(meta=SimpleNamespace(policies={
+        "self_heal_max_rounds": 1,
+        "reviewer_max_rounds": 0,
+    }))
+
+    entrypoint.run(ctx)
+
+    repair_user_message = llm.chat.call_args_list[1].kwargs["messages"][1].content
+    assert "Current build/test configuration" in repair_user_message
+    assert "project.yml" in repair_user_message
+    assert "https://github.com/abedshafii/BigNumber.git" in repair_user_message
+
+
+def test_self_heal_prompt_includes_failure_playbook_hints(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+    from code_minions.llm.types import Message, Response, Usage
+
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        Response(
+            message=Message(
+                role="assistant",
+                content='{"files_written": [{"path": "package.json", "content": "{\\"scripts\\":{\\"test\\":\\"vitest\\"}}"}], "reasoning": "initial"}',
+            ),
+            usage=Usage(1, 1),
+            model="MiniMax-M2.7",
+            stop_reason="end_turn",
+        ),
+        Response(
+            message=Message(
+                role="assistant",
+                content='{"files_written": [{"path": "package.json", "content": "{\\"scripts\\":{\\"test\\":\\"vitest\\"},\\"devDependencies\\":{\\"@testing-library/jest-dom\\":\\"^6.0.0\\"}}"}], "reasoning": "repair"}',
+            ),
+            usage=Usage(1, 1),
+            model="MiniMax-M2.7",
+            stop_reason="end_turn",
+        ),
+    ]
+    monkeypatch.setattr(entrypoint, "_run_tests", MagicMock(side_effect=[
+        (
+            False,
+            'Error: Failed to resolve import "@testing-library/jest-dom" from "src/setupTests.ts". Does the file exist?',
+        ),
+        (True, "green"),
+    ]))
+    monkeypatch.setattr(entrypoint, "_git_commit", lambda workdir, msg, **kwargs: "abc123")
+
+    ctx = MagicMock()
+    ctx.inputs = {"ticket": {"id": "T1", "title": "hello"}}
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.invoke_skill = MagicMock()
+    ctx.skill = SimpleNamespace(meta=SimpleNamespace(policies={
+        "self_heal_max_rounds": 1,
+        "reviewer_max_rounds": 0,
+    }))
+
+    entrypoint.run(ctx)
+
+    repair_user_message = llm.chat.call_args_list[1].kwargs["messages"][1].content
+    assert "Failure playbook hints" in repair_user_message
+    assert "Add it to devDependencies or remove the setup import" in repair_user_message
+
+
+def test_ticket_delivery_profile_is_included_in_coder_prompt(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+    from code_minions.llm.types import Message, Response, Usage
+
+    llm = MagicMock()
+    llm.chat.return_value = Response(
+        message=Message(
+            role="assistant",
+            content='{"files_written": [{"path": "go.mod", "content": "module example.com/app\\n"}, {"path": "main.go", "content": "package main\\nfunc main() {}\\n"}], "reasoning": "ok"}',
+        ),
+        usage=Usage(1, 1),
+        model="fake",
+        stop_reason="end_turn",
+    )
+    monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: MagicMock(returncode=0, stdout="ok", stderr=""))
+
+    profile = {
+        "kind": "web-service",
+        "language": "go",
+        "required_files": ["go.mod", "**/*.go"],
+        "forbidden_product_languages": ["python"],
+    }
+    ctx = MagicMock()
+    ctx.inputs = {"ticket": {"id": "T1", "title": "hello", "delivery_profile": profile}}
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.invoke_skill = lambda name, inputs: {"issues": [], "summary": "lgtm", "approved": True}
+    ctx.skill = None
+
+    entrypoint.run(ctx)
+
+    coder_user = llm.chat.call_args.kwargs["messages"][1].content
+    assert "Delivery profile" in coder_user
+    assert '"language": "go"' in coder_user
+
+
+def test_partial_ticket_delivery_profile_is_normalized_in_coder_prompt(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+    from code_minions.llm.types import Message, Response, Usage
+
+    llm = MagicMock()
+    llm.chat.return_value = Response(
+        message=Message(
+            role="assistant",
+            content='{"files_written": [{"path": "project.yml", "content": "name: MacCalc\\n"}, {"path": "MacCalcApp.swift", "content": "import SwiftUI\\n@main\\nstruct MacCalcApp: App { var body: some Scene { WindowGroup { Text(\\"Hi\\") } } }\\n"}], "reasoning": "ok"}',
+        ),
+        usage=Usage(1, 1),
+        model="fake",
+        stop_reason="end_turn",
+    )
+    monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: MagicMock(returncode=0, stdout="ok", stderr=""))
+
+    ctx = MagicMock()
+    ctx.inputs = {
+        "ticket": {
+            "id": "T1",
+            "title": "hello",
+            "delivery_profile": {
+                "kind": "native macOS desktop application",
+                "language": "Swift 6",
+                "framework": "SwiftUI",
+                "build_system": "Xcode 16+",
+                "required_files": None,
+                "forbidden_product_languages": None,
+            },
+        },
+    }
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.invoke_skill = lambda name, inputs: {"issues": [], "summary": "lgtm", "approved": True}
+    ctx.skill = None
+
+    entrypoint.run(ctx)
+
+    coder_user = llm.chat.call_args.kwargs["messages"][1].content
+    assert '"kind": "native-macos-app"' in coder_user
+    assert '"required_files": ["project.yml", "**/*.swift", "**/*App.swift"]' in coder_user
+    assert '"python"' in coder_user
+
+
+def test_react_vite_profile_adds_test_environment_guidance_to_coder_prompt(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+    from code_minions.llm.types import Message, Response, Usage
+
+    llm = MagicMock()
+    llm.chat.return_value = Response(
+        message=Message(
+            role="assistant",
+            content='{"files_written": [{"path": "package.json", "content": "{\\"scripts\\":{\\"test\\":\\"vitest run\\"}}\\n"}, {"path": "index.html", "content": "<div id=\\"root\\"></div>\\n"}, {"path": "src/App.tsx", "content": "export default function App() { return <div /> }\\n"}, {"path": "src/App.test.tsx", "content": "import { test } from \\"vitest\\"\\ntest(\\"runs\\", () => {})\\n"}], "reasoning": "ok"}',
+        ),
+        usage=Usage(1, 1),
+        model="fake",
+        stop_reason="end_turn",
+    )
+    monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: MagicMock(returncode=0, stdout="ok", stderr=""))
+
+    profile = {
+        "kind": "web-app",
+        "language": "typescript",
+        "framework": "react",
+        "build_system": "vite",
+        "test_command": "npm test",
+    }
+    ctx = MagicMock()
+    ctx.inputs = {"ticket": {"id": "T1", "title": "hello", "delivery_profile": profile}}
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.invoke_skill = lambda name, inputs: {"issues": [], "summary": "lgtm", "approved": True}
+    ctx.skill = None
+
+    entrypoint.run(ctx)
+
+    coder_user = llm.chat.call_args.kwargs["messages"][1].content
+    assert "Delivery guidance" in coder_user
+    assert "jsdom" in coder_user
+    assert "React Testing Library" in coder_user
+    assert "afterEach(cleanup)" in coder_user
+    assert "relative imports" in coder_user
+    assert "orphan tests" in coder_user
+    assert "vi.fn()" in coder_user
+    assert "jest.*" in coder_user
+    assert "describe" in coder_user
+    assert "globals: true" in coder_user
+    assert "@testing-library/jest-dom/vitest" in coder_user
+    assert "toHaveTextContent" in coder_user
+    assert "CSS-style `@import`" in coder_user
+    assert "tsc --noEmit" in coder_user
+    assert "existing callers" in coder_user
+    assert "*.test.ts" in coder_user
+    assert "no-test" in coder_user
+    assert "postcss.config" in coder_user
+    assert "tailwindcss" in coder_user
+    assert "autoprefixer" in coder_user
+    assert "user.pointer" in coder_user
+    assert "pointerdown" in coder_user
+    assert "getBoundingClientRect" in coder_user
+    assert "jsdom does not compute layout" in coder_user
+    assert "semantic click targets" in coder_user
+    assert "Preserve existing exported type contracts" in coder_user
+    assert "Stone.Black" in coder_user
+
+
+def test_turn_based_board_game_ticket_adds_valid_move_sequence_guidance(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+    from code_minions.llm.types import Message, Response, Usage
+
+    llm = MagicMock()
+    llm.chat.return_value = Response(
+        message=Message(
+            role="assistant",
+            content='{"files_written": [{"path": "package.json", "content": "{\\"scripts\\":{\\"test\\":\\"vitest run\\"}}\\n"}, {"path": "index.html", "content": "<div id=\\"root\\"></div>\\n"}, {"path": "src/game.ts", "content": "export const ok = true\\n"}, {"path": "src/game.test.ts", "content": "import { test } from \\"vitest\\"\\ntest(\\"runs\\", () => {})\\n"}], "reasoning": "ok"}',
+        ),
+        usage=Usage(1, 1),
+        model="fake",
+        stop_reason="end_turn",
+    )
+    monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: MagicMock(returncode=0, stdout="ok", stderr=""))
+
+    profile = {
+        "kind": "web-app",
+        "language": "typescript",
+        "framework": "react",
+        "build_system": "vite",
+        "test_command": "npm test",
+    }
+    ctx = MagicMock()
+    ctx.inputs = {
+        "ticket": {
+            "id": "T1",
+            "title": "Gomoku board",
+            "description": "实现 15x15 五子棋，本地双人对战，黑白双方轮流落子，黑棋先手。",
+            "acceptance_criteria": ["黑方横向连续五子获胜", "白方纵向连续五子获胜"],
+            "delivery_profile": profile,
+        }
+    }
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.invoke_skill = lambda name, inputs: {"issues": [], "summary": "lgtm", "approved": True}
+    ctx.skill = None
+
+    entrypoint.run(ctx)
+
+    coder_user = llm.chat.call_args.kwargs["messages"][1].content
+    assert "turn-based board game" in coder_user
+    assert "filler moves" in coder_user
+    assert "impossible same-player consecutive moves" in coder_user
+
+
+def test_swift_xcodegen_profile_adds_infoplist_guidance_to_coder_prompt(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+    from code_minions.llm.types import Message, Response, Usage
+
+    llm = MagicMock()
+    llm.chat.return_value = Response(
+        message=Message(
+            role="assistant",
+            content='{"files_written": [{"path": "project.yml", "content": "name: MacCalc\\n"}, {"path": "Sources/MacCalc/MacCalcApp.swift", "content": "import SwiftUI\\n@main\\nstruct MacCalcApp: App { var body: some Scene { WindowGroup { Text(\\"Hi\\") } } }\\n"}], "reasoning": "ok"}',
+        ),
+        usage=Usage(1, 1),
+        model="fake",
+        stop_reason="end_turn",
+    )
+    monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: MagicMock(returncode=0, stdout="ok", stderr=""))
+
+    profile = {
+        "kind": "native-macos-app",
+        "language": "swift",
+        "framework": "swiftui",
+        "build_system": "xcodegen",
+        "test_command": "xcodegen generate && xcodebuild test -scheme MacCalc",
+    }
+    ctx = MagicMock()
+    ctx.inputs = {"ticket": {"id": "T1", "title": "hello", "delivery_profile": profile}}
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.invoke_skill = lambda name, inputs: {"issues": [], "summary": "lgtm", "approved": True}
+    ctx.skill = None
+
+    entrypoint.run(ctx)
+
+    coder_user = llm.chat.call_args.kwargs["messages"][1].content
+    assert "Delivery guidance" in coder_user
+    assert "GENERATE_INFOPLIST_FILE" in coder_user
+    assert "unit-test" in coder_user
+
+
+def test_delivery_profile_failure_enters_self_heal_loop(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+    from code_minions.llm.types import Message, Response, Usage
+
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        Response(
+            message=Message(
+                role="assistant",
+                content='{"files_written": [{"path": "README.md", "content": "wrong stack\\n"}], "reasoning": "wrong stack"}',
+            ),
+            usage=Usage(1, 1),
+            model="fake",
+            stop_reason="end_turn",
+        ),
+        Response(
+            message=Message(
+                role="assistant",
+                content='{"files_written": [{"path": "go.mod", "content": "module example.com/app\\n"}, {"path": "main.go", "content": "package main\\nfunc main() {}\\n"}], "reasoning": "fixed"}',
+            ),
+            usage=Usage(1, 1),
+            model="fake",
+            stop_reason="end_turn",
+        ),
+    ]
+    monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: MagicMock(returncode=0, stdout="ok", stderr=""))
+
+    profile = {
+        "kind": "web-service",
+        "language": "go",
+        "required_files": ["go.mod", "**/*.go"],
+        "forbidden_product_languages": ["python"],
+    }
+    ctx = MagicMock()
+    ctx.inputs = {"ticket": {"id": "T1", "title": "hello", "delivery_profile": profile}}
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.invoke_skill = lambda name, inputs: {"issues": [], "summary": "lgtm", "approved": True}
+    ctx.skill = SimpleNamespace(meta=SimpleNamespace(policies={
+        "self_heal_max_rounds": 1,
+        "reviewer_max_rounds": 0,
+    }))
+
+    out = entrypoint.run(ctx)
+
+    assert out["test_result"]["passed"] is True
+    assert llm.chat.call_count == 2
+    repair_user = llm.chat.call_args_list[1].kwargs["messages"][1].content
+    assert "Delivery profile check failed" in repair_user
+    assert "missing-required-file" in repair_user
+
+
+def test_relaxed_delivery_profile_warnings_do_not_enter_self_heal_loop(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+    from code_minions.llm.types import Message, Response, Usage
+
+    llm = MagicMock()
+    llm.chat.return_value = Response(
+        message=Message(
+            role="assistant",
+            content='{"files_written": [{"path": "package.json", "content": "{\\"scripts\\":{\\"test\\":\\"vitest run\\"}}\\n"}, {"path": "index.html", "content": "<div id=\\"root\\"></div>\\n"}, {"path": "src/App.tsx", "content": "export default function App() { return <div /> }\\n"}], "reasoning": "ok"}',
+        ),
+        usage=Usage(1, 1),
+        model="fake",
+        stop_reason="end_turn",
+    )
+    monkeypatch.setattr(entrypoint, "_run_tests", lambda workdir, profile: (True, "tests passed"))
+    monkeypatch.setattr(entrypoint, "_git_commit", lambda workdir, msg, **kwargs: "abc123")
+
+    profile = {
+        "kind": "web-app",
+        "language": "typescript",
+        "framework": "react",
+        "build_system": "vite",
+        "test_command": "npm test",
+        "gate_strictness": "relaxed",
+    }
+    ctx = MagicMock()
+    ctx.inputs = {"ticket": {"id": "T1", "title": "hello", "delivery_profile": profile}}
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.invoke_skill = lambda name, inputs: {"issues": [], "summary": "lgtm", "approved": True}
+    ctx.skill = SimpleNamespace(meta=SimpleNamespace(policies={
+        "self_heal_max_rounds": 1,
+        "reviewer_max_rounds": 0,
+    }))
+
+    out = entrypoint.run(ctx)
+
+    assert out["test_result"]["passed"] is True
+    assert "Delivery profile warnings" in out["test_result"]["output"]
+    assert "missing-test-file" in out["test_result"]["output"]
+    assert llm.chat.call_count == 1
+
+
+def test_self_heal_reruns_tests_after_repair(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+    from code_minions.llm.types import Message, Response, Usage
+
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        Response(
+            message=Message(
+                role="assistant",
+                content='{"files_written": [{"path": "x.py", "content": "broken\\n"}], "reasoning": "initial"}',
+            ),
+            usage=Usage(1, 1),
+            model="gemini",
+            stop_reason="end_turn",
+        ),
+        Response(
+            message=Message(
+                role="assistant",
+                content='{"files_written": [{"path": "x.py", "content": "fixed\\n"}], "reasoning": "repair"}',
+            ),
+            usage=Usage(1, 1),
+            model="gemini",
+            stop_reason="end_turn",
+        ),
+    ]
+    test_results = [(False, "failed before repair"), (True, "green after repair")]
+    run_tests = MagicMock(side_effect=test_results)
+    monkeypatch.setattr(entrypoint, "_run_tests", run_tests)
+    monkeypatch.setattr(entrypoint, "_git_commit", lambda workdir, msg, **kwargs: "abc123")
+
+    ctx = MagicMock()
+    ctx.inputs = {"ticket": {"id": "T1", "title": "hello"}}
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.invoke_skill = MagicMock()
+    ctx.skill = SimpleNamespace(meta=SimpleNamespace(policies={
+        "self_heal_max_rounds": 1,
+        "reviewer_max_rounds": 0,
+    }))
+
+    out = entrypoint.run(ctx)
+
+    assert out["test_result"] == {"passed": True, "output": "green after repair"}
+    assert out["commit_sha"] == "abc123"
+    assert run_tests.call_count == 2
+    assert (tmp_git_repo / "x.py").read_text() == "fixed\n"
+
+
+def test_reviewer_can_be_disabled(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+    from code_minions.llm.types import Message, Response, Usage
+
+    llm = MagicMock()
+    llm.chat.return_value = Response(
+        message=Message(
+            role="assistant",
+            content='{"files_written": [{"path": "x.py", "content": "x = 1\\n"}], "reasoning": "ok"}',
+        ),
+        usage=Usage(1, 1),
+        model="fake",
+        stop_reason="end_turn",
+    )
+
+    def fake_run(cmd, **kw):
+        return MagicMock(returncode=0, stdout="abc123\n", stderr="")
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    ctx = MagicMock()
+    ctx.inputs = {"ticket": {"id": "T1", "title": "hello"}}
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.invoke_skill = MagicMock()
+    ctx.skill = SimpleNamespace(meta=SimpleNamespace(policies={
+        "self_heal_max_rounds": 1,
+        "reviewer_max_rounds": 0,
+    }))
+
+    out = entrypoint.run(ctx)
+
+    assert out["test_result"]["passed"] is True
+    assert out["review_report"]["summary"] == "review skipped"
+    ctx.invoke_skill.assert_not_called()
+    assert llm.chat.call_args.kwargs["max_tokens"] == 16000
+
+
+def test_llm_can_write_files_with_tools(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+    from code_minions.llm.types import Message, Response, ToolCall, Usage
+
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        Response(
+            message=Message(
+                role="assistant",
+                tool_calls=[ToolCall(
+                    id="call-1",
+                    name="Write",
+                    arguments={"path": "x.py", "content": "x = 1\n"},
+                )],
+            ),
+            usage=Usage(1, 1),
+            model="fake",
+            stop_reason="tool_use",
+        ),
+        Response(
+            message=Message(role="assistant", content='{"reasoning": "done"}'),
+            usage=Usage(1, 1),
+            model="fake",
+            stop_reason="end_turn",
+        ),
+    ]
+
+    def fake_run(cmd, **kw):
+        return MagicMock(returncode=0, stdout="abc123\n", stderr="")
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    ctx = MagicMock()
+    ctx.inputs = {"ticket": {"id": "T1", "title": "hello"}}
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.invoke_skill = lambda name, inputs: {"issues": [], "summary": "lgtm", "approved": True}
+    ctx.skill = None
+
+    out = entrypoint.run(ctx)
+
+    assert (tmp_git_repo / "x.py").read_text() == "x = 1\n"
+    assert out["files_changed"] == ["x.py"]
+
+
+def test_tool_writes_are_recorded(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+    from code_minions.llm.types import Message, Response, ToolCall, Usage
+
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        Response(
+            message=Message(
+                role="assistant",
+                tool_calls=[ToolCall(
+                    id="call-1",
+                    name="Write",
+                    arguments={"path": "x.py", "content": "x = 1\n"},
+                )],
+            ),
+            usage=Usage(1, 1),
+            model="fake",
+            stop_reason="tool_use",
+        ),
+        Response(
+            message=Message(role="assistant", content='{"reasoning": "done"}'),
+            usage=Usage(1, 1),
+            model="fake",
+            stop_reason="end_turn",
+        ),
+    ]
+
+    def fake_run(cmd, **kw):
+        return MagicMock(returncode=0, stdout="abc123\n", stderr="")
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    events: list[dict] = []
+    ctx = MagicMock()
+    ctx.inputs = {"ticket": {"id": "T1", "title": "hello"}}
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.invoke_skill = lambda name, inputs: {"issues": [], "summary": "lgtm", "approved": True}
+    ctx.skill = None
+    ctx.extras = {
+        "current_step_id": "implement[0]",
+        "run_event_recorder": lambda event_type, payload: events.append({
+            "event_type": event_type,
+            "payload": payload,
+        }),
+    }
+
+    entrypoint.run(ctx)
+
+    tool_events = [e for e in events if e["event_type"] == "tool_call"]
+    assert tool_events == [{
+        "event_type": "tool_call",
+        "payload": {
+            "step_id": "implement[0]",
+            "tool": "Write",
+            "call_id": "call-1",
+            "status": "success",
+            "read_only": False,
+        },
+    }]
+
+
+def test_git_commit_excludes_execution_profile_ignored_paths(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+    commands: list[list[str]] = []
+
+    def fake_run(cmd, **kw):
+        commands.append(cmd)
+        if cmd[:2] == ["git", "rev-parse"]:
+            return MagicMock(returncode=0, stdout="abc123\n", stderr="")
+        return MagicMock(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    sha = entrypoint._git_commit(
+        tmp_git_repo,
+        "feat: web app",
+        ignored_paths=["node_modules", "dist", "coverage"],
+    )
+
+    assert sha == "abc123"
+    assert ["git", "add", "-A"] in commands
+    assert ["git", "reset", "--", "node_modules", "dist", "coverage"] in commands
+
+
+def test_tool_written_files_do_not_require_final_json(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+    from code_minions.llm.types import Message, Response, ToolCall, Usage
+
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        Response(
+            message=Message(
+                role="assistant",
+                tool_calls=[ToolCall(
+                    id="call-1",
+                    name="Write",
+                    arguments={"path": "x.py", "content": "x = 1\n"},
+                )],
+            ),
+            usage=Usage(1, 1),
+            model="MiniMax-M2.7",
+            stop_reason="tool_use",
+        ),
+        Response(
+            message=Message(role="assistant", content="<think>\nDone, tests should pass now."),
+            usage=Usage(10, 5),
+            model="MiniMax-M2.7",
+            stop_reason="end_turn",
+        ),
+    ]
+
+    def fake_run(cmd, **kw):
+        return MagicMock(returncode=0, stdout="abc123\n", stderr="")
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    ctx = MagicMock()
+    ctx.inputs = {"ticket": {"id": "T1", "title": "hello"}}
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.invoke_skill = lambda name, inputs: {"issues": [], "summary": "lgtm", "approved": True}
+    ctx.skill = None
+
+    out = entrypoint.run(ctx)
+
+    assert out["files_changed"] == ["x.py"]
+    assert (tmp_git_repo / "x.py").read_text() == "x = 1\n"
+
+
+def test_coder_llm_calls_are_recorded(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+    from code_minions.llm.types import Message, Response, Usage
+
+    llm = MagicMock()
+    llm.chat.return_value = Response(
+        message=Message(
+            role="assistant",
+            content='{"files_written": [{"path": "x.py", "content": "x = 1\\n"}], "reasoning": "ok"}',
+        ),
+        usage=Usage(7, 3),
+        model="fake",
+        stop_reason="end_turn",
+    )
+
+    def fake_run(cmd, **kw):
+        return MagicMock(returncode=0, stdout="abc123\n", stderr="")
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    events: list[dict] = []
+    ctx = MagicMock()
+    ctx.inputs = {"ticket": {"id": "T1", "title": "hello"}}
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.invoke_skill = lambda name, inputs: {"issues": [], "summary": "lgtm", "approved": True}
+    ctx.skill = None
+    ctx.extras = {
+        "current_step_id": "implement[0]",
+        "run_event_recorder": lambda event_type, payload: events.append({
+            "event_type": event_type,
+            "payload": payload,
+        }),
+    }
+
+    entrypoint.run(ctx)
+
+    llm_events = [e for e in events if e["event_type"] == "llm_call"]
+    assert llm_events == [{
+        "event_type": "llm_call",
+        "payload": {
+            "step_id": "implement[0]",
+            "skill": "implement-with-tdd",
+            "model": "fake",
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 7, "output_tokens": 3},
+            "tool_calls": [],
+        },
+    }]
+
+
+def test_tool_call_rounds_do_not_consume_json_retry_budget(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+    from code_minions.llm.types import Message, Response, ToolCall, Usage
+
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        Response(
+            message=Message(
+                role="assistant",
+                tool_calls=[ToolCall(
+                    id="call-1",
+                    name="Write",
+                    arguments={"path": "x.py", "content": "x = 1\n"},
+                )],
+            ),
+            usage=Usage(1, 1),
+            model="gemini",
+            stop_reason="tool_use",
+        ),
+        Response(
+            message=Message(
+                role="assistant",
+                tool_calls=[ToolCall(
+                    id="call-2",
+                    name="Edit",
+                    arguments={"path": "x.py", "old_text": "x = 1\n", "new_text": "x = 2\n"},
+                )],
+            ),
+            usage=Usage(1, 1),
+            model="gemini",
+            stop_reason="tool_use",
+        ),
+        Response(
+            message=Message(role="assistant", content='{"reasoning": "done"}'),
+            usage=Usage(1, 1),
+            model="gemini",
+            stop_reason="end_turn",
+        ),
+    ]
+
+    def fake_run(cmd, **kw):
+        return MagicMock(returncode=0, stdout="abc123\n", stderr="")
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    ctx = MagicMock()
+    ctx.inputs = {"ticket": {"id": "T1", "title": "hello"}}
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.invoke_skill = lambda name, inputs: {"issues": [], "summary": "lgtm", "approved": True}
+    ctx.skill = None
+
+    out = entrypoint.run(ctx)
+
+    assert (tmp_git_repo / "x.py").read_text() == "x = 2\n"
+    assert out["files_changed"] == ["x.py"]
+    assert llm.chat.call_count == 3
+
+
+def test_coder_stops_offering_tools_after_mutating_tool_round(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+    from code_minions.llm.types import Message, Response, ToolCall, Usage
+
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        Response(
+            message=Message(
+                role="assistant",
+                tool_calls=[ToolCall(
+                    id="call-1",
+                    name="Write",
+                    arguments={"path": "x.py", "content": "x = 1\n"},
+                )],
+            ),
+            usage=Usage(1, 1),
+            model="MiniMax-M2.7",
+            stop_reason="tool_use",
+        ),
+        Response(
+            message=Message(role="assistant", content='{"reasoning": "done"}'),
+            usage=Usage(1, 1),
+            model="MiniMax-M2.7",
+            stop_reason="end_turn",
+        ),
+    ]
+
+    def fake_run(cmd, **kw):
+        return MagicMock(returncode=0, stdout="abc123\n", stderr="")
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    ctx = MagicMock()
+    ctx.inputs = {"ticket": {"id": "T1", "title": "hello"}}
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.invoke_skill = lambda name, inputs: {"issues": [], "summary": "lgtm", "approved": True}
+    ctx.skill = None
+
+    entrypoint.run(ctx)
+
+    assert llm.chat.call_args_list[0].kwargs["tools"]
+    assert llm.chat.call_args_list[1].kwargs["tools"] is None
+    assert "reply with a small JSON object now" in llm.chat.call_args_list[1].kwargs["messages"][-2].content
+
+
+def test_repeated_read_calls_can_recover_to_write(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+    from code_minions.llm.types import Message, Response, ToolCall, Usage
+
+    llm = MagicMock()
+    read_responses = [
+        Response(
+            message=Message(
+                role="assistant",
+                tool_calls=[ToolCall(
+                    id=f"read-{idx}",
+                    name="Read",
+                    arguments={"path": "README.md"},
+                )],
+            ),
+            usage=Usage(10, 5),
+            model="MiniMax-M2.7",
+            stop_reason="tool_use",
+        )
+        for idx in range(13)
+    ]
+    llm.chat.side_effect = [
+        *read_responses,
+        Response(
+            message=Message(
+                role="assistant",
+                tool_calls=[ToolCall(
+                    id="write-1",
+                    name="Write",
+                    arguments={"path": "x.py", "content": "x = 1\n"},
+                )],
+            ),
+            usage=Usage(10, 5),
+            model="MiniMax-M2.7",
+            stop_reason="tool_use",
+        ),
+        Response(
+            message=Message(role="assistant", content='{"reasoning": "done"}'),
+            usage=Usage(1, 1),
+            model="MiniMax-M2.7",
+            stop_reason="end_turn",
+        ),
+    ]
+
+    def fake_run(cmd, **kw):
+        return MagicMock(returncode=0, stdout="abc123\n", stderr="")
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    ctx = MagicMock()
+    ctx.inputs = {"ticket": {"id": "T1", "title": "hello"}}
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.invoke_skill = lambda name, inputs: {"issues": [], "summary": "lgtm", "approved": True}
+    ctx.skill = None
+
+    out = entrypoint.run(ctx)
+
+    assert (tmp_git_repo / "x.py").read_text() == "x = 1\n"
+    assert out["files_changed"] == ["x.py"]
+    assert llm.chat.call_count == 15
+
+
+def test_invalid_coder_response_reports_provider_diagnostics(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    from code_minions.llm.types import Message, Response, Usage
+
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        Response(
+            message=Message(role="assistant", content=""),
+            usage=Usage(1234, 2048),
+            model="gemini-3.1-pro-preview",
+            stop_reason="max_tokens",
+        ),
+        Response(
+            message=Message(role="assistant", content=""),
+            usage=Usage(1300, 2048),
+            model="gemini-3.1-pro-preview",
+            stop_reason="max_tokens",
+        ),
+    ]
+
+    ctx = MagicMock()
+    ctx.inputs = {"ticket": {"id": "T1", "title": "hello"}}
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.invoke_skill = lambda name, inputs: {"issues": [], "summary": "lgtm", "approved": True}
+    ctx.skill = SimpleNamespace(meta=SimpleNamespace(policies={
+        "self_heal_max_rounds": 1,
+        "reviewer_max_rounds": 0,
+    }))
+
+    with pytest.raises(RuntimeError) as exc_info:
+        entrypoint.run(ctx)
+
+    error = str(exc_info.value)
+    assert "LLM did not return JSON" in error
+    assert "content=''" in error
+    assert "stop_reason=max_tokens" in error
+    assert "model=gemini-3.1-pro-preview" in error
+    assert "usage=input:1300,output:2048" in error
+
+
+def test_tool_call_round_limit_reports_diagnostics(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    from code_minions.llm.types import Message, Response, ToolCall, Usage
+
+    llm = MagicMock()
+    llm.chat.return_value = Response(
+        message=Message(
+            role="assistant",
+            tool_calls=[ToolCall(
+                id="call-1",
+                name="Read",
+                arguments={"path": "README.md"},
+            )],
+        ),
+        usage=Usage(10, 5),
+        model="gemini-3.1-pro-preview",
+        stop_reason="tool_use",
+    )
+
+    ctx = MagicMock()
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.skill = None
+
+    with pytest.raises(RuntimeError) as exc_info:
+        entrypoint._llm_call(ctx, "system", "user", max_attempts=2, max_tool_rounds=2)
+
+    error = str(exc_info.value)
+    assert "tool_call round limit=2" in error
+    assert "tool_calls=[Read]" in error
+    assert "stop_reason=tool_use" in error
+    assert "model=gemini-3.1-pro-preview" in error

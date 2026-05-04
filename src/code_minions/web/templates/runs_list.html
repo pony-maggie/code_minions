@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}runs — code-minions{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-4">
+  <h1 class="text-2xl font-bold">Runs</h1>
+  <a href="/new" class="bg-indigo-600 text-white px-3 py-1.5 rounded hover:bg-indigo-700 text-sm">+ New Run</a>
+</div>
+
+{% if runs %}
+  <div class="bg-white rounded-lg shadow border border-gray-200 overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-gray-100 border-b border-gray-200 text-left">
+        <tr>
+          <th class="px-4 py-2 font-medium">id</th>
+          <th class="px-4 py-2 font-medium">workflow</th>
+          <th class="px-4 py-2 font-medium">status</th>
+          <th class="px-4 py-2 font-medium">llm</th>
+          <th class="px-4 py-2 font-medium">started</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for run in runs %}
+        <tr class="border-b border-gray-100 hover:bg-gray-50 cursor-pointer"
+            onclick="window.location.href='/runs/{{ run.id }}'">
+          <td class="px-4 py-2 font-mono text-xs">{{ run.id }}</td>
+          <td class="px-4 py-2">{{ run.workflow }}</td>
+          <td class="px-4 py-2">
+            <span class="px-2 py-0.5 text-xs rounded
+              {% if run.status == 'success' %}bg-green-100 text-green-800
+              {% elif run.status == 'failed' %}bg-red-100 text-red-800
+              {% elif run.status == 'running' %}bg-blue-100 text-blue-800
+              {% elif run.status == 'cancelled' %}bg-gray-200 text-gray-700
+              {% else %}bg-yellow-100 text-yellow-800{% endif %}">
+              {{ run.status }}
+            </span>
+          </td>
+          <td class="px-4 py-2 text-gray-500 font-mono text-xs">{{ run.llm or 'not recorded' }}</td>
+          <td class="px-4 py-2 text-gray-500">{{ run.started_at }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  <div class="text-center py-16 text-gray-500">
+    <p class="text-lg mb-2">No runs yet</p>
+    <p class="text-sm">Try <code class="bg-gray-200 px-1 rounded">code-minions run hello-world --input name=world</code></p>
+  </div>
+{% endif %}
+{% endblock %}

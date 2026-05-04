@@ -1,0 +1,14 @@
+.devflow/
+__pycache__/
+*.pyc
+.venv/
+.env
+.DS_Store
+docs/superpowers/
+PROGRESS.md
+CHANGELOG.md
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/

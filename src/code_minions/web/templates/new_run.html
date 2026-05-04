@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}new run — code-minions{% endblock %}
+{% block content %}
+<div class="mb-6">
+  <a href="/" class="text-sm text-gray-500 hover:underline">← all runs</a>
+</div>
+
+<h1 class="text-2xl font-bold mb-4">Start a new run</h1>
+
+<form method="POST" action="/new" class="bg-white rounded-lg shadow border border-gray-200 p-6 space-y-4">
+  <div>
+    <label class="block text-sm font-medium mb-1">Workflow</label>
+    <select name="workflow"
+            hx-get="/new/inputs"
+            hx-target="#inputs-area"
+            hx-trigger="change, load"
+            hx-include="this"
+            class="w-full border border-gray-300 rounded px-3 py-2">
+      {% for n in workflow_names %}
+      <option value="{{ n }}">{{ n }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div id="inputs-area">
+    <!-- loaded via htmx on select change -->
+  </div>
+
+  <div class="pt-4 border-t border-gray-200">
+    <button type="submit" class="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700">
+      Start Run
+    </button>
+  </div>
+</form>
+{% endblock %}

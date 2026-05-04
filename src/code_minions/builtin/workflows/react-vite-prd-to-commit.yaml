@@ -1,0 +1,5 @@
+name: react-vite-prd-to-commit
+description: PRD -> local implementation commits for React + TypeScript + Vite projects.
+extends: prd-to-commit.yaml
+preset_inputs:
+  delivery_stack_id: react-vite

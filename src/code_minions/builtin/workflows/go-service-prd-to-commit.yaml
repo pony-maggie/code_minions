@@ -1,0 +1,5 @@
+name: go-service-prd-to-commit
+description: PRD -> local implementation commits for Go service projects.
+extends: prd-to-commit.yaml
+preset_inputs:
+  delivery_stack_id: go-service

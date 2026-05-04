@@ -1,0 +1,5 @@
+name: swift-xcodegen-prd-to-commit
+description: PRD -> local implementation commits for Swift/XcodeGen projects.
+extends: prd-to-commit.yaml
+preset_inputs:
+  delivery_stack_id: swift-xcodegen

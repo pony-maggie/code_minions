@@ -1,0 +1,66 @@
+"""Unit tests for web routes (TestClient-based, no uvicorn)."""
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+
+@pytest.fixture
+def client(tmp_git_repo: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    """A TestClient rooted at a fresh tmp git repo (so RunStore writes there)."""
+    # web.deps caches project_root at cwd; monkeypatch to tmp_git_repo
+    monkeypatch.chdir(tmp_git_repo)
+
+    # Clear any cached singletons from a previous test
+    from code_minions.web import deps as web_deps
+    web_deps._project_root.cache_clear()
+    web_deps.get_engine.cache_clear()
+    web_deps.get_store.cache_clear()
+
+    from code_minions.web.app import create_app
+    app = create_app()
+    return TestClient(app)
+
+
+def test_runs_list_empty(client: TestClient) -> None:
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert "No runs yet" in resp.text
+    assert "code-minions" in resp.text
+
+
+def test_runs_list_shows_existing_runs(client: TestClient, tmp_git_repo: Path) -> None:
+    # Seed a run directly into the store
+    from code_minions.web.deps import get_store
+    store = get_store()
+    run_id = store.create_run(workflow="demo-workflow", inputs={"x": 1})
+
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert run_id in resp.text
+    assert "demo-workflow" in resp.text
+    assert "pending" in resp.text.lower()
+
+
+def test_run_detail_not_found(client: TestClient) -> None:
+    resp = client.get("/runs/r_nonexistent")
+    assert resp.status_code == 404
+
+
+def test_run_detail_shows_steps(client: TestClient) -> None:
+    from code_minions.types import StepStatus
+    from code_minions.web.deps import get_store
+    store = get_store()
+    run_id = store.create_run(workflow="demo", inputs={})
+    store.upsert_step(run_id, "stepA", StepStatus.SUCCESS, output={"result": "ok"})
+    store.upsert_step(run_id, "stepB", StepStatus.FAILED, error="boom")
+
+    resp = client.get(f"/runs/{run_id}")
+    assert resp.status_code == 200
+    assert "stepA" in resp.text
+    assert "stepB" in resp.text
+    assert "success" in resp.text.lower()
+    assert "failed" in resp.text.lower()
+    assert "boom" in resp.text

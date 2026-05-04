@@ -1,0 +1,39 @@
+<div class="space-y-4">
+  {% if inputs %}
+    {% for name, spec in inputs.items() %}
+      <div>
+        <label class="block text-sm font-medium mb-1">
+          {{ name }}
+          {% if spec.required %}<span class="text-red-500">*</span>{% endif %}
+          <span class="text-xs text-gray-500 ml-1">({{ spec.type }})</span>
+        </label>
+        {% if spec.type == "object" %}
+          <textarea name="{{ name }}" rows="4"
+                    placeholder='JSON object, e.g. {"key": "value"}'
+                    {% if spec.required %}required{% endif %}
+                    class="w-full border border-gray-300 rounded px-3 py-2 font-mono text-sm"></textarea>
+        {% elif spec.type in ("integer", "number") %}
+          <input type="number" name="{{ name }}"
+                 {% if spec.type == "integer" %}step="1"{% endif %}
+                 {% if spec.required %}required{% endif %}
+                 class="w-full border border-gray-300 rounded px-3 py-2">
+        {% else %}
+          <input type="text" name="{{ name }}"
+                 {% if file_options and file_options.get(name) %}list="file-options-{{ name }}"{% endif %}
+                 {% if spec.required %}required{% endif %}
+                 class="w-full border border-gray-300 rounded px-3 py-2">
+          {% if file_options and file_options.get(name) %}
+            <datalist id="file-options-{{ name }}">
+              {% for path in file_options.get(name) %}
+                <option value="{{ path }}"></option>
+              {% endfor %}
+            </datalist>
+            <p class="mt-1 text-xs text-gray-500">Choose a project file or type a project-relative path.</p>
+          {% endif %}
+        {% endif %}
+      </div>
+    {% endfor %}
+  {% else %}
+    <p class="text-sm text-gray-500">This workflow has no inputs.</p>
+  {% endif %}
+</div>

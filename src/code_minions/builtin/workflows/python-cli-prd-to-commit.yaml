@@ -1,0 +1,5 @@
+name: python-cli-prd-to-commit
+description: PRD -> local implementation commits for Python CLI projects.
+extends: prd-to-commit.yaml
+preset_inputs:
+  delivery_stack_id: python-cli

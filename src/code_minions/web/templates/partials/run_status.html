@@ -1,0 +1,8 @@
+<span id="run-status" class="px-3 py-1 text-sm rounded
+  {% if run.status == 'success' %}bg-green-100 text-green-800
+  {% elif run.status == 'failed' %}bg-red-100 text-red-800
+  {% elif run.status == 'running' %}bg-blue-100 text-blue-800
+  {% elif run.status == 'cancelled' %}bg-gray-200 text-gray-700
+  {% else %}bg-yellow-100 text-yellow-800{% endif %}">
+  {{ run.status }}
+</span>

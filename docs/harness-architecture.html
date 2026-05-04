@@ -1,0 +1,669 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>code_minions Harness Architecture</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --ink: #172033;
+      --muted: #5d6678;
+      --line: #cbd2df;
+      --panel: #ffffff;
+      --spec: #eef6ff;
+      --harness: #fff5e8;
+      --gate: #eef9f0;
+      --report: #f4efff;
+      --danger: #fff0f0;
+      --blue: #2668b2;
+      --amber: #a95d00;
+      --green: #267044;
+      --purple: #6b4bb3;
+      --red: #b33b3b;
+      --shadow: 0 10px 26px rgba(18, 27, 43, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.45;
+    }
+
+    main {
+      max-width: 1420px;
+      margin: 0 auto;
+      padding: 28px;
+    }
+
+    header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 20px;
+      align-items: start;
+      margin-bottom: 18px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 30px;
+      line-height: 1.16;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      max-width: 980px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    .legend {
+      display: grid;
+      gap: 7px;
+      min-width: 230px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      font-size: 13px;
+    }
+
+    .legend-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+    }
+
+    .swatch {
+      width: 14px;
+      height: 14px;
+      border-radius: 3px;
+      border: 1px solid rgba(0, 0, 0, 0.1);
+      flex: 0 0 auto;
+    }
+
+    .swatch.spec { background: var(--spec); }
+    .swatch.harness { background: var(--harness); }
+    .swatch.gate { background: var(--gate); }
+    .swatch.report { background: var(--report); }
+    .swatch.danger { background: var(--danger); }
+
+    .canvas {
+      display: grid;
+      gap: 18px;
+    }
+
+    .section {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .section-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      background: #fbfcfe;
+    }
+
+    .section-title h2 {
+      margin: 0;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+
+    .section-title span {
+      color: var(--muted);
+      font-size: 13px;
+      text-align: right;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(150px, 1fr));
+      gap: 18px;
+      padding: 18px;
+      align-items: stretch;
+    }
+
+    .node {
+      position: relative;
+      min-height: 132px;
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    .node.spec { background: var(--spec); border-color: #bed7f0; }
+    .node.harness { background: var(--harness); border-color: #edd0a5; }
+    .node.gate { background: var(--gate); border-color: #b9ddc4; }
+    .node.report { background: var(--report); border-color: #d3c6f0; }
+    .node.danger { background: var(--danger); border-color: #efc2c2; }
+
+    .node::after {
+      content: "→";
+      position: absolute;
+      right: -17px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: #7b8494;
+      font-size: 22px;
+      font-weight: 700;
+    }
+
+    .node:last-child::after,
+    .no-arrow::after {
+      content: "";
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      margin-bottom: 8px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.72);
+      color: var(--muted);
+      border: 1px solid rgba(0, 0, 0, 0.07);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 0 0 7px;
+      font-size: 16px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    code {
+      padding: 1px 4px;
+      border-radius: 4px;
+      background: rgba(23, 32, 51, 0.07);
+      color: #1c2a44;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.92em;
+    }
+
+    .harness-grid {
+      display: grid;
+      grid-template-columns: 1fr 1.25fr 1fr;
+      gap: 18px;
+      padding: 18px;
+    }
+
+    .stack {
+      display: grid;
+      gap: 12px;
+    }
+
+    .large-node {
+      display: grid;
+      gap: 12px;
+      padding: 16px;
+      border: 2px solid #d39d54;
+      border-radius: 8px;
+      background: var(--harness);
+    }
+
+    .loop {
+      display: grid;
+      gap: 8px;
+      padding: 12px;
+      border: 1px dashed #a95d00;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.58);
+    }
+
+    .loop-title {
+      font-weight: 800;
+      color: #7d4700;
+      font-size: 13px;
+    }
+
+    .mini-flow {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .pill {
+      display: flex;
+      min-height: 42px;
+      align-items: center;
+      justify-content: center;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      text-align: center;
+      color: #2d374b;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .gate-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(190px, 1fr));
+      gap: 14px;
+      padding: 18px;
+    }
+
+    .gate-card {
+      padding: 14px;
+      border: 1px solid #b9ddc4;
+      border-radius: 8px;
+      background: var(--gate);
+    }
+
+    .gate-card h3 {
+      color: var(--green);
+    }
+
+    ul {
+      margin: 9px 0 0;
+      padding-left: 18px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    li + li {
+      margin-top: 5px;
+    }
+
+    .taxonomy {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      padding: 18px;
+    }
+
+    .table {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 190px minmax(0, 1fr) 230px;
+      border-top: 1px solid var(--line);
+    }
+
+    .row:first-child {
+      border-top: 0;
+      background: #f8fafc;
+      font-weight: 800;
+      color: #2d374b;
+    }
+
+    .cell {
+      padding: 10px;
+      border-left: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .cell:first-child {
+      border-left: 0;
+      color: var(--ink);
+      font-weight: 700;
+    }
+
+    .tag {
+      display: inline-block;
+      margin: 2px 4px 2px 0;
+      padding: 3px 7px;
+      border-radius: 999px;
+      background: #edf2f7;
+      color: #334155;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .note {
+      padding: 14px 16px;
+      border-top: 1px solid var(--line);
+      background: #fbfcfe;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 980px) {
+      main {
+        padding: 16px;
+      }
+
+      header,
+      .harness-grid,
+      .taxonomy {
+        grid-template-columns: 1fr;
+      }
+
+      .flow,
+      .gate-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .node::after {
+        content: "↓";
+        right: 50%;
+        top: auto;
+        bottom: -22px;
+        transform: translateX(50%);
+      }
+
+      .mini-flow {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .row {
+        grid-template-columns: 1fr;
+      }
+
+      .cell {
+        border-left: 0;
+        border-top: 1px solid var(--line);
+      }
+
+      .cell:first-child {
+        border-top: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>code_minions PRD Harness Architecture</h1>
+        <p class="subtitle">
+          这张图描述当前 <code>prd-to-commit</code> 链路如何把 PRD/spec 转成任务，如何在隔离 worktree 中执行实现，
+          以及哪些确定性门禁会在 LLM 生成代码前后持续约束结果。
+        </p>
+      </div>
+      <aside class="legend" aria-label="Legend">
+        <div class="legend-row"><span class="swatch spec"></span>Spec / PRD / planning</div>
+        <div class="legend-row"><span class="swatch harness"></span>Implementation harness</div>
+        <div class="legend-row"><span class="swatch gate"></span>Deterministic gate</div>
+        <div class="legend-row"><span class="swatch report"></span>Review / report / commit</div>
+        <div class="legend-row"><span class="swatch danger"></span>Failure feedback</div>
+      </aside>
+    </header>
+
+    <div class="canvas">
+      <section class="section" aria-labelledby="workflow-title">
+        <div class="section-title">
+          <h2 id="workflow-title">End-to-End Workflow</h2>
+          <span><code>prd-to-commit.yaml</code> runs in <code>workspace.mode: git-worktree</code></span>
+        </div>
+        <div class="flow">
+          <article class="node spec">
+            <span class="eyebrow">Input</span>
+            <h3>PRD + Delivery Contract</h3>
+            <p>用户提交 <code>prd.md</code>。推荐写清 <code>delivery_profile</code>：artifact kind、language、framework、build system、test command、required files、forbidden languages。</p>
+          </article>
+          <article class="node spec">
+            <span class="eyebrow">parse-prd</span>
+            <h3>Structured Spec</h3>
+            <p>LLM 将 PRD 解析成 <code>goal</code>、features、non-functional、constraints、users、questions 和规范化后的 delivery profile。</p>
+          </article>
+          <article class="node spec">
+            <span class="eyebrow">plan-tasks</span>
+            <h3>Task Plan</h3>
+            <p>拆成有依赖关系的 task。每个 task 会继承同一个 delivery profile，避免后续实现偏离 PRD 指定技术栈。</p>
+          </article>
+          <article class="node harness">
+            <span class="eyebrow">for_each</span>
+            <h3>implement-with-tdd</h3>
+            <p>每个 task 在 run worktree 里独立执行 TDD、自修复和提交。成功的 iteration 会产出 commit SHA。</p>
+          </article>
+          <article class="node gate">
+            <span class="eyebrow">acceptance</span>
+            <h3>Product Acceptance</h3>
+            <p>实现完成后，<code>product-acceptance-review</code> 再用 PRD 和 delivery profile 做产品级验收。</p>
+          </article>
+          <article class="node report">
+            <span class="eyebrow">report</span>
+            <h3>Report + Branch</h3>
+            <p><code>compile-report</code> 聚合结果。用户从 <code>.devflow/runs/&lt;id&gt;/worktree</code> review，再 merge <code>code-minions/&lt;run-id&gt;</code>。</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="harness-title">
+        <div class="section-title">
+          <h2 id="harness-title">Implementation Harness</h2>
+          <span>LLM 生成代码，但执行、验证、提交由 deterministic harness 控制</span>
+        </div>
+        <div class="harness-grid">
+          <div class="stack">
+            <article class="node spec no-arrow">
+              <span class="eyebrow">Context</span>
+              <h3>Project Context</h3>
+              <p>注入 root markers、<code>AGENTS.md</code> 摘要、权威构建文件，如 <code>package.json</code>、<code>project.yml</code>、<code>pyproject.toml</code>。</p>
+            </article>
+            <article class="node spec no-arrow">
+              <span class="eyebrow">Delivery Guidance</span>
+              <h3>Profile-Specific Prompt</h3>
+              <p>React/Vite、Swift/XcodeGen、turn-based board game 等会获得专门的实现约束，例如 <code>jsdom</code>、<code>tsc --noEmit</code>、<code>GENERATE_INFOPLIST_FILE</code>。</p>
+            </article>
+          </div>
+
+          <article class="large-node">
+            <div>
+              <span class="eyebrow">Core Harness</span>
+              <h3>Coder Loop with Local Tools</h3>
+              <p>LLM 可以调用 <code>Read</code>、<code>Write</code>、<code>Edit</code>、<code>Delete</code>。写入后 harness 会要求模型停止继续调用工具并返回小 JSON，文件系统变化是事实来源。</p>
+            </div>
+            <div class="loop">
+              <div class="loop-title">Self-Heal Loop</div>
+              <div class="mini-flow">
+                <div class="pill">Generate tests + code</div>
+                <div class="pill">Delivery profile check</div>
+                <div class="pill">Install + typecheck + test</div>
+                <div class="pill">Failure playbook hint</div>
+              </div>
+              <p>如果任何门禁失败，失败输出和 playbook hint 会回灌给 coder，直到 green 或达到 repair budget。</p>
+            </div>
+          </article>
+
+          <div class="stack">
+            <article class="node gate no-arrow">
+              <span class="eyebrow">Execution Profile</span>
+              <h3>Stack-Aware Commands</h3>
+              <p>React/Vite 运行 <code>npm install</code>、<code>npx tsc --noEmit</code>、<code>npm test</code>。Swift/XcodeGen 运行 <code>xcodegen generate</code>、<code>xcodebuild test</code>。</p>
+            </article>
+            <article class="node report no-arrow">
+              <span class="eyebrow">Commit Boundary</span>
+              <h3>Green Before Commit</h3>
+              <p>只有通过门禁后才 commit。<code>node_modules</code>、<code>dist</code>、<code>coverage</code>、<code>*.xcodeproj</code> 等生成物会被排除。</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="gates-title">
+        <div class="section-title">
+          <h2 id="gates-title">Gate Stack</h2>
+          <span>从 spec 到 product acceptance 的多层门禁</span>
+        </div>
+        <div class="gate-grid">
+          <article class="gate-card">
+            <h3>Spec Gate</h3>
+            <p>PRD 中的 <code>delivery_profile</code> 是产品交付契约。</p>
+            <ul>
+              <li><code>kind</code> / <code>language</code> / <code>framework</code></li>
+              <li><code>required_files</code></li>
+              <li><code>forbidden_product_languages</code></li>
+              <li><code>test_command</code></li>
+            </ul>
+          </article>
+
+          <article class="gate-card">
+            <h3>Workspace Gate</h3>
+            <p>代码生成发生在隔离 worktree，而不是直接改当前项目目录。</p>
+            <ul>
+              <li><code>.devflow/runs/&lt;id&gt;/worktree</code></li>
+              <li><code>code-minions/&lt;run-id&gt;</code> branch</li>
+              <li>status / resume 以 run database 为准</li>
+            </ul>
+          </article>
+
+          <article class="gate-card">
+            <h3>Delivery Profile Check</h3>
+            <p><code>validate_delivery_profile</code> 在测试前做静态完整性检查。</p>
+            <ul>
+              <li>required files exist</li>
+              <li>forbidden language files absent</li>
+              <li>Swift tests not inside product sources</li>
+              <li>XcodeGen targets have Info.plist</li>
+              <li>React/Vite has jsdom and resolvable imports</li>
+            </ul>
+          </article>
+
+          <article class="gate-card">
+            <h3>Execution Gate</h3>
+            <p>按技术栈执行确定性命令，而不是让模型声明成功。</p>
+            <ul>
+              <li>React/Vite: install → <code>tsc --noEmit</code> → test</li>
+              <li>Swift/XcodeGen: generate → xcodebuild test</li>
+              <li>Python: <code>python -m pytest -q</code></li>
+              <li>Go: <code>go test ./...</code></li>
+            </ul>
+          </article>
+
+          <article class="gate-card">
+            <h3>Failure Playbook</h3>
+            <p>把长堆栈翻译成可执行修复提示，降低 self-heal 试错成本。</p>
+            <ul>
+              <li>missing Vitest / missing jest-dom</li>
+              <li>Testing Library duplicate DOM</li>
+              <li>Vitest <code>jest is not defined</code></li>
+              <li>Vite unresolved relative import</li>
+              <li>XcodeGen duplicate outputs / missing Info.plist</li>
+            </ul>
+          </article>
+
+          <article class="gate-card">
+            <h3>Review Gate</h3>
+            <p>测试 green 后可进入 <code>ai-code-review</code>，major/blocker 会回灌给 coder。</p>
+            <ul>
+              <li>reviewer loop</li>
+              <li>blocker / major only blocks</li>
+              <li>review skipped is allowed by policy</li>
+            </ul>
+          </article>
+
+          <article class="gate-card">
+            <h3>Product Acceptance Gate</h3>
+            <p>单 task green 不等于产品完成，最终还要对照 PRD 验收。</p>
+            <ul>
+              <li>delivery profile evidence</li>
+              <li>task coverage</li>
+              <li>blockers and warnings</li>
+              <li>artifact-level status in report</li>
+            </ul>
+          </article>
+
+          <article class="gate-card">
+            <h3>Landing Gate</h3>
+            <p>成功 run 仍需要用户 review worktree，再 merge branch。</p>
+            <ul>
+              <li>inspect commits and <code>report.md</code></li>
+              <li>rerun project verification</li>
+              <li>merge branch, not manual copy</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="failure-title">
+        <div class="section-title">
+          <h2 id="failure-title">Failure Taxonomy and Recent Hardening</h2>
+          <span>为什么看起来都是 <code>tests never green</code>，但根因并不相同</span>
+        </div>
+        <div class="taxonomy">
+          <div class="table" role="table" aria-label="Failure taxonomy">
+            <div class="row" role="row">
+              <div class="cell" role="columnheader">Layer</div>
+              <div class="cell" role="columnheader">What Fails</div>
+              <div class="cell" role="columnheader">Current Guard</div>
+            </div>
+            <div class="row" role="row">
+              <div class="cell" role="cell">Provider / Protocol</div>
+              <div class="cell" role="cell">invalid JSON, tool loop, provider-specific behavior</div>
+              <div class="cell" role="cell"><span class="tag">JSON retry</span><span class="tag">tool round limit</span><span class="tag">diagnostics</span></div>
+            </div>
+            <div class="row" role="row">
+              <div class="cell" role="cell">Project Completeness</div>
+              <div class="cell" role="cell">missing source file, orphan test, wrong target file location</div>
+              <div class="cell" role="cell"><span class="tag">required files</span><span class="tag">relative import scan</span><span class="tag">Swift test location</span></div>
+            </div>
+            <div class="row" role="row">
+              <div class="cell" role="cell">Test Environment</div>
+              <div class="cell" role="cell">missing dependencies, jsdom absent, Testing Library DOM leaks, Jest globals in Vitest</div>
+              <div class="cell" role="cell"><span class="tag">npm install</span><span class="tag">jsdom check</span><span class="tag">cleanup hint</span><span class="tag">vi.fn hint</span></div>
+            </div>
+            <div class="row" role="row">
+              <div class="cell" role="cell">Type Safety</div>
+              <div class="cell" role="cell">cross-task interface drift, stale callers, wrong return shape</div>
+              <div class="cell" role="cell"><span class="tag">npx tsc --noEmit</span><span class="tag">prompt guidance</span></div>
+            </div>
+            <div class="row" role="row">
+              <div class="cell" role="cell">Product Semantics</div>
+              <div class="cell" role="cell">invalid game scenarios, impossible turn sequences, partial feature coverage</div>
+              <div class="cell" role="cell"><span class="tag">domain prompt</span><span class="tag">acceptance review</span></div>
+            </div>
+          </div>
+
+          <article class="node danger no-arrow">
+            <span class="eyebrow">Key Point</span>
+            <h3><code>tests never green</code> is a wrapper, not a root cause</h3>
+            <p>
+              Recent Gomoku runs all ended with the same outer error, but the inner failures moved from missing test runner,
+              to jsdom, to cleanup, to relative imports, to Vitest mocks, to TypeScript interface drift. The harness hardening
+              strategy is to promote each discovered class into an earlier deterministic gate or a sharper self-heal hint.
+            </p>
+            <ul>
+              <li>Earlier gates reduce expensive LLM repair cycles.</li>
+              <li>Failure playbook turns noisy logs into actionable instructions.</li>
+              <li>Delivery profile keeps the generated artifact aligned with the PRD.</li>
+              <li>Product acceptance keeps green tests from masquerading as complete product delivery.</li>
+            </ul>
+          </article>
+        </div>
+        <div class="note">
+          This diagram reflects the current local architecture after the recent React/Vite, Swift/XcodeGen, failure-playbook,
+          and typecheck hardening work. It is intentionally focused on the harness and gates, not on every CLI/Web/store detail.
+        </div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

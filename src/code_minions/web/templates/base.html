@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}code-minions{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="{{ request.url_for('static', path='htmx.min.js') }}"
+          onerror="this.onerror=null;this.src='https://unpkg.com/htmx.org@2.0.2/dist/htmx.min.js';"></script>
+  <script src="{{ request.url_for('static', path='htmx-sse.js') }}"
+          onerror="this.onerror=null;this.src='https://unpkg.com/htmx-ext-sse@2.2.2/sse.js';"></script>
+</head>
+<body class="bg-gray-50 text-gray-900 min-h-screen">
+  <header class="bg-white border-b border-gray-200 px-6 py-3">
+    <div class="max-w-6xl mx-auto flex items-center justify-between">
+      <a href="/" class="text-lg font-semibold">🤖 code-minions</a>
+      <nav class="flex gap-4 text-sm">
+        <a href="/" class="hover:underline">runs</a>
+        <a href="/new" class="hover:underline">new run</a>
+      </nav>
+    </div>
+  </header>
+  <main class="max-w-6xl mx-auto px-6 py-6">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

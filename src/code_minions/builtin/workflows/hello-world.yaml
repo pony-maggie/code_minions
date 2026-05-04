@@ -1,0 +1,11 @@
+name: hello-world
+description: Walking-skeleton end-to-end smoke test.
+workspace:
+  mode: none
+inputs:
+  name: {type: string, required: true}
+steps:
+  - id: greet
+    skill: hello-world
+    inputs:
+      name: $inputs.name

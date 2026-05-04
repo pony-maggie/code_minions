@@ -1,0 +1,10 @@
+name: summarize-file
+workspace:
+  mode: project-readonly
+inputs:
+  file: {type: string, required: true}
+steps:
+  - id: summ
+    skill: summarize-file
+    inputs:
+      path: $inputs.file
