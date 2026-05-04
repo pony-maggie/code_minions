@@ -18,6 +18,10 @@
 - **skill 可装配**：每个 workflow step 都是一个 skill。skill 使用 Claude 风格的 `SKILL.md` frontmatter，也可以声明确定性的 `entrypoint-script`。
 - **理解项目约定**：LLM skill prompt 会注入 `AGENTS.md`，让执行过程遵守当前 repo 的约定。
 
+## 架构图
+
+[![code_minions 架构图](docs/assets/architecture.svg)](docs/assets/architecture.svg)
+
 ## 安装
 
 `code-minions` 还没有发布到 PyPI。当前需要从源码安装：
@@ -59,7 +63,39 @@ LLM provider 配置、Jira/GitHub MCP 示例、完整 PRD-to-PR 前置条件，�
 | `hello-world` | 验证安装和 runtime 基础能力；不需要 AI 或外部服务。 | `code-minions run hello-world --input name=world` |
 | `summarize-file` | 做一个小型 AI smoke test：确定性读取本地文件，再调用一次 LLM 输出摘要。 | `code-minions run summarize-file --input file=./README.md` |
 | `prd-to-commit` | 跑 PRD -> 任务拆解 -> 实现 commit -> report，不接 Jira/GitHub。 | `code-minions run prd-to-commit --input prd=./my-prd.md` |
-| `prd-to-pr` | 跑完整链路：PRD -> Jira 工单 -> 实现 commit -> report -> GitHub PR。 | 见 [快速上手](docs/quickstart.md#run-a-workflow)。 |
+| `react-vite-prd-to-commit` | 跑同一条本地 commit 链路，但预先固定 React + TypeScript + Vite 规则。 | `code-minions run react-vite-prd-to-commit --input prd=./my-prd.md` |
+| `swift-xcodegen-prd-to-commit` | 跑同一条本地 commit 链路，但预先固定 Swift + SwiftUI + XcodeGen 规则。 | `code-minions run swift-xcodegen-prd-to-commit --input prd=./my-prd.md` |
+| `go-service-prd-to-commit` | 跑同一条本地 commit 链路，但预先固定 Go service 规则。 | `code-minions run go-service-prd-to-commit --input prd=./my-prd.md` |
+| `python-cli-prd-to-commit` | 跑同一条本地 commit 链路，但预先固定 Python CLI 规则。 | `code-minions run python-cli-prd-to-commit --input prd=./my-prd.md` |
+| `react-vite-prd-to-pr` | 跑完整 PR 链路，并预先固定 React + TypeScript + Vite 规则。 | `code-minions run react-vite-prd-to-pr --input prd=./my-prd.md --input project_key=ABC --input epic_title="Feature"` |
+| `python-cli-prd-to-pr` | 跑完整 PR 链路，并预先固定 Python CLI 规则。 | `code-minions run python-cli-prd-to-pr --input prd=./my-prd.md --input project_key=ABC --input epic_title="Feature"` |
+| `prd-to-pr` | 跑自定义栈或 PRD 已经写完整交付契约的完整 PR 链路。 | 见 [快速上手](docs/quickstart.md#run-a-workflow)。 |
+
+`prd-to-commit` 是通用入口。它不会默认使用 React/Vite；如果 PRD 中有
+`delivery_profile`，它会按该配置执行，否则会依赖栈推断。已知产品栈时，优先用
+`react-vite-prd-to-commit`、`python-cli-prd-to-commit` 这类 stack-specific
+workflow，让 harness 从一开始就固定交付约束。通用 workflow 也可以显式指定：
+
+```bash
+code-minions run prd-to-commit \
+  --input prd=./my-prd.md \
+  --input delivery_stack_id=python-cli
+```
+
+PRD-to-PR 也建议优先使用匹配项目的 stack-specific workflow。它们复用
+`prd-to-pr` 的 Jira/GitHub 链路，但会在 parse 和 plan 之前固定技术栈：
+
+```bash
+code-minions run python-cli-prd-to-pr \
+  --input prd=./my-prd.md \
+  --input project_key=ABC \
+  --input epic_title="Text count CLI"
+
+code-minions run react-vite-prd-to-pr \
+  --input prd=./my-prd.md \
+  --input project_key=ABC \
+  --input epic_title="Gomoku web app"
+```
 
 run 结束后：
 

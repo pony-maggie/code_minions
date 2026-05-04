@@ -19,6 +19,10 @@ The core product model:
 - **Composable skills:** each workflow step is a skill. Skills use Claude-style `SKILL.md` frontmatter plus optional deterministic `entrypoint-script` code.
 - **Project-aware prompts:** `AGENTS.md` is injected into LLM-driven skill prompts so runs follow your repo conventions.
 
+## Architecture
+
+[![code_minions architecture](docs/assets/architecture.svg)](docs/assets/architecture.svg)
+
 ## Install
 
 `code-minions` is not published on PyPI yet. Install from source:
