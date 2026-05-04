@@ -1,6 +1,6 @@
 # code_minions
 
-> AI 研发工作流引擎。开源、配置友好、skill 可插拔。
+> AI 原生的软件研发交付工作流引擎：从 PRD 到实现、验证，再到 git PR/MR。
 
 📚 **文档**：[快速上手](docs/quickstart.md) · [skills 指南](docs/skills.md) · [workflow 指南](docs/workflows.md)
 
@@ -8,17 +8,27 @@
 
 ## 这是什么
 
-`code_minions` 把 AI 辅助研发流程变成可重复执行的 CLI run。它按 YAML workflow
-逐步执行，在 workflow 声明的 workspace mode 中工作，把状态保存到 SQLite，并支持
-失败后 resume。改代码类 workflow 使用隔离 git worktree；轻量 smoke test 可以不依赖 git。
+`code_minions` 是一个 AI 原生的软件研发交付工作流引擎，用来把 PRD 真正推进到
+可合并的代码变更。它打通从产品需求、任务拆解、Jira 式协同、AI 实现、TDD 验证、
+代码审查、交付报告，到 GitHub PR / GitLab MR 创建的完整闭环。
+
+它不是一次性的 AI 聊天编程工具，而是把软件研发过程建模成可恢复、可审计、可落地的
+自动化 workflow。每一次 run 都有明确输入、隔离 workspace、结构化状态、显式质量门禁
+和可追踪产物，让长时间运行的自主研发任务可以被检查、resume，并最终像正常工程变更一样
+进入 git 交付链路。
 
 核心模型：
 
+- **端到端 PRD-to-PR 自动化**：内置 workflow 可以解析 PRD、拆解实现任务、创建外部
+  ticket、生成 commit、验证结果、汇总 report，并打开最终 PR/MR。
 - **不绑定具体大模型**：LLM 调用统一走 LiteLLM；只要在 `devflow.yaml`
   里切换 provider/model，并导出对应 API key，同一套 workflow 就能跑在大多数主流模型上。
-- **外部系统走 MCP**：Jira、GitHub 等产品通过 `.mcp.json` 接入。
-- **skill 可装配**：每个 workflow step 都是一个 skill。skill 使用 Claude 风格的 `SKILL.md` frontmatter，也可以声明确定性的 `entrypoint-script`。
-- **理解项目约定**：LLM skill prompt 会注入 `AGENTS.md`，让执行过程遵守当前 repo 的约定。
+- **外部系统走 MCP**：Jira、GitHub 等产品通过 `.mcp.json` 接入，让 workflow step
+  可以跨团队现有工具链执行。
+- **skill 可装配**：每个 workflow step 都是一个 skill。skill 使用 Claude 风格的
+  `SKILL.md` frontmatter，也可以声明确定性的 `entrypoint-script`。
+- **理解项目约定并按约束交付**：LLM skill prompt 会注入 `AGENTS.md`，让实现过程遵守
+  当前 repo 的工程约定、技术栈规则和交付契约。
 
 ## 架构图
 

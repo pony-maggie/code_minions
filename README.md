@@ -1,6 +1,7 @@
 # code_minions
 
-> AI dev workflow engine. Open-source. Configurable. Plug-in skills.
+> An AI-native software delivery workflow engine: from PRD to implementation,
+> verification, and git PR/MR.
 
 📚 **Docs:** [quickstart](docs/quickstart.md) · [skills](docs/skills.md) · [workflows](docs/workflows.md)
 
@@ -8,19 +9,34 @@
 
 ## What It Is
 
-`code_minions` turns AI-assisted development workflows into repeatable CLI runs.
-It executes YAML workflows in a declared workspace mode, persists state to
-SQLite, and lets you resume failed long-running work. Code-changing workflows
-use isolated git worktrees; lightweight smoke tests can run without git.
+`code_minions` is an AI-native software delivery workflow engine for turning a
+PRD into shipped code. It connects the full engineering loop: product
+requirements, task planning, Jira-style work tracking, AI implementation,
+test-driven verification, code review, delivery reports, and GitHub PR / GitLab
+MR creation.
+
+Instead of treating an AI coding agent as a one-off chat session,
+`code_minions` runs the development process as a resumable, auditable workflow.
+Each run has declared inputs, isolated workspaces, structured state, explicit
+gates, and reproducible artifacts, so long-running autonomous work can be
+inspected, resumed, and landed like normal engineering work.
 
 The core product model:
 
+- **End-to-end PRD-to-PR automation:** built-in workflows can parse a PRD,
+  derive implementation tasks, create external tickets, generate commits,
+  verify the result, compile a report, and open the final PR/MR.
 - **Model-provider agnostic:** LLM calls go through LiteLLM, so the same
   workflows can run on most mainstream model providers by changing
   `devflow.yaml` and exporting the matching API key.
-- **External systems via MCP:** Jira, GitHub, and similar products are connected through `.mcp.json`.
-- **Composable skills:** each workflow step is a skill. Skills use Claude-style `SKILL.md` frontmatter plus optional deterministic `entrypoint-script` code.
-- **Project-aware prompts:** `AGENTS.md` is injected into LLM-driven skill prompts so runs follow your repo conventions.
+- **External systems via MCP:** Jira, GitHub, and similar products are connected
+  through `.mcp.json`, letting workflow steps operate across the tools your team
+  already uses.
+- **Composable skills:** each workflow step is a skill. Skills use Claude-style
+  `SKILL.md` frontmatter plus optional deterministic `entrypoint-script` code.
+- **Project-aware execution:** `AGENTS.md` is injected into LLM-driven skill
+  prompts so implementation follows your repo conventions, stack rules, and
+  delivery contract.
 
 ## Architecture
 
