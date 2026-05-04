@@ -2749,6 +2749,109 @@ def test_python_cli_stabilizer_removes_generic_src_cli_shims_when_package_exists
     assert "test_existing_package" in updated
 
 
+def test_python_cli_stabilizer_removes_brittle_src_main_path_tests(tmp_path: Path):
+    entrypoint = _load_entrypoint()
+    package_dir = tmp_path / "src" / "text_count"
+    package_dir.mkdir(parents=True)
+    (package_dir / "__init__.py").write_text("")
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    test_path = tests_dir / "test_help.py"
+    test_path.write_text(
+        "def test_main_entry_point_exists():\n"
+        "    import os\n"
+        "    assert os.path.exists('src/__main__.py')\n"
+        "\n"
+        "def test_help_still_exists():\n"
+        "    assert True\n"
+    )
+    ticket = {
+        "delivery_profile": {
+            "stack_id": "python-cli",
+            "kind": "cli",
+            "language": "python",
+            "build_system": "python",
+        }
+    }
+
+    changed = entrypoint._stabilize_python_cli_scaffold(tmp_path, ticket)
+
+    assert "tests/test_help.py" in changed
+    updated = test_path.read_text()
+    assert "src/__main__.py" not in updated
+    assert "test_main_entry_point_exists" not in updated
+    assert "test_help_still_exists" in updated
+
+
+def test_python_cli_stabilizer_rewrites_input_call_to_read_full_stdin(tmp_path: Path):
+    entrypoint = _load_entrypoint()
+    package_dir = tmp_path / "src" / "text_count"
+    package_dir.mkdir(parents=True)
+    source_path = package_dir / "__init__.py"
+    source_path.write_text(
+        "import argparse\n\n"
+        "def main():\n"
+        "    parser = argparse.ArgumentParser()\n"
+        "    parser.add_argument('text', nargs='?')\n"
+        "    args = parser.parse_args()\n"
+        "    if args.text is not None:\n"
+        "        text = args.text\n"
+        "    else:\n"
+        "        text = input()\n"
+        "    print(text)\n"
+    )
+    ticket = {
+        "delivery_profile": {
+            "stack_id": "python-cli",
+            "kind": "cli",
+            "language": "python",
+            "build_system": "python",
+        }
+    }
+
+    changed = entrypoint._stabilize_python_cli_scaffold(tmp_path, ticket)
+
+    updated = source_path.read_text()
+    assert "src/text_count/__init__.py" in changed
+    assert "import sys" in updated
+    assert "text = sys.stdin.read()" in updated
+    assert "text = input()" not in updated
+
+
+def test_python_cli_stabilizer_normalizes_trailing_newline_line_count(tmp_path: Path):
+    entrypoint = _load_entrypoint()
+    package_dir = tmp_path / "src" / "text_count"
+    package_dir.mkdir(parents=True)
+    source_path = package_dir / "__init__.py"
+    source_path.write_text(
+        "def count_text(text):\n"
+        "    if not text:\n"
+        "        return {'lines': 0, 'words': 0, 'chars': 0}\n"
+        "    lines = text.count('\\n')\n"
+        "    if text.endswith('\\n'):\n"
+        "        lines += 1\n"
+        "    else:\n"
+        "        lines += 1\n"
+        "    return {'lines': lines, 'words': len(text.split()), 'chars': len(text)}\n"
+    )
+    ticket = {
+        "delivery_profile": {
+            "stack_id": "python-cli",
+            "kind": "cli",
+            "language": "python",
+            "build_system": "python",
+        }
+    }
+
+    changed = entrypoint._stabilize_python_cli_scaffold(tmp_path, ticket)
+
+    updated = source_path.read_text()
+    assert "src/text_count/__init__.py" in changed
+    assert "lines = text.count('\\n') + (0 if text.endswith('\\n') else 1)" in updated
+    assert "else 1)\n    return" in updated
+    assert "if text.endswith('\\n'):" not in updated
+
+
 def test_python_cli_stabilizer_keeps_public_tokenize_from_returning_eof(tmp_path: Path):
     entrypoint = _load_entrypoint()
     package_dir = tmp_path / "src" / "calc_lite"

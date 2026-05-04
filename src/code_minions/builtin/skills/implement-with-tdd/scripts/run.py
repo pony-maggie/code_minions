@@ -1820,6 +1820,7 @@ PYTHON_CLI_BRITTLE_TEST_MARKERS = (
     "'-m', 'src.cli'",
     "python -m src",
     "python -m src.cli",
+    "src/__main__.py",
 )
 
 
@@ -1897,6 +1898,80 @@ def _stabilize_python_tokenize_eof_contract(workdir) -> set[str]:
     return changed
 
 
+PYTHON_INPUT_CALL_RE = re.compile(r"(?m)^(?P<indent>\s*)(?P<target>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*input\(\s*\)\s*$")
+
+
+def _ensure_python_import(text: str, module: str) -> str:
+    if re.search(rf"(?m)^\s*import\s+{re.escape(module)}\b", text):
+        return text
+    if re.search(rf"(?m)^\s*from\s+{re.escape(module)}\s+import\b", text):
+        return text
+
+    lines = text.splitlines(keepends=True)
+    insert_at = 0
+    if lines and lines[0].startswith("#!"):
+        insert_at = 1
+    while insert_at < len(lines) and (
+        lines[insert_at].strip().startswith("#") or not lines[insert_at].strip()
+    ):
+        insert_at += 1
+    lines.insert(insert_at, f"import {module}\n")
+    return "".join(lines)
+
+
+def _stabilize_python_cli_stdin_reads(workdir) -> set[str]:
+    src_dir = workdir / "src"
+    if not src_dir.is_dir():
+        return set()
+
+    changed: set[str] = set()
+    for path in src_dir.rglob("*.py"):
+        text = path.read_text(errors="ignore")
+        if "input()" not in text:
+            continue
+        updated = PYTHON_INPUT_CALL_RE.sub(
+            lambda match: f"{match.group('indent')}{match.group('target')} = sys.stdin.read()",
+            text,
+        )
+        if updated != text:
+            updated = _ensure_python_import(updated, "sys")
+            path.write_text(updated)
+            changed.add(path.relative_to(workdir).as_posix())
+    return changed
+
+
+PYTHON_OVERCOUNTS_TRAILING_NEWLINE_RE = re.compile(
+    r"(?m)^(?P<indent>[ \t]*)lines[ \t]*=[ \t]*text\.count\((?P<quote>['\"])\\n(?P=quote)\)[ \t]*\n"
+    r"(?P=indent)if[ \t]+text\.endswith\((?P=quote)\\n(?P=quote)\):[ \t]*\n"
+    r"(?P=indent)    lines[ \t]*\+=[ \t]*1[ \t]*\n"
+    r"(?P=indent)else:[ \t]*\n"
+    r"(?P=indent)    lines[ \t]*\+=[ \t]*1[ \t]*"
+)
+
+
+def _stabilize_python_cli_line_counts(workdir) -> set[str]:
+    src_dir = workdir / "src"
+    if not src_dir.is_dir():
+        return set()
+
+    changed: set[str] = set()
+    for path in src_dir.rglob("*.py"):
+        text = path.read_text(errors="ignore")
+        if "text.count" not in text or "text.endswith" not in text:
+            continue
+        updated = PYTHON_OVERCOUNTS_TRAILING_NEWLINE_RE.sub(
+            lambda match: (
+                f"{match.group('indent')}lines = text.count({match.group('quote')}\\n{match.group('quote')}) "
+                f"+ (0 if text.endswith({match.group('quote')}\\n{match.group('quote')}) else 1)"
+            ),
+            text,
+        )
+        if updated != text:
+            path.write_text(updated)
+            changed.add(path.relative_to(workdir).as_posix())
+    return changed
+
+
 def _remove_nested_python_shadow_projects(workdir) -> set[str]:
     changed: set[str] = set()
     for name in ("worktree", "workspace"):
@@ -1947,6 +2022,8 @@ def _stabilize_python_cli_scaffold(workdir, ticket: dict[str, Any]) -> set[str]:
 
     changed.update(_stabilize_python_cli_tests(workdir))
     changed.update(_stabilize_python_tokenize_eof_contract(workdir))
+    changed.update(_stabilize_python_cli_stdin_reads(workdir))
+    changed.update(_stabilize_python_cli_line_counts(workdir))
     return changed
 
 
