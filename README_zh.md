@@ -111,14 +111,18 @@ LLM provider 细节、Jira/GitHub MCP 示例、完整 PRD-to-PR 前置条件，�
 | `swift-xcodegen-prd-to-commit` | 跑同一条本地 commit 链路，但预先固定 Swift + SwiftUI + XcodeGen 规则。 | `code-minions run swift-xcodegen-prd-to-commit --input prd=./my-prd.md` |
 | `go-service-prd-to-commit` | 跑同一条本地 commit 链路，但预先固定 Go service 规则。 | `code-minions run go-service-prd-to-commit --input prd=./my-prd.md` |
 | `python-cli-prd-to-commit` | 跑同一条本地 commit 链路，但预先固定 Python CLI 规则。 | `code-minions run python-cli-prd-to-commit --input prd=./my-prd.md` |
+| `python-web-prd-to-commit` | 跑 Python FastAPI 本地 commit 链路，并用专用 planner 把小型 API 保持在一个 canonical app 任务里。 | `code-minions run python-web-prd-to-commit --input prd=./my-prd.md` |
 | `react-vite-prd-to-pr` | 跑完整 PR 链路，并预先固定 React + TypeScript + Vite 规则。 | `code-minions run react-vite-prd-to-pr --input prd=./my-prd.md --input project_key=ABC --input epic_title="Feature"` |
 | `python-cli-prd-to-pr` | 跑完整 PR 链路，并预先固定 Python CLI 规则。 | `code-minions run python-cli-prd-to-pr --input prd=./my-prd.md --input project_key=ABC --input epic_title="Feature"` |
+| `python-web-prd-to-pr` | 跑 Python FastAPI 的完整 PR 链路，并带 canonical app/package 门禁。 | `code-minions run python-web-prd-to-pr --input prd=./my-prd.md --input project_key=ABC --input epic_title="Feature"` |
 | `prd-to-pr` | 跑自定义栈或 PRD 已经写完整交付契约的完整 PR 链路。 | 见 [快速上手](docs/quickstart.md#run-a-workflow)。 |
 
 `prd-to-commit` 是通用入口。它不会默认使用 React/Vite；如果 PRD 中有
 `delivery_profile`，它会按该配置执行，否则会依赖栈推断。已知产品栈时，优先用
 `react-vite-prd-to-commit`、`python-cli-prd-to-commit` 这类 stack-specific
-workflow，让 harness 从一开始就固定交付约束。通用 workflow 也可以显式指定：
+workflow，让 harness 从一开始就固定交付约束。`python-web-prd-to-commit`
+不只是薄 alias：它会使用 FastAPI 专用 planner，把小型服务保持在一个
+canonical `src/<package>/app.py` 实现任务里。通用 workflow 也可以显式指定：
 
 ```bash
 code-minions run prd-to-commit \
@@ -139,6 +143,11 @@ code-minions run react-vite-prd-to-pr \
   --input prd=./my-prd.md \
   --input project_key=ABC \
   --input epic_title="Gomoku web app"
+
+code-minions run python-web-prd-to-pr \
+  --input prd=./my-prd.md \
+  --input project_key=ABC \
+  --input epic_title="MiniCalc API"
 ```
 
 run 结束后：

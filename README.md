@@ -122,15 +122,20 @@ prerequisites, follow the [quickstart](docs/quickstart.md).
 | `swift-xcodegen-prd-to-commit` | You want the same local commit flow, but with Swift + SwiftUI + XcodeGen rules pinned up front. | `code-minions run swift-xcodegen-prd-to-commit --input prd=./my-prd.md` |
 | `go-service-prd-to-commit` | You want the same local commit flow, but with Go service rules pinned up front. | `code-minions run go-service-prd-to-commit --input prd=./my-prd.md` |
 | `python-cli-prd-to-commit` | You want the same local commit flow, but with Python CLI rules pinned up front. | `code-minions run python-cli-prd-to-commit --input prd=./my-prd.md` |
+| `python-web-prd-to-commit` | You want the local commit flow for Python FastAPI services, with a dedicated planner that keeps small APIs in one canonical app task. | `code-minions run python-web-prd-to-commit --input prd=./my-prd.md` |
 | `react-vite-prd-to-pr` | You want the full PR path with React + TypeScript + Vite rules pinned up front. | `code-minions run react-vite-prd-to-pr --input prd=./my-prd.md --input project_key=ABC --input epic_title="Feature"` |
 | `python-cli-prd-to-pr` | You want the full PR path with Python CLI rules pinned up front. | `code-minions run python-cli-prd-to-pr --input prd=./my-prd.md --input project_key=ABC --input epic_title="Feature"` |
+| `python-web-prd-to-pr` | You want the full PR path for Python FastAPI services with canonical app/package gates. | `code-minions run python-web-prd-to-pr --input prd=./my-prd.md --input project_key=ABC --input epic_title="Feature"` |
 | `prd-to-pr` | You want the full PR path for a custom stack or a PRD that already includes a complete delivery contract. | See [quickstart](docs/quickstart.md#run-a-workflow). |
 
 `prd-to-commit` is the generic entry point. It does not default to React/Vite;
 it uses the PRD's `delivery_profile` when present and otherwise relies on stack
 inference. Use a stack-specific workflow, such as `react-vite-prd-to-commit`,
 when the product stack is already known and the harness should enforce that
-stack from the start. The generic workflow can also be pinned explicitly:
+stack from the start. `python-web-prd-to-commit` is more than a thin alias: it
+uses a FastAPI-specific planner that keeps small services in one canonical
+`src/<package>/app.py` implementation task. The generic workflow can also be
+pinned explicitly:
 
 ```bash
 code-minions run prd-to-commit \
@@ -152,6 +157,11 @@ code-minions run react-vite-prd-to-pr \
   --input prd=./my-prd.md \
   --input project_key=ABC \
   --input epic_title="Gomoku web app"
+
+code-minions run python-web-prd-to-pr \
+  --input prd=./my-prd.md \
+  --input project_key=ABC \
+  --input epic_title="MiniCalc API"
 ```
 
 After a run:
