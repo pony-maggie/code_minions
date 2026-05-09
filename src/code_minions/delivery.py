@@ -73,6 +73,10 @@ COMPUTED_STYLE_LAYOUT_ASSERTION_RE = re.compile(
     r"""\.(?:toBe|toEqual|toContain|toMatch)\s*\(""",
     re.MULTILINE,
 )
+ABSOLUTE_STONE_CLASS_RE = re.compile(
+    r"""\.stone\s*\{[^}]*\bposition\s*:\s*absolute\b""",
+    re.IGNORECASE | re.MULTILINE | re.DOTALL,
+)
 TYPESCRIPT_CSS_AT_IMPORT_RE = re.compile(r"""(?m)^\s*@import\s+['"]""")
 POSTCSS_CONFIG_NAMES = (
     "postcss.config.js",
@@ -215,15 +219,7 @@ def execution_profile_for_delivery(profile: dict[str, Any] | None) -> dict[str, 
         test_command = str(profile.get("test_command") or "npm test")
         return {
             "install_command": ["npm", "install", "--no-audit", "--fund=false"],
-            "pre_test_command": [
-                "npx",
-                "tsc",
-                "--noEmit",
-                "--noUnusedLocals",
-                "false",
-                "--noUnusedParameters",
-                "false",
-            ],
+            "pre_test_command": ["npm", "run", "build"],
             "test_command": shlex.split(test_command),
             "env": {"CI": "true"},
             "ignored_paths": ["node_modules", "dist", "coverage"],
@@ -679,6 +675,56 @@ def _computed_style_layout_assertion_tests(workdir: Path) -> list[Path]:
     return offenders
 
 
+def _react_vite_absolute_stone_cell_files(workdir: Path) -> list[Path]:
+    has_absolute_stone_css = False
+    for path in _iter_files(workdir):
+        if path.suffix != ".css":
+            continue
+        try:
+            text = path.read_text(errors="ignore")
+        except OSError:
+            continue
+        if ABSOLUTE_STONE_CLASS_RE.search(text):
+            has_absolute_stone_css = True
+            break
+    if not has_absolute_stone_css:
+        return []
+
+    offenders: list[Path] = []
+    for path in _iter_files(workdir):
+        if path.suffix not in {".jsx", ".tsx"}:
+            continue
+        try:
+            text = path.read_text(errors="ignore")
+        except OSError:
+            continue
+        stone_class_vars = {
+            match.group("name")
+            for match in re.finditer(
+                r"""\b(?P<name>[A-Za-z_$][\w$]*)\s*=\s*[^;\n]*`stone\b""",
+                text,
+            )
+        }
+        bad_button_class = False
+        for button_match in re.finditer(r"""<button\b(?P<tag>[\s\S]*?)>""", text):
+            tag = button_match.group("tag")
+            class_match = re.search(
+                r"""className\s*=\s*(?:"(?P<double>[^"]*)"|'(?P<single>[^']*)'|`(?P<template>[^`]*)`|\{(?P<braced>[\s\S]*?)\})""",
+                tag,
+            )
+            if not class_match:
+                continue
+            class_expr = next((value for value in class_match.groups() if value is not None), "")
+            if "cell" not in class_expr:
+                continue
+            if re.search(r"""\bstone\b""", class_expr) or any(name in class_expr for name in stone_class_vars):
+                bad_button_class = True
+                break
+        if bad_button_class:
+            offenders.append(path)
+    return offenders
+
+
 def _js_ts_test_files(workdir: Path) -> list[Path]:
     test_files: list[Path] = []
     for path in _iter_files(workdir):
@@ -1099,6 +1145,24 @@ def validate_delivery_profile(workdir: Path, profile: dict[str, Any] | None) -> 
                     "Assert semantic structure, classes, ARIA labels, and stable element presence in unit tests; "
                     "leave visual centering/responsive layout checks to browser/e2e verification."
                 ),
+            ))
+        stone_cell_files = _react_vite_absolute_stone_cell_files(workdir)
+        if stone_cell_files:
+            files = ", ".join(path.relative_to(workdir).as_posix() for path in stone_cell_files[:3])
+            issues.append(_delivery_issue(
+                "react-vite-stone-class-on-cell",
+                (
+                    f"{files} applies a `stone` state class to clickable board cells while CSS defines "
+                    "`.stone { position: absolute; ... }`. That makes the cell button itself absolute "
+                    "positioned in the browser, so a placed stone can escape the grid and cover the page. "
+                    "Keep the cell in normal grid flow and render the stone as a child element, or scope "
+                    "absolute positioning to `.cell .stone`."
+                ),
+                repair_hint=(
+                    "Do not put `stone` on the same button as `cell`. Use a nested `<span className=\"stone ...\">` "
+                    "inside the cell, or change CSS to target `.cell .stone` only."
+                ),
+                paths=[path.relative_to(workdir).as_posix() for path in stone_cell_files],
             ))
         unresolved = _unresolved_relative_imports(workdir)
         for importer, imported in unresolved[:5]:

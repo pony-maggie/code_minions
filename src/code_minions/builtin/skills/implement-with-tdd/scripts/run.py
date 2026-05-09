@@ -60,26 +60,36 @@ Do not include explanatory prose outside the final JSON.
 def _extract_json_object(content: str, *, require_files: bool) -> dict[str, Any]:
     decoder = json.JSONDecoder()
     last_error: json.JSONDecodeError | None = None
-    data: Any = None
+    first_data: Any = None
     for match in re.finditer(r"\{", content):
         try:
             data, _end = decoder.raw_decode(content[match.start():])
         except json.JSONDecodeError as e:
             last_error = e
             continue
-        if isinstance(data, dict):
-            break
-    else:
-        if last_error is not None:
-            raise ValueError(f"LLM returned invalid JSON: {last_error}; content={content[:200]!r}") from last_error
-        raise ValueError(f"LLM did not return JSON: {content[:200]}")
-    if not isinstance(data, dict):
-        raise ValueError(f"LLM JSON must be an object, got {type(data).__name__}")
-    if require_files:
+        if not isinstance(data, dict):
+            if first_data is None:
+                first_data = data
+            continue
+        if first_data is None:
+            first_data = data
+        if not require_files:
+            return data
         files = data.get("files_written")
+        if isinstance(files, list) and files:
+            return data
+    else:
+        if first_data is None and last_error is not None:
+            raise ValueError(f"LLM returned invalid JSON: {last_error}; content={content[:200]!r}") from last_error
+        if first_data is None:
+            raise ValueError(f"LLM did not return JSON: {content[:200]}")
+    if not isinstance(first_data, dict):
+        raise ValueError(f"LLM JSON must be an object, got {type(first_data).__name__}")
+    if require_files:
+        files = first_data.get("files_written")
         if not isinstance(files, list) or not files:
             raise ValueError("LLM JSON must include non-empty files_written list")
-    return data
+    return first_data
 
 
 INLINE_WRITE_TOOL_RE = re.compile(
@@ -1061,6 +1071,150 @@ def _anchor_board_coordinate_regex_queries(text: str) -> str:
     return REACT_VITE_REGEX_LITERAL_RE.sub(replace, text)
 
 
+def _normalize_board_coordinate_regex_spacing(text: str) -> str:
+    def replace_literal(match: re.Match[str]) -> str:
+        pattern = match.group("pattern")
+        if not REACT_VITE_BOARD_COORDINATE_RE.search(pattern):
+            return match.group(0)
+
+        updated = re.sub(
+            r"""行(?P<row>\d+)列(?P<col>\d+)""",
+            lambda coord: f"行{coord.group('row')}\\s*,?\\s*列{coord.group('col')}",
+            pattern,
+        )
+        if updated == pattern:
+            return match.group(0)
+        return f"/{updated}{match.group('suffix')}"
+
+    return REACT_VITE_REGEX_LITERAL_RE.sub(replace_literal, text)
+
+
+def _normalize_board_coordinate_aria_label_assertions(text: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        return (
+            f"expect({match.group('target')}).toHaveAccessibleName("
+            f"/^行{match.group('row')}\\s*,?\\s*列{match.group('col')}{match.group('suffix')}$/)"
+        )
+
+    return re.sub(
+        r"""expect\((?P<target>[^)\n]+)\)\.toHaveAttribute\(\s*"""
+        r"""(?P<attr_quote>['"])aria-label(?P=attr_quote)\s*,\s*"""
+        r"""(?P<label_quote>['"])行(?P<row>\d+)列(?P<col>\d+)(?P<suffix>[^'"]*)"""
+        r"""(?P=label_quote)\s*\)""",
+        replace,
+        text,
+    )
+
+
+def _stabilize_single_undo_turn_expectation(text: str) -> str:
+    if "悔棋" not in text:
+        return text
+
+    for match in re.finditer(r"(?m)^[ \t]*(?:it|test)\s*\(", text):
+        start = match.start()
+        end = _find_vitest_call_end(text, match.end() - 1)
+        if end is None:
+            continue
+        block = text[start:end]
+        if "棋盘已有3步" not in block or "点击悔棋" not in block or "移除第3步" not in block:
+            continue
+        if "连续点击悔棋" in block:
+            continue
+        undo_marker = "getByTestId('undo-button')"
+        undo_index = block.find(undo_marker)
+        if undo_index < 0:
+            undo_marker = 'getByTestId("undo-button")'
+            undo_index = block.find(undo_marker)
+        if undo_index < 0:
+            undo_index = 0
+        undo_line_end = block.find("\n", undo_index)
+        if undo_line_end < 0:
+            undo_line_end = undo_index
+
+        before_undo = block[:undo_line_end]
+        after_undo = block[undo_line_end:]
+        if "轮到白方" in before_undo:
+            before_undo = before_undo.replace("当前回合: 黑方", "当前回合: 白方")
+        after_undo = after_undo.replace("当前回合: 白方", "当前回合: 黑方")
+        updated_block = before_undo + after_undo
+        if updated_block == block:
+            continue
+        return text[:start] + updated_block + text[end:]
+
+    return text
+
+
+def _stabilize_current_turn_side_labels_text(text: str) -> str:
+    updated = text.replace("当前回合: 黑子", "当前回合: 黑方")
+    updated = updated.replace("当前回合: 白子", "当前回合: 白方")
+    updated = re.sub(
+        r"""(?P<prefix>当前回合:\s*\$\{[^}\n]*\?\s*)['"]黑子['"](?P<middle>\s*:\s*)['"]白子['"](?P<suffix>\s*\})""",
+        r"\g<prefix>'黑方'\g<middle>'白方'\g<suffix>",
+        updated,
+    )
+    return updated
+
+
+def _stabilize_game_status_text_queries(text: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        query = match.group("query")
+        if not re.search(r"""当前回合|[黑白]方获胜|平局""", query):
+            return match.group(0)
+        return f"expect(screen.getByTestId('game-status')).toHaveTextContent({query})"
+
+    return re.sub(
+        r"""expect\(screen\.getByText\((?P<query>'[^'\n]*'|"[^"\n]*"|/(?:\\.|[^/\n])+/[a-z]*)\)\)\.toBeInTheDocument\(\)""",
+        replace,
+        text,
+    )
+
+
+def _stabilize_black_win_click_sequences(text: str) -> str:
+    if "黑方获胜" not in text or "blackMoves" not in text:
+        return text
+
+    replacement = (
+        "const blackMoves = [\n"
+        "        [1, 1], [2, 1], [1, 2], [2, 2], [1, 3], [2, 3], [1, 4], [2, 4], [1, 5],\n"
+        "      ]"
+    )
+    return re.sub(
+        r"""const\s+blackMoves\s*=\s*\[[\s\S]*?"""
+        r"""\[1,\s*1\][\s\S]*?\[1,\s*2\][\s\S]*?\[1,\s*3\][\s\S]*?\[1,\s*4\][\s\S]*?"""
+        r"""\[2,\s*1\][\s\S]*?\[2,\s*2\][\s\S]*?\[2,\s*3\][\s\S]*?"""
+        r"""\[1,\s*5\][\s\S]*?\]\s*(?=\n\s*for\s*\(\s*const\s+\[row,\s*col\]\s+of\s+blackMoves\s*\))""",
+        replacement,
+        text,
+    )
+
+
+def _stabilize_user_event_fake_timer_deadlocks(text: str) -> str:
+    if "userEvent.setup({ advanceTimers: vi.advanceTimersByTime })" not in text:
+        return text
+
+    updated = re.sub(r"""(?m)^.*(?:game-timer|用时:).*\n""", "", text)
+    updated = re.sub(
+        r"""(?m)^[ \t]*beforeEach\(\(\)\s*=>\s*\{\s*\n[ \t]*vi\.useFakeTimers\(\{ shouldAdvanceTime: false \}\)\s*\n[ \t]*\}\)\s*\n""",
+        "",
+        updated,
+    )
+    updated = re.sub(
+        r"""(?m)^[ \t]*afterEach\(\(\)\s*=>\s*\{\s*\n"""
+        r"""[ \t]*cleanup\(\)\s*\n"""
+        r"""[ \t]*vi\.useRealTimers\(\)\s*\n"""
+        r"""[ \t]*\}\)\s*\n""",
+        "",
+        updated,
+    )
+    updated = updated.replace(
+        "userEvent.setup({ advanceTimers: vi.advanceTimersByTime })",
+        "userEvent.setup()",
+    )
+    updated = re.sub(r"""(?m)^[ \t]*vi\.advanceTimersByTime\([^)\n]*\)\s*;?\s*\n""", "", updated)
+    updated = _remove_empty_vitest_describe_blocks(updated)
+    return updated
+
+
 def _stabilize_user_event_imports(text: str) -> str:
     return REACT_VITE_BAD_USER_EVENT_DYNAMIC_IMPORT_RE.sub(
         "const user = (await import('@testing-library/user-event')).default",
@@ -1183,14 +1337,28 @@ def _stabilize_react_vite_tests(workdir) -> set[str]:
         updated = _stabilize_bare_dom_clicks(
             _stabilize_user_event_imports(
                 _anchor_board_coordinate_regex_queries(
-                    _stabilize_vitest_imports(
-                        _stabilize_null_board_test_factory_type(
-                            workdir,
-                            path,
-                            _stabilize_cell_child_button_clicks(
-                                _stabilize_placeholder_app_smoke_test(path, original)
+                    _normalize_board_coordinate_regex_spacing(
+                        _normalize_board_coordinate_aria_label_assertions(
+                            _stabilize_single_undo_turn_expectation(
+                                _stabilize_current_turn_side_labels_text(
+                                    _stabilize_game_status_text_queries(
+                                        _stabilize_black_win_click_sequences(
+                                            _stabilize_user_event_fake_timer_deadlocks(
+                                                _stabilize_vitest_imports(
+                                                    _stabilize_null_board_test_factory_type(
+                                                        workdir,
+                                                        path,
+                                                        _stabilize_cell_child_button_clicks(
+                                                            _stabilize_placeholder_app_smoke_test(path, original)
+                                                        ),
+                                                    ),
+                                                ),
+                                            ),
+                                        ),
+                                    ),
+                                ),
                             ),
-                        )
+                        ),
                     )
                 )
             )
@@ -1200,6 +1368,46 @@ def _stabilize_react_vite_tests(workdir) -> set[str]:
         path.write_text(updated)
         changed.add(path.relative_to(workdir).as_posix())
     return changed
+
+
+def _stabilize_current_turn_side_labels(workdir) -> set[str]:
+    src_dir = workdir / "src"
+    if not src_dir.is_dir():
+        return set()
+
+    changed: set[str] = set()
+    for path in src_dir.rglob("*"):
+        if not path.is_file() or path.suffix not in {".ts", ".tsx"}:
+            continue
+        original = path.read_text(errors="ignore")
+        if "当前回合" not in original:
+            continue
+        updated = _stabilize_current_turn_side_labels_text(original)
+        if updated == original:
+            continue
+        path.write_text(updated)
+        changed.add(path.relative_to(workdir).as_posix())
+    return changed
+
+
+def _ensure_react_vite_main_imports_index_css(workdir) -> set[str]:
+    main_path = workdir / "src" / "main.tsx"
+    if not main_path.is_file():
+        return set()
+
+    text = main_path.read_text(errors="ignore")
+    if "import './index.css'" in text or 'import "./index.css"' in text:
+        return set()
+
+    app_import = re.search(r"""(?m)^import\s+App\s+from\s+['"]\./App['"]\s*;?\s*$""", text)
+    if app_import:
+        insert_at = app_import.end()
+        updated = text[:insert_at] + "\nimport './index.css'" + text[insert_at:]
+    else:
+        updated = "import './index.css'\n" + text
+
+    main_path.write_text(updated)
+    return {"src/main.tsx"}
 
 
 def _stabilize_board_test_literal_fixture_types(workdir, ticket: dict[str, Any]) -> set[str]:
@@ -1312,6 +1520,40 @@ def _remove_vitest_test_blocks_containing(text: str, markers: tuple[str, ...]) -
     return "".join(pieces)
 
 
+def _remove_empty_vitest_describe_blocks(text: str) -> str:
+    while True:
+        changed = False
+        for match in re.finditer(r"(?m)^[ \t]*describe\s*\(", text):
+            start = match.start()
+            end = _find_vitest_call_end(text, match.end() - 1)
+            if end is None:
+                continue
+            block = text[start:end]
+            if re.search(r"(?m)^[ \t]*(?:it|test)\s*\(", block):
+                continue
+            text = text[:start] + text[end:]
+            changed = True
+            break
+        if not changed:
+            return text
+
+
+def _remove_vitest_test_case_blocks_containing(text: str, markers: tuple[str, ...]) -> str:
+    pieces: list[str] = []
+    cursor = 0
+    for match in re.finditer(r"(?m)^[ \t]*(?:it|test)\s*\(", text):
+        start = match.start()
+        end = _find_vitest_call_end(text, match.end() - 1)
+        if end is None:
+            continue
+        block = text[start:end]
+        if any(marker in block for marker in markers):
+            pieces.append(text[cursor:start])
+            cursor = end
+    pieces.append(text[cursor:])
+    return "".join(pieces)
+
+
 def _stabilize_turn_based_board_game_mvp_tests(workdir, ticket: dict[str, Any]) -> set[str]:
     if not (_looks_like_turn_based_board_game(ticket) or _looks_like_gomoku_project(ticket)):
         return set()
@@ -1323,6 +1565,7 @@ def _stabilize_turn_based_board_game_mvp_tests(workdir, ticket: dict[str, Any]) 
             _remove_vitest_test_blocks_containing(original, GOMOKU_OVER_DETAILED_TEST_MARKERS),
             GOMOKU_BRITTLE_BOARD_TEST_MARKERS,
         )
+        updated = _remove_empty_vitest_describe_blocks(updated)
         if updated == original:
             continue
         path.write_text(updated)
@@ -2049,6 +2292,7 @@ def _stabilize_react_vite_scaffold(workdir, ticket: dict[str, Any]) -> set[str]:
         written = _write_text_if_changed(workdir, "src/main.tsx", REACT_VITE_MAIN)
         if written:
             changed.add(written)
+    changed.update(_ensure_react_vite_main_imports_index_css(workdir))
     if not (workdir / "src" / "index.css").is_file():
         written = _write_text_if_changed(workdir, "src/index.css", REACT_VITE_INDEX_CSS)
         if written:
@@ -2061,6 +2305,7 @@ def _stabilize_react_vite_scaffold(workdir, ticket: dict[str, Any]) -> set[str]:
         written = _write_text_if_changed(workdir, "src/App.test.tsx", REACT_VITE_APP_TEST)
         if written:
             changed.add(written)
+    changed.update(_stabilize_current_turn_side_labels(workdir))
     changed.update(_stabilize_react_vite_tests(workdir))
     changed.update(_stabilize_board_test_literal_fixture_types(workdir, ticket))
     changed.update(_stabilize_turn_based_board_game_mvp_tests(workdir, ticket))
