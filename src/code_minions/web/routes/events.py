@@ -21,7 +21,8 @@ router = APIRouter()
 @router.get("/runs/{run_id}/events")
 async def run_events(request: Request, run_id: str) -> EventSourceResponse:
     store = get_store()
-    if store.get_run(run_id) is None:
+    run = store.get_run(run_id)
+    if run is None:
         raise HTTPException(status_code=404, detail="run not found")
 
     queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
@@ -52,6 +53,13 @@ async def run_events(request: Request, run_id: str) -> EventSourceResponse:
                     "error": s.get("error"),
                 }, default=str),
             }
+        current = store.get_run(run_id)
+        if current and current["status"] in {"success", "failed", "cancelled"}:
+            yield {
+                "event": "run.finished",
+                "data": json.dumps({"status": current["status"]}, default=str),
+            }
+            return
         while True:
             if await request.is_disconnected():
                 break

@@ -2,6 +2,23 @@
 
 和 `docs/maintainers/acceptance.md` 是互补关系：这份针对 Web UI。需要一个真浏览器（Chrome / Firefox / Safari 任一）手动走一遍。CI 不自动跑。
 
+## 可选自动化 browser smoke
+
+仓库提供一条很薄的 Playwright smoke，用来在真实 Chromium 中检查 Web
+dashboard 的最高价值路径：空列表加载、进入 New Run、启动 `hello-world`、
+详情页状态更新和 step 成功展示。它是**可选补充**，不做截图基线比对，也不替代
+下方 A-F 的人工验收。
+
+```bash
+pip install -e '.[dev,web-e2e]'
+python -m playwright install chromium
+CODE_MINIONS_BROWSER_E2E=1 pytest tests/browser -q
+```
+
+默认 `pytest tests/browser -q` 会把 browser smoke 标记为 skipped，避免普通
+unit/integration gate 依赖本机浏览器。截图只在失败时写入 pytest 的临时目录，
+用于定位失败页面状态。
+
 ## 前置
 
 - M1-M5 + Phase C1/C2/C3 全部合并到 main

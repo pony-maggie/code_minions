@@ -86,6 +86,58 @@ def test_sse_endpoint_exists_and_streams(client: TestClient) -> None:
     assert content_type.startswith("text/event-stream")
 
 
+def test_sse_late_subscriber_gets_terminal_run_finished(client: TestClient) -> None:
+    from code_minions.types import RunStatus, StepStatus
+    from code_minions.web.deps import get_store
+
+    store = get_store()
+    run_id = store.create_run(workflow="demo", inputs={})
+    store.upsert_step(run_id, "greet", StepStatus.SUCCESS)
+    store.set_run_status(run_id, RunStatus.SUCCESS)
+
+    messages: list[dict[str, Any]] = []
+
+    async def _check() -> None:
+        import anyio
+
+        app = client.app
+        scope: dict[str, Any] = {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "GET",
+            "path": f"/runs/{run_id}/events",
+            "raw_path": f"/runs/{run_id}/events".encode(),
+            "query_string": b"",
+            "headers": [(b"host", b"testserver")],
+            "server": ("testserver", 80),
+            "client": ("127.0.0.1", 12345),
+            "root_path": "",
+            "state": {},
+        }
+
+        async def receive() -> dict[str, Any]:
+            await anyio.sleep(10)
+            return {"type": "http.disconnect"}
+
+        async def send(message: dict[str, Any]) -> None:
+            messages.append(message)
+
+        with anyio.fail_after(3):
+            await app(scope, receive, send)
+
+    asyncio.run(_check())
+
+    body = b"".join(
+        message.get("body", b"")
+        for message in messages
+        if message["type"] == "http.response.body"
+    ).decode()
+    assert "event: step.status" in body
+    assert "event: run.finished" in body
+    assert '"status": "success"' in body
+
+
 def test_sse_404_on_unknown_run(client: TestClient) -> None:
     with client.stream("GET", "/runs/r_nope/events") as resp:
         assert resp.status_code == 404

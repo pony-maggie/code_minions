@@ -26,6 +26,9 @@ dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
 ]
+web-e2e = [
+    "playwright>=1.45",
+]
 
 [project.scripts]
 code-minions = "code_minions.cli.main:app"

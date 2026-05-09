@@ -5,8 +5,7 @@
   <a href="/" class="text-sm text-gray-500 hover:underline">← all runs</a>
 </div>
 
-<div class="bg-white rounded-lg shadow border border-gray-200 p-6 mb-6"
-     hx-ext="sse" sse-connect="/runs/{{ run.id }}/events">
+<div class="bg-white rounded-lg shadow border border-gray-200 p-6 mb-6">
   <div class="flex items-start justify-between">
     <div>
       <h1 class="text-xl font-semibold font-mono">{{ run.id }}</h1>
@@ -65,35 +64,37 @@
   (function () {
     const body = document.getElementById('steps-body');
     if (!body) return;
-    document.body.addEventListener('htmx:sseMessage', (ev) => {
+    if (!window.EventSource) return;
+    const events = new EventSource({{ ("/runs/" ~ run.id ~ "/events") | tojson }});
+    events.addEventListener('step.status', (ev) => {
       try {
-        const payload = JSON.parse(ev.detail.data);
-        if (ev.detail.type === 'step.status') {
-          const { step_id, status, detail, error } = payload;
-          let row = document.getElementById(`step-${step_id}`);
-          const badge = `
-            <span class="px-2 py-0.5 text-xs rounded ${
-              status === 'success' ? 'bg-green-100 text-green-800' :
-              status === 'failed'  ? 'bg-red-100 text-red-800'   :
-              status === 'running' ? 'bg-blue-100 text-blue-800' :
-                                      'bg-yellow-100 text-yellow-800'
-            }">${status}</span>`;
-          const rowHtml = `
-            <tr id="step-${step_id}" class="border-b border-gray-100">
-              <td class="px-4 py-2 font-mono">${step_id}</td>
-              <td class="px-4 py-2">${badge}</td>
-              <td class="px-4 py-2 text-gray-700 text-xs">${detail || ''}</td>
-              <td class="px-4 py-2 text-red-700 text-xs">${error || ''}</td>
-            </tr>`;
-          if (row) {
-            row.outerHTML = rowHtml;
-          } else {
-            body.insertAdjacentHTML('beforeend', rowHtml);
-          }
-        } else if (ev.detail.type === 'run.finished') {
-          setTimeout(() => window.location.reload(), 300);
+        const payload = JSON.parse(ev.data);
+        const { step_id, status, detail, error } = payload;
+        let row = document.getElementById(`step-${step_id}`);
+        const badge = `
+          <span class="px-2 py-0.5 text-xs rounded ${
+            status === 'success' ? 'bg-green-100 text-green-800' :
+            status === 'failed'  ? 'bg-red-100 text-red-800'   :
+            status === 'running' ? 'bg-blue-100 text-blue-800' :
+                                    'bg-yellow-100 text-yellow-800'
+          }">${status}</span>`;
+        const rowHtml = `
+          <tr id="step-${step_id}" class="border-b border-gray-100">
+            <td class="px-4 py-2 font-mono">${step_id}</td>
+            <td class="px-4 py-2">${badge}</td>
+            <td class="px-4 py-2 text-gray-700 text-xs">${detail || ''}</td>
+            <td class="px-4 py-2 text-red-700 text-xs">${error || ''}</td>
+          </tr>`;
+        if (row) {
+          row.outerHTML = rowHtml;
+        } else {
+          body.insertAdjacentHTML('beforeend', rowHtml);
         }
       } catch (e) { console.error('sse parse', e); }
+    });
+    events.addEventListener('run.finished', () => {
+      events.close();
+      setTimeout(() => window.location.reload(), 300);
     });
   })();
 </script>
