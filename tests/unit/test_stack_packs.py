@@ -28,6 +28,20 @@ def test_explicit_stack_id_resolves_stack_pack_without_shape_guessing() -> None:
     assert stack_pack_for_delivery(profile).stack_id == "react-vite"
 
 
+def test_python_web_profile_gets_defaults_from_fastapi_shape() -> None:
+    profile = apply_stack_pack_defaults({
+        "kind": "web-service",
+        "language": "python",
+        "framework": "fastapi",
+        "build_system": "python",
+    })
+
+    assert profile["stack_id"] == "python-web"
+    assert profile["test_command"] == "python -m pytest -q"
+    assert profile["required_files"] == ["pyproject.toml", "src", "tests"]
+    assert profile["forbidden_product_languages"] == ["javascript", "typescript", "swift", "go"]
+
+
 def test_unknown_explicit_stack_id_is_preserved_but_has_no_builtin_pack() -> None:
     profile = {"stack_id": "custom-company-stack"}
 

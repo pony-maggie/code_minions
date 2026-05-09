@@ -133,6 +133,27 @@ def test_builtin_stack_prd_to_pr_aliases_extend_generic_workflow(workflow_name: 
     assert wf.steps[3].for_each == "$steps.tickets.output.tickets"
 
 
+def test_python_web_prd_to_commit_uses_python_web_planner() -> None:
+    wf = load_workflow(Path("src/code_minions/builtin/workflows/python-web-prd-to-commit.yaml"))
+
+    assert wf.name == "python-web-prd-to-commit"
+    assert wf.preset_inputs == {"delivery_stack_id": "python-web"}
+    assert [step.id for step in wf.steps] == ["parse", "plan", "implement", "acceptance", "report"]
+    assert wf.steps[1].skill == "python-web-plan-tasks"
+    assert wf.steps[0].inputs["delivery_stack_id"] == "$inputs.delivery_stack_id"
+
+
+def test_python_web_prd_to_pr_uses_python_web_planner() -> None:
+    wf = load_workflow(Path("src/code_minions/builtin/workflows/python-web-prd-to-pr.yaml"))
+
+    assert wf.name == "python-web-prd-to-pr"
+    assert wf.preset_inputs == {"delivery_stack_id": "python-web"}
+    assert [step.id for step in wf.steps] == ["parse", "plan", "tickets", "implement", "report", "open_pr"]
+    assert wf.steps[1].skill == "python-web-plan-tasks"
+    assert wf.steps[3].for_each == "$steps.tickets.output.tickets"
+    assert wf.steps[0].inputs["delivery_stack_id"] == "$inputs.delivery_stack_id"
+
+
 def test_load_workflow_duplicate_step_ids_fails(tmp_path: Path) -> None:
     yaml_file = _write(
         tmp_path / "wf.yaml",

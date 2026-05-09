@@ -107,7 +107,7 @@ class DAGRunner:
         merged = {
             key: spec.default
             for key, spec in workflow.inputs.items()
-            if spec.default is not None
+            if spec.default is not None or not spec.required
         }
         merged.update(inputs)
         merged.update(workflow.preset_inputs)

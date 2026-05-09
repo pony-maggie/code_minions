@@ -1,0 +1,45 @@
+name: python-web-prd-to-commit
+description: PRD -> local implementation commits for Python web API/service projects.
+workspace:
+  mode: git-worktree
+inputs:
+  prd: {type: string, required: true}
+  delivery_stack_id: {type: string, required: false}
+preset_inputs:
+  delivery_stack_id: python-web
+
+steps:
+  - id: parse
+    skill: parse-prd
+    inputs:
+      prd_file: $inputs.prd
+      delivery_stack_id: $inputs.delivery_stack_id
+
+  - id: plan
+    skill: python-web-plan-tasks
+    inputs: {structured_prd: $steps.parse.output}
+    depends_on: [parse]
+
+  - id: implement
+    for_each: $steps.plan.output.tasks
+    as: ticket
+    skill: implement-with-tdd
+    inputs: {ticket: $ticket}
+    depends_on: [plan]
+
+  - id: acceptance
+    skill: product-acceptance-review
+    inputs:
+      structured_prd: $steps.parse.output
+      tasks: $steps.plan.output.tasks
+      implement_results: $steps.implement.output.items
+    depends_on: [implement]
+
+  - id: report
+    skill: compile-report
+    inputs:
+      implement_results: $steps.implement.output.items
+      acceptance_output: $steps.acceptance.output
+      tickets_output: {}
+      output_path: report.md
+    depends_on: [acceptance]

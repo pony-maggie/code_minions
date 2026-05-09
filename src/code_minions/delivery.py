@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shlex
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -78,6 +79,19 @@ ABSOLUTE_STONE_CLASS_RE = re.compile(
     re.IGNORECASE | re.MULTILINE | re.DOTALL,
 )
 TYPESCRIPT_CSS_AT_IMPORT_RE = re.compile(r"""(?m)^\s*@import\s+['"]""")
+PYTHON_SRC_MODULE_IMPORT_RE = re.compile(r"""(?m)^\s*(?:from\s+src(?:\.|\s+import)|import\s+src\.)""")
+PYTHON_FASTAPI_APP_RE = re.compile(r"""(?m)^\s*app\s*=\s*FastAPI\s*\(""")
+FASTAPI_ROUTE_DECORATOR_RE = re.compile(
+    r"""@(?:app|router)\.(?P<method>get|post|put|patch|delete)\(\s*['"](?P<path>/[^'"]*)['"]""",
+    re.IGNORECASE,
+)
+PYTHON_TEST_CLIENT_ROUTE_RE = re.compile(
+    r"""\.(?P<method>get|post|put|patch|delete)\(\s*['"](?P<path>/[^'"]*)['"]""",
+    re.IGNORECASE,
+)
+PYTHON_TEST_APP_IMPORT_RE = re.compile(
+    r"""(?m)^\s*from\s+(?P<package>[A-Za-z_]\w*)\.app\s+import\s+app\b"""
+)
 POSTCSS_CONFIG_NAMES = (
     "postcss.config.js",
     "postcss.config.cjs",
@@ -166,6 +180,23 @@ def infer_delivery_profile(structured_prd: dict[str, Any]) -> dict[str, Any]:
             "forbidden_product_languages": ["python", "javascript", "typescript", "swift"],
         }
 
+    if "python" in text and (
+        "fastapi" in text
+        or "web service" in text
+        or "web api" in text
+        or "http api" in text
+    ):
+        return apply_stack_pack_defaults({
+            "stack_id": "python-web",
+            "kind": "web-service",
+            "language": "python",
+            "framework": "fastapi" if "fastapi" in text else "python-web",
+            "build_system": "python",
+            "test_command": "python -m pytest -q",
+            "required_files": ["pyproject.toml", "src", "tests"],
+            "forbidden_product_languages": ["javascript", "typescript", "swift", "go"],
+        })
+
     if "python" in text and ("cli" in text or "command line" in text):
         return {
             "stack_id": "python-cli",
@@ -237,6 +268,24 @@ def execution_profile_for_delivery(profile: dict[str, Any] | None) -> dict[str, 
             "ignored_paths": ["*.xcodeproj", "DerivedData"],
         }
 
+    if stack_id == "python-web" or (
+        "python" in text
+        and (
+            "fastapi" in text
+            or "web-service" in text
+            or "web service" in text
+            or "web api" in text
+            or "http" in text
+        )
+    ):
+        test_command = str(profile.get("test_command") or "python -m pytest -q")
+        return {
+            "install_command": None,
+            "test_command": shlex.split(test_command),
+            "env": {"PYTHONPATH": "{workdir}{pathsep}{workdir}/src"},
+            "ignored_paths": ["__pycache__", ".pytest_cache"],
+        }
+
     if stack_id == "python-cli" or ("python" in text and ("cli" in text or "command line" in text)):
         test_command = str(profile.get("test_command") or "python -m pytest -q")
         return {
@@ -264,6 +313,22 @@ def _is_react_vite_profile(profile: dict[str, Any]) -> bool:
         for key in ("kind", "language", "framework", "build_system", "test_command")
     ).lower()
     return "typescript" in text and "react" in text and "vite" in text
+
+
+def _is_python_web_profile(profile: dict[str, Any]) -> bool:
+    if stack_id_for_delivery(profile) == "python-web":
+        return True
+    text = "\n".join(
+        str(profile.get(key, ""))
+        for key in ("kind", "language", "framework", "build_system", "test_command")
+    ).lower()
+    return "python" in text and (
+        "fastapi" in text
+        or "web-service" in text
+        or "web service" in text
+        or "web api" in text
+        or "http api" in text
+    )
 
 
 def _gate_strictness(profile: dict[str, Any]) -> str:
@@ -314,6 +379,167 @@ def _swift_test_files_in_product_sources(workdir: Path) -> list[Path]:
         if "import xctest" in text.lower() or "xctestcase" in text.lower() or name.endswith("tests.swift"):
             offenders.append(path)
     return offenders
+
+
+def _pyproject_has_pytest_pythonpath_src(workdir: Path) -> bool:
+    pyproject = workdir / "pyproject.toml"
+    if not pyproject.is_file():
+        return False
+    try:
+        data = tomllib.loads(pyproject.read_text(errors="ignore"))
+    except tomllib.TOMLDecodeError:
+        return False
+    options = (
+        data.get("tool", {})
+        .get("pytest", {})
+        .get("ini_options", {})
+    )
+    if not isinstance(options, dict):
+        return False
+    pythonpath = options.get("pythonpath")
+    if isinstance(pythonpath, str):
+        return pythonpath == "src"
+    if isinstance(pythonpath, list):
+        return any(str(path) == "src" for path in pythonpath)
+    return False
+
+
+def _pyproject_project_name(workdir: Path) -> str:
+    pyproject = workdir / "pyproject.toml"
+    if not pyproject.is_file():
+        return ""
+    try:
+        data = tomllib.loads(pyproject.read_text(errors="ignore"))
+    except tomllib.TOMLDecodeError:
+        return ""
+    project = data.get("project", {})
+    if not isinstance(project, dict):
+        return ""
+    return str(project.get("name") or "").strip()
+
+
+def _python_web_canonical_package(workdir: Path) -> str:
+    project_name = _pyproject_project_name(workdir)
+    if not project_name:
+        return ""
+    package_name = re.sub(r"\W+", "_", project_name).strip("_").lower()
+    if not package_name:
+        return ""
+    if (workdir / "src" / package_name / "app.py").is_file():
+        return package_name
+    return ""
+
+
+def _python_web_src_module_import_tests(workdir: Path) -> list[Path]:
+    tests_dir = workdir / "tests"
+    if not tests_dir.is_dir():
+        return []
+    offenders: list[Path] = []
+    for path in tests_dir.rglob("*.py"):
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(errors="ignore")
+        except OSError:
+            continue
+        if PYTHON_SRC_MODULE_IMPORT_RE.search(text):
+            offenders.append(path)
+    return offenders
+
+
+def _python_web_fastapi_app_modules(workdir: Path) -> list[Path]:
+    src_dir = workdir / "src"
+    if not src_dir.is_dir():
+        return []
+    modules: list[Path] = []
+    for path in src_dir.glob("*/app.py"):
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(errors="ignore")
+        except OSError:
+            continue
+        if "FastAPI" in text and PYTHON_FASTAPI_APP_RE.search(text):
+            modules.append(path)
+    return modules
+
+
+def _python_web_route_decorators(workdir: Path) -> set[tuple[str, str]]:
+    src_dir = workdir / "src"
+    if not src_dir.is_dir():
+        return set()
+    routes: set[tuple[str, str]] = set()
+    for path in src_dir.rglob("*.py"):
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(errors="ignore")
+        except OSError:
+            continue
+        for match in FASTAPI_ROUTE_DECORATOR_RE.finditer(text):
+            routes.add((match.group("method").lower(), match.group("path")))
+    return routes
+
+
+def _python_web_missing_tested_routes(workdir: Path) -> list[tuple[Path, str, str]]:
+    tests_dir = workdir / "tests"
+    if not tests_dir.is_dir():
+        return []
+    declared_routes = _python_web_route_decorators(workdir)
+    if not declared_routes:
+        return []
+
+    missing: list[tuple[Path, str, str]] = []
+    seen: set[tuple[Path, str, str]] = set()
+    for path in tests_dir.rglob("*.py"):
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(errors="ignore")
+        except OSError:
+            continue
+        for match in PYTHON_TEST_CLIENT_ROUTE_RE.finditer(text):
+            method = match.group("method").lower()
+            route_path = match.group("path")
+            key = (path, method, route_path)
+            if (method, route_path) not in declared_routes and key not in seen:
+                missing.append(key)
+                seen.add(key)
+    return missing
+
+
+def _python_web_test_app_imports(workdir: Path) -> dict[str, list[Path]]:
+    tests_dir = workdir / "tests"
+    if not tests_dir.is_dir():
+        return {}
+    imports: dict[str, list[Path]] = {}
+    for path in tests_dir.rglob("*.py"):
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(errors="ignore")
+        except OSError:
+            continue
+        for match in PYTHON_TEST_APP_IMPORT_RE.finditer(text):
+            imports.setdefault(match.group("package"), []).append(path)
+    return imports
+
+
+def _python_web_imported_app_modules_missing_app(workdir: Path) -> list[Path]:
+    missing: list[Path] = []
+    for package_name in _python_web_test_app_imports(workdir):
+        module = workdir / "src" / package_name / "app.py"
+        if not module.is_file():
+            missing.append(module)
+            continue
+        try:
+            text = module.read_text(errors="ignore")
+        except OSError:
+            missing.append(module)
+            continue
+        if "FastAPI" not in text or not PYTHON_FASTAPI_APP_RE.search(text):
+            missing.append(module)
+    return missing
 
 
 def _setting_value(settings: Any, key: str) -> Any:
@@ -945,6 +1171,141 @@ def validate_delivery_profile(workdir: Path, profile: dict[str, Any] | None) -> 
                     "Add `GENERATE_INFOPLIST_FILE: YES` in each target's settings or provide "
                     "`INFOPLIST_FILE`/`info.path`."
                 ),
+            ))
+
+    if _is_python_web_profile(profile):
+        if (
+            (workdir / "src").is_dir()
+            and (workdir / "pyproject.toml").is_file()
+            and not _pyproject_has_pytest_pythonpath_src(workdir)
+        ):
+            issues.append(_delivery_issue(
+                "python-web-missing-pytest-pythonpath",
+                (
+                    "Python web projects using a `src/` layout must configure pytest to import "
+                    "from `src`. Add `pythonpath = ['src']` under `[tool.pytest.ini_options]` "
+                    "in `pyproject.toml` so `python -m pytest -q` works without relying on "
+                    "workflow-injected PYTHONPATH."
+                ),
+                repair_hint=(
+                    "Update `pyproject.toml` with `[tool.pytest.ini_options]`, "
+                    "`pythonpath = ['src']`, and `testpaths = ['tests']`."
+                ),
+                paths=["pyproject.toml"],
+            ))
+        src_module_import_tests = _python_web_src_module_import_tests(workdir)
+        if src_module_import_tests:
+            paths = [path.relative_to(workdir).as_posix() for path in src_module_import_tests]
+            issues.append(_delivery_issue(
+                "python-web-src-module-import",
+                (
+                    "Python web tests import application code through the synthetic `src` module. "
+                    "For src-layout packages, tests should import the FastAPI app from the package, "
+                    "for example `from minicalc_api.app import app`, not `from src.main import app`."
+                ),
+                repair_hint=(
+                    "Move the ASGI app into `src/<package>/app.py`, update tests to import "
+                    "from `<package>.app`, and keep `pyproject.toml` pytest `pythonpath = ['src']`."
+                ),
+                paths=paths,
+            ))
+        fastapi_app_modules = _python_web_fastapi_app_modules(workdir)
+        if len(fastapi_app_modules) > 1:
+            paths = [path.relative_to(workdir).as_posix() for path in fastapi_app_modules]
+            issues.append(_delivery_issue(
+                "python-web-multiple-app-modules",
+                (
+                    "Python web projects must keep one canonical FastAPI app module across tasks. "
+                    f"Multiple modules export `app = FastAPI(...)`: {', '.join(paths)}. "
+                    "Merge routes and shared state into one package app module so health, calculation, "
+                    "and history tests exercise the same ASGI application."
+                ),
+                repair_hint=(
+                    "Choose the package named by the PRD or existing tests, move all routes into its "
+                    "`app.py`, update tests to import that package, and delete the shadow app module."
+                ),
+                paths=paths,
+            ))
+        missing_tested_routes = _python_web_missing_tested_routes(workdir)
+        if missing_tested_routes:
+            examples = []
+            paths = set()
+            for path, method, route_path in missing_tested_routes[:5]:
+                rel = path.relative_to(workdir).as_posix()
+                paths.add(rel)
+                examples.append(f"{rel} calls {method.upper()} {route_path}")
+            issues.append(_delivery_issue(
+                "python-web-tested-route-missing",
+                (
+                    "Python web tests call routes that are not declared by any FastAPI `@app` or "
+                    f"`@router` decorator: {'; '.join(examples)}. Preserve existing endpoint paths "
+                    "when adding later features; do not rename a route just to satisfy a new test."
+                ),
+                repair_hint=(
+                    "Add or restore matching FastAPI route decorators in the canonical app module, "
+                    "or update all tests and PRD-derived expectations consistently when a route rename "
+                    "is intentional."
+                ),
+                paths=sorted(paths),
+            ))
+        test_app_imports = _python_web_test_app_imports(workdir)
+        canonical_package = _python_web_canonical_package(workdir)
+        if canonical_package and test_app_imports:
+            noncanonical_paths = sorted({
+                path.relative_to(workdir).as_posix()
+                for package_name, import_paths in test_app_imports.items()
+                if package_name != canonical_package
+                for path in import_paths
+            })
+            if noncanonical_paths:
+                issues.append(_delivery_issue(
+                    "python-web-noncanonical-test-app-import",
+                    (
+                        f"`pyproject.toml` names canonical package `{canonical_package}`, but Python web "
+                        "tests import the FastAPI app from another package. Keep all endpoint tests on "
+                        f"`from {canonical_package}.app import app` so every feature exercises the same service."
+                    ),
+                    repair_hint=(
+                        f"Update tests to import `app` from `{canonical_package}.app`, move any routes "
+                        f"from shadow packages into `src/{canonical_package}/app.py`, and remove the shadow app."
+                    ),
+                    paths=noncanonical_paths,
+                ))
+        if len(test_app_imports) > 1:
+            examples = []
+            paths = set()
+            for package_name, import_paths in sorted(test_app_imports.items()):
+                rels = [path.relative_to(workdir).as_posix() for path in import_paths[:3]]
+                paths.update(rels)
+                examples.append(f"{package_name}.app from {', '.join(rels)}")
+            issues.append(_delivery_issue(
+                "python-web-multiple-test-app-imports",
+                (
+                    "Python web tests import multiple FastAPI app packages: "
+                    f"{'; '.join(examples)}. All endpoint tests should exercise the same canonical "
+                    "ASGI app so cross-feature behavior is tested on one service."
+                ),
+                repair_hint=(
+                    "Pick the package named by the PRD or first scaffold, update all tests to import "
+                    "`app` from that package, and remove shadow app packages."
+                ),
+                paths=sorted(paths),
+            ))
+        missing_imported_apps = _python_web_imported_app_modules_missing_app(workdir)
+        if missing_imported_apps:
+            paths = [path.relative_to(workdir).as_posix() for path in missing_imported_apps]
+            issues.append(_delivery_issue(
+                "python-web-missing-imported-app",
+                (
+                    "Python web tests import `app` from module(s) that do not export "
+                    f"`app = FastAPI(...)`: {', '.join(paths)}. Do not empty or replace the canonical "
+                    "app module while adding later endpoints."
+                ),
+                repair_hint=(
+                    "Restore the canonical `src/<package>/app.py` FastAPI `app` object and add new "
+                    "routes to it instead of moving the service to another package."
+                ),
+                paths=paths,
             ))
 
     if _is_react_vite_profile(profile):

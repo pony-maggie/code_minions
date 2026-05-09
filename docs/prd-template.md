@@ -37,7 +37,8 @@ delivery_profile:
 Rules:
 - Product code must follow the delivery profile.
 - Prefer `stack_id` when the technology stack is known. Built-in stack IDs
-  include `react-vite`, `swift-xcodegen`, `go-service`, and `python-cli`.
+  include `react-vite`, `swift-xcodegen`, `go-service`, `python-cli`, and
+  `python-web`.
   Stack packs let code-minions apply focused install commands, validators,
   test harness rules, and repair hints without making one generic workflow
   handle every technology stack the same way.
@@ -147,6 +148,27 @@ delivery_profile:
     - pyproject.toml
     - "**/*.py"
   forbidden_product_languages: []
+```
+
+Python Web API:
+
+```yaml
+delivery_profile:
+  stack_id: python-web
+  kind: web-service
+  language: python
+  framework: fastapi
+  build_system: python
+  test_command: python -m pytest -q
+  required_files:
+    - pyproject.toml
+    - src
+    - tests
+  forbidden_product_languages:
+    - javascript
+    - typescript
+    - swift
+    - go
 ```
 
 React/Vite web app:

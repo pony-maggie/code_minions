@@ -50,6 +50,19 @@ STACK_PACKS: dict[str, StackPack] = {
             "forbidden_product_languages": ["python", "javascript", "typescript", "swift"],
         },
     ),
+    "python-web": StackPack(
+        stack_id="python-web",
+        aliases=("python-web", "python web", "python-web-api", "fastapi", "fastapi-service"),
+        defaults={
+            "kind": "web-service",
+            "language": "python",
+            "framework": "fastapi",
+            "build_system": "python",
+            "test_command": "python -m pytest -q",
+            "required_files": ["pyproject.toml", "src", "tests"],
+            "forbidden_product_languages": ["javascript", "typescript", "swift", "go"],
+        },
+    ),
     "python-cli": StackPack(
         stack_id="python-cli",
         aliases=("python-cli", "python cli", "typer-cli"),
@@ -98,6 +111,15 @@ def stack_id_for_delivery(profile: dict[str, Any] | None) -> str:
         return "swift-xcodegen"
     if "go" in text and ("web-service" in text or "http" in text or "api" in text or "go-mod" in text):
         return "go-service"
+    if "python" in text and (
+        "fastapi" in text
+        or "web-service" in text
+        or "web service" in text
+        or "web api" in text
+        or "http" in text
+        or "api" in text
+    ):
+        return "python-web"
     if "python" in text and ("cli" in text or "typer" in text or "command line" in text):
         return "python-cli"
     return ""

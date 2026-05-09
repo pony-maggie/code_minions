@@ -113,8 +113,10 @@ built-in-fallback shape.
 | `swift-xcodegen-prd-to-commit` | Same DAG as `prd-to-commit`, with `delivery_stack_id=swift-xcodegen` preset. | `code-minions run swift-xcodegen-prd-to-commit --input prd=./my-prd.md` |
 | `go-service-prd-to-commit` | Same DAG as `prd-to-commit`, with `delivery_stack_id=go-service` preset. | `code-minions run go-service-prd-to-commit --input prd=./my-prd.md` |
 | `python-cli-prd-to-commit` | Same DAG as `prd-to-commit`, with `delivery_stack_id=python-cli` preset. | `code-minions run python-cli-prd-to-commit --input prd=./my-prd.md` |
+| `python-web-prd-to-commit` | Python web preset with `delivery_stack_id=python-web` and a dedicated planner that keeps small FastAPI services in one canonical app task. | `code-minions run python-web-prd-to-commit --input prd=./my-prd.md` |
 | `react-vite-prd-to-pr` | Same PR flow as `prd-to-pr`, with `delivery_stack_id=react-vite` preset. | See below. |
 | `python-cli-prd-to-pr` | Same PR flow as `prd-to-pr`, with `delivery_stack_id=python-cli` preset. | See below. |
+| `python-web-prd-to-pr` | Python web PR flow with `delivery_stack_id=python-web` and the dedicated FastAPI planner. | See below. |
 | `prd-to-pr` | Base PR flow for custom stacks or PRDs that already include a delivery contract. Prefer a stack-specific wrapper when available. | See below. |
 
 For `summarize-file`, the `file` input is relative to the project root visible
@@ -124,9 +126,10 @@ not need to be committed.
 ## `prd-to-pr` prerequisites
 
 The built-in PRD-to-PR workflows are the most opinionated workflows in the repo.
-Prefer `react-vite-prd-to-pr` or `python-cli-prd-to-pr` when one matches your
-project. Use the generic `prd-to-pr` as a base workflow for custom stacks or
-PRDs that already include a complete delivery contract.
+Prefer `react-vite-prd-to-pr`, `python-cli-prd-to-pr`, or
+`python-web-prd-to-pr` when one matches your project. Use the generic
+`prd-to-pr` as a base workflow for custom stacks or PRDs that already include a
+complete delivery contract.
 
 They assume all of the following are already true before you run one:
 

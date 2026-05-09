@@ -1,0 +1,56 @@
+name: python-web-prd-to-pr
+description: PRD -> Jira tickets -> implementation commits -> GitHub PR for Python web API/service projects.
+workspace:
+  mode: git-worktree
+inputs:
+  prd: {type: string, required: true}
+  delivery_stack_id: {type: string, required: false}
+  project_key: {type: string, required: true}
+  epic_title: {type: string, required: true}
+preset_inputs:
+  delivery_stack_id: python-web
+
+steps:
+  - id: parse
+    skill: parse-prd
+    inputs:
+      prd_file: $inputs.prd
+      delivery_stack_id: $inputs.delivery_stack_id
+
+  - id: plan
+    skill: python-web-plan-tasks
+    inputs: {structured_prd: $steps.parse.output}
+    depends_on: [parse]
+
+  - id: tickets
+    skill: create-jira-tickets
+    inputs:
+      tasks: $steps.plan.output.tasks
+      project_key: $inputs.project_key
+      epic_title: $inputs.epic_title
+    depends_on: [plan]
+
+  - id: implement
+    for_each: $steps.tickets.output.tickets
+    as: ticket
+    skill: implement-with-tdd
+    inputs: {ticket: $ticket}
+    depends_on: [tickets]
+
+  - id: report
+    skill: compile-report
+    inputs:
+      implement_results: $steps.implement.output.items
+      tickets_output: $steps.tickets.output
+      output_path: report.md
+    depends_on: [implement]
+
+  - id: open_pr
+    skill: open-github-pr
+    inputs:
+      prd: $inputs.prd
+      epic_title: $inputs.epic_title
+      tickets_output: $steps.tickets.output
+      implement_results: $steps.implement.output.items
+      report_path: $steps.report.output.report_path
+    depends_on: [report]

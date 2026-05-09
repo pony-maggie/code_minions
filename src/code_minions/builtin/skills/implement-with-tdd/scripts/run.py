@@ -487,6 +487,22 @@ def _looks_like_python_cli_profile(profile: dict[str, Any]) -> bool:
     return "python" in text and ("cli" in text or "command line" in text)
 
 
+def _looks_like_python_web_profile(profile: dict[str, Any]) -> bool:
+    if stack_id_for_delivery(profile) == "python-web":
+        return True
+    text = "\n".join(
+        str(profile.get(key, ""))
+        for key in ("kind", "language", "framework", "build_system", "test_command")
+    ).lower()
+    return "python" in text and (
+        "fastapi" in text
+        or "web-service" in text
+        or "web service" in text
+        or "web api" in text
+        or "http api" in text
+    )
+
+
 def _looks_like_swift_xcodegen_profile(profile: dict[str, Any]) -> bool:
     text = "\n".join(
         str(profile.get(key, ""))
@@ -605,6 +621,21 @@ def _delivery_guidance_context(ticket: dict[str, Any]) -> str:
             "`<package>/__main__.py` inside the package. Ensure tests add `src/` to `PYTHONPATH` or "
             "`sys.path` when using a src layout, and keep subprocess CLI tests consistent with the same "
             "package/module entrypoint."
+        )
+    if _looks_like_python_web_profile(profile):
+        lines.append(
+            "For Python web projects, keep one canonical FastAPI app module across all tasks. Use a "
+            "src-layout package where `src/<package>/app.py` exports the ASGI `app`; extend that package "
+            "instead of adding `src/main.py`, top-level `main.py`, or another shadow app entrypoint. "
+            "If an existing task already created `src/<package>/app.py`, all later endpoint tasks must "
+            "add routes to that file/package and must not create a second `src/<other_package>/app.py`. "
+            "Preserve existing route paths and tests across later tasks; if tests or PRD criteria already "
+            "use `/calculate/add`, do not replace it with `/add` while adding history. "
+            "Tests must import from the package, such as `from <package>.app import app`, never "
+            "`from src.main import app` or `import src.*`. Configure pytest for the src layout in "
+            "`pyproject.toml` with `[tool.pytest.ini_options]`, `pythonpath = [\"src\"]`, and "
+            "`testpaths = [\"tests\"]`, so `python -m pytest -q` passes from the project root without "
+            "workflow-specific environment variables."
         )
     if _looks_like_turn_based_board_game(ticket):
         lines.append(

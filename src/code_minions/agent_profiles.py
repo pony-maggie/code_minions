@@ -56,6 +56,22 @@ def _react_vite_profile(role: str, strictness: str) -> AgentProfile:
     )
 
 
+def _python_web_profile(role: str, strictness: str) -> AgentProfile:
+    return AgentProfile(
+        profile_id=f"python-web/{role}",
+        role=role,
+        stack_id="python-web",
+        gate_strictness=strictness,
+        guidance=(
+            "Python web implementers should keep a canonical FastAPI src-layout project: "
+            "`src/<package>/app.py` exports the ASGI `app`, tests import from `<package>.app`, "
+            "later tasks extend that same package instead of creating a second app package, "
+            "existing route paths stay stable across tasks, "
+            "and `pyproject.toml` configures pytest with `pythonpath = ['src']`.",
+        ),
+    )
+
+
 def resolve_agent_profile(
     *,
     role: str,
@@ -66,11 +82,12 @@ def resolve_agent_profile(
     stack_id = stack_id_for_delivery(profile)
     strictness = _normalized_strictness(profile.get("gate_strictness"))
 
-    resolved = (
-        _react_vite_profile(role, strictness)
-        if stack_id == "react-vite"
-        else _default_profile(role, strictness)
-    )
+    if stack_id == "react-vite":
+        resolved = _react_vite_profile(role, strictness)
+    elif stack_id == "python-web":
+        resolved = _python_web_profile(role, strictness)
+    else:
+        resolved = _default_profile(role, strictness)
 
     if requested_profile_id and requested_profile_id != resolved.profile_id:
         return AgentProfile(

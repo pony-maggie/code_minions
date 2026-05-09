@@ -9,7 +9,7 @@ import pytest
 from code_minions.engine.dag_runner import DAGRunner, DAGRunnerError
 from code_minions.engine.skill import Skill, load_skill
 from code_minions.engine.skill_runtime import SkillContext, SkillRuntime
-from code_minions.engine.workflow import Workflow, WorkflowStep
+from code_minions.engine.workflow import InputSpec, Workflow, WorkflowStep
 
 
 class FakeSkillRuntime(SkillRuntime):
@@ -109,6 +109,28 @@ def test_top_level_input_reference(tmp_path: Path) -> None:
     )
     runner.run()
     assert rt.calls[0][1] == {"x": "yo"}
+
+
+def test_optional_input_reference_resolves_to_none_when_omitted(tmp_path: Path) -> None:
+    wf = Workflow(
+        name="w",
+        inputs={"delivery_stack_id": InputSpec(type="string", required=False)},
+        steps=[WorkflowStep(id="a", skill="a", inputs={"stack": "$inputs.delivery_stack_id"})],
+    )
+    sk_a = _stub_skill(tmp_path, "a")
+    rt = FakeSkillRuntime({"a": {}})
+
+    runner = DAGRunner(
+        workflow=wf,
+        skills_by_name={"a": sk_a},
+        runtime=rt,
+        workdir=tmp_path,
+        inputs={},
+    )
+
+    runner.run()
+
+    assert rt.calls[0][1] == {"stack": None}
 
 
 def test_missing_skill_fails(tmp_path: Path) -> None:

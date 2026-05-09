@@ -1054,3 +1054,172 @@ def test_execution_profile_for_python_cli_adds_src_to_pythonpath() -> None:
     assert execution["install_command"] is None
     assert execution["test_command"] == ["python", "-m", "pytest", "-q"]
     assert "{workdir}/src" in execution["env"]["PYTHONPATH"]
+
+
+def test_infers_python_web_profile_from_fastapi_prd() -> None:
+    profile = infer_delivery_profile({
+        "goal": "Build a Python FastAPI web API service",
+        "constraints": ["Python 3.11+", "FastAPI", "pytest"],
+        "features": [{"name": "health", "description": "GET /health endpoint"}],
+        "non_functional": {},
+    })
+
+    assert profile["stack_id"] == "python-web"
+    assert profile["kind"] == "web-service"
+    assert profile["framework"] == "fastapi"
+    assert profile["test_command"] == "python -m pytest -q"
+
+
+def test_execution_profile_for_python_web_adds_src_to_pythonpath() -> None:
+    execution = execution_profile_for_delivery({
+        "stack_id": "python-web",
+        "kind": "web-service",
+        "language": "python",
+        "framework": "fastapi",
+        "test_command": "python -m pytest -q",
+    })
+
+    assert execution["install_command"] is None
+    assert execution["test_command"] == ["python", "-m", "pytest", "-q"]
+    assert "{workdir}/src" in execution["env"]["PYTHONPATH"]
+
+
+def test_python_web_requires_pytest_pythonpath_for_src_layout(tmp_path: Path) -> None:
+    (tmp_path / "src" / "minicalc_api").mkdir(parents=True)
+    (tmp_path / "src" / "minicalc_api" / "app.py").write_text("app = object()\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_health.py").write_text("from minicalc_api.app import app\n")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname = 'minicalc-api'\n[tool.pytest.ini_options]\ntestpaths = ['tests']\n"
+    )
+
+    issues = validate_delivery_profile(tmp_path, {"stack_id": "python-web"})
+
+    assert any(issue["code"] == "python-web-missing-pytest-pythonpath" for issue in issues)
+
+
+def test_python_web_rejects_importing_app_from_src_module(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.py").write_text("app = object()\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_add.py").write_text("from src.main import app\n")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname = 'minicalc-api'\n[tool.pytest.ini_options]\npythonpath = ['src']\n"
+    )
+
+    issues = validate_delivery_profile(tmp_path, {"stack_id": "python-web"})
+
+    assert any(issue["code"] == "python-web-src-module-import" for issue in issues)
+
+
+def test_python_web_rejects_multiple_fastapi_app_modules(tmp_path: Path) -> None:
+    (tmp_path / "src" / "minicalc_api").mkdir(parents=True)
+    (tmp_path / "src" / "minicalc_api" / "app.py").write_text(
+        "from fastapi import FastAPI\napp = FastAPI()\n"
+    )
+    (tmp_path / "src" / "minicalc").mkdir()
+    (tmp_path / "src" / "minicalc" / "app.py").write_text(
+        "from fastapi import FastAPI\napp = FastAPI()\n"
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_health.py").write_text("from minicalc_api.app import app\n")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname = 'minicalc-api'\n[tool.pytest.ini_options]\npythonpath = ['src']\n"
+    )
+
+    issues = validate_delivery_profile(tmp_path, {"stack_id": "python-web"})
+
+    assert any(issue["code"] == "python-web-multiple-app-modules" for issue in issues)
+
+
+def test_python_web_rejects_tested_route_without_fastapi_decorator(tmp_path: Path) -> None:
+    (tmp_path / "src" / "minicalc_api").mkdir(parents=True)
+    (tmp_path / "src" / "minicalc_api" / "app.py").write_text(
+        "from fastapi import FastAPI\napp = FastAPI()\n@app.post('/add')\ndef add(): return {}\n"
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_add.py").write_text(
+        "from fastapi.testclient import TestClient\n"
+        "from minicalc_api.app import app\n"
+        "def test_add():\n"
+        "    response = TestClient(app).post('/calculate/add', json={'a': 2, 'b': 3})\n"
+        "    assert response.status_code == 200\n"
+    )
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname = 'minicalc-api'\n[tool.pytest.ini_options]\npythonpath = ['src']\n"
+    )
+
+    issues = validate_delivery_profile(tmp_path, {"stack_id": "python-web"})
+
+    assert any(issue["code"] == "python-web-tested-route-missing" for issue in issues)
+
+
+def test_python_web_rejects_multiple_test_app_imports(tmp_path: Path) -> None:
+    (tmp_path / "src" / "minicalc_api").mkdir(parents=True)
+    (tmp_path / "src" / "minicalc_api" / "app.py").write_text(
+        "from fastapi import FastAPI\napp = FastAPI()\n"
+    )
+    (tmp_path / "src" / "minicalc").mkdir()
+    (tmp_path / "src" / "minicalc" / "app.py").write_text(
+        "from fastapi import FastAPI\napp = FastAPI()\n"
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_health.py").write_text("from minicalc_api.app import app\n")
+    (tmp_path / "tests" / "test_add.py").write_text("from minicalc.app import app\n")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname = 'minicalc-api'\n[tool.pytest.ini_options]\npythonpath = ['src']\n"
+    )
+
+    issues = validate_delivery_profile(tmp_path, {"stack_id": "python-web"})
+
+    assert any(issue["code"] == "python-web-multiple-test-app-imports" for issue in issues)
+
+
+def test_python_web_rejects_imported_app_module_without_app_object(tmp_path: Path) -> None:
+    (tmp_path / "src" / "minicalc_api").mkdir(parents=True)
+    (tmp_path / "src" / "minicalc_api" / "app.py").write_text("# emptied accidentally\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_health.py").write_text("from minicalc_api.app import app\n")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname = 'minicalc-api'\n[tool.pytest.ini_options]\npythonpath = ['src']\n"
+    )
+
+    issues = validate_delivery_profile(tmp_path, {"stack_id": "python-web"})
+
+    assert any(issue["code"] == "python-web-missing-imported-app" for issue in issues)
+
+
+def test_python_web_rejects_test_app_import_outside_pyproject_package(tmp_path: Path) -> None:
+    (tmp_path / "src" / "minicalc_api").mkdir(parents=True)
+    (tmp_path / "src" / "minicalc_api" / "app.py").write_text(
+        "from fastapi import FastAPI\napp = FastAPI()\n"
+    )
+    (tmp_path / "src" / "minicalc").mkdir()
+    (tmp_path / "src" / "minicalc" / "app.py").write_text(
+        "from fastapi import FastAPI\napp = FastAPI()\n"
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_health.py").write_text("from minicalc.app import app\n")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname = 'minicalc-api'\n[tool.pytest.ini_options]\npythonpath = ['src']\n"
+    )
+
+    issues = validate_delivery_profile(tmp_path, {"stack_id": "python-web"})
+
+    assert any(issue["code"] == "python-web-noncanonical-test-app-import" for issue in issues)
+
+
+def test_python_web_accepts_package_app_import_with_pytest_pythonpath(tmp_path: Path) -> None:
+    (tmp_path / "src" / "minicalc_api").mkdir(parents=True)
+    (tmp_path / "src" / "minicalc_api" / "app.py").write_text(
+        "from fastapi import FastAPI\napp = FastAPI()\n"
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_health.py").write_text("from minicalc_api.app import app\n")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname = 'minicalc-api'\n[tool.pytest.ini_options]\npythonpath = ['src']\n"
+    )
+
+    issues = validate_delivery_profile(tmp_path, {"stack_id": "python-web"})
+
+    assert not any(issue["code"].startswith("python-web-") for issue in issues)

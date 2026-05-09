@@ -27,6 +27,23 @@ def test_react_vite_implementer_profile_inherits_delivery_strictness() -> None:
     assert "React/Vite" in "\n".join(profile.guidance)
 
 
+def test_python_web_implementer_profile_guides_canonical_src_app_layout() -> None:
+    profile = resolve_agent_profile(
+        role="implementer",
+        delivery_profile={
+            "stack_id": "python-web",
+            "gate_strictness": "relaxed",
+        },
+    )
+
+    assert profile.profile_id == "python-web/implementer"
+    assert profile.stack_id == "python-web"
+    assert profile.gate_strictness == "relaxed"
+    guidance = "\n".join(profile.guidance)
+    assert "FastAPI" in guidance
+    assert "src/<package>/app.py" in guidance
+
+
 def test_unknown_requested_profile_falls_back_with_warning() -> None:
     profile = resolve_agent_profile(
         role="implementer",
