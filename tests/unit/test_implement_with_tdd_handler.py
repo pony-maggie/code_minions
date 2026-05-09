@@ -114,6 +114,21 @@ def test_extract_json_object_allows_reasoning_prefix_and_trailing_text() -> None
     }
 
 
+def test_extract_json_object_skips_preface_json_without_files_written() -> None:
+    entrypoint = _load_entrypoint()
+
+    data = entrypoint._extract_json_object(
+        '<think>Use {"reasoning": "done"} only after tools have changed files.</think>\n'
+        '{"files_written": [{"path": "src/winner.ts", "content": "export const ok = true\\n"}], '
+        '"reasoning": "ok"}',
+        require_files=True,
+    )
+
+    assert data["files_written"] == [
+        {"path": "src/winner.ts", "content": "export const ok = true\n"}
+    ]
+
+
 def test_extract_minimax_inline_write_tool_call_as_files_written() -> None:
     entrypoint = _load_entrypoint()
 
@@ -309,14 +324,14 @@ def test_delivery_profile_test_command_overrides_node_fallback(tmp_git_repo: Pat
     assert passed is True
     assert calls == [
         ["npm", "install", "--no-audit", "--fund=false"],
-        ["npx", "tsc", "--noEmit", "--noUnusedLocals", "false", "--noUnusedParameters", "false"],
+        ["npm", "run", "build"],
         ["npm", "run", "test:unit"],
     ]
-    assert "npx tsc --noEmit --noUnusedLocals false --noUnusedParameters false ok" in output
+    assert "npm run build ok" in output
     assert "npm run test:unit ok" in output
 
 
-def test_delivery_profile_typecheck_failure_stops_before_npm_test(tmp_git_repo: Path, monkeypatch):
+def test_delivery_profile_build_failure_stops_before_npm_test(tmp_git_repo: Path, monkeypatch):
     entrypoint = _load_entrypoint()
     (tmp_git_repo / "package.json").write_text(
         '{"scripts": {"test": "vitest run"}, "devDependencies": {"typescript": "^5.0.0", "vitest": "^1.6.0"}}\n'
@@ -325,10 +340,10 @@ def test_delivery_profile_typecheck_failure_stops_before_npm_test(tmp_git_repo: 
 
     def fake_run(cmd, **kw):
         calls.append(cmd)
-        if cmd[:2] == ["npx", "tsc"]:
+        if cmd == ["npm", "run", "build"]:
             return MagicMock(
                 returncode=2,
-                stdout="src/App.tsx(24,32): error TS2339: Property 'cells' does not exist on type 'true'.",
+                stdout="src/App.tsx(1,8): error TS6133: 'React' is declared but its value is never read.",
                 stderr="",
             )
         return MagicMock(returncode=0, stdout=f"{' '.join(cmd)} ok", stderr="")
@@ -347,9 +362,9 @@ def test_delivery_profile_typecheck_failure_stops_before_npm_test(tmp_git_repo: 
     assert passed is False
     assert calls == [
         ["npm", "install", "--no-audit", "--fund=false"],
-        ["npx", "tsc", "--noEmit", "--noUnusedLocals", "false", "--noUnusedParameters", "false"],
+        ["npm", "run", "build"],
     ]
-    assert "Property 'cells' does not exist" in output
+    assert "declared but its value is never read" in output
 
 
 def test_react_vite_scaffold_creates_stable_project_files(tmp_git_repo: Path):
@@ -373,6 +388,25 @@ def test_react_vite_scaffold_creates_stable_project_files(tmp_git_repo: Path):
     assert "afterEach(cleanup)" in (tmp_git_repo / "src" / "setupTests.ts").read_text()
     assert "afterEach(cleanup())" not in (tmp_git_repo / "src" / "setupTests.ts").read_text()
     assert (tmp_git_repo / "src" / "vite-env.d.ts").read_text() == "/// <reference types=\"vite/client\" />\n"
+
+
+def test_react_vite_scaffold_ensures_main_imports_index_css(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "main.tsx").write_text(
+        "import React from 'react'\n"
+        "import ReactDOM from 'react-dom/client'\n"
+        "import App from './App'\n"
+        "\n"
+        "ReactDOM.createRoot(document.getElementById('root')!).render(<App />)\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "main.tsx").read_text()
+    assert "src/main.tsx" in changed
+    assert "import './index.css'" in text
 
 
 def test_react_vite_scaffold_repairs_llm_modified_harness_files(tmp_git_repo: Path):
@@ -506,6 +540,241 @@ def test_react_vite_scaffold_anchors_board_coordinate_regex_queries(tmp_git_repo
     assert passed is True
     assert "ambiguous-testing-library-query" not in output
     assert not [finding for finding in findings if finding.code == "ambiguous-testing-library-query"]
+
+
+def test_react_vite_scaffold_allows_coordinate_label_commas_in_regex_queries(
+    tmp_git_repo: Path,
+):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "tests" / "Place.test.tsx").write_text(
+        "import { describe, expect, it } from 'vitest'\n"
+        "import { screen } from '@testing-library/react'\n"
+        "describe('Place', () => {\n"
+        "  it('queries a cell label', () => {\n"
+        "    expect(screen.getByRole('button', { name: /^行1列1, 空$/ })).toBeDefined()\n"
+        "    expect(screen.getByRole('button', { name: /^行1列2, 白子$/ })).toBeDefined()\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "tests" / "Place.test.tsx").read_text()
+    assert "tests/Place.test.tsx" in changed
+    assert "name: /^行1\\s*,?\\s*列1, 空$/" in text
+    assert "name: /^行1\\s*,?\\s*列2, 白子$/" in text
+
+
+def test_react_vite_scaffold_allows_coordinate_label_commas_in_aria_assertions(
+    tmp_git_repo: Path,
+):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "tests" / "App.test.tsx").write_text(
+        "import { describe, expect, it } from 'vitest'\n"
+        "describe('App', () => {\n"
+        "  it('checks a cell label', () => {\n"
+        "    expect(cell).toHaveAttribute('aria-label', '行1列1, 黑子')\n"
+        "    expect(cell2).toHaveAttribute('aria-label', \"行1列2, 白子\")\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "tests" / "App.test.tsx").read_text()
+    assert "tests/App.test.tsx" in changed
+    assert "expect(cell).toHaveAccessibleName(/^行1\\s*,?\\s*列1, 黑子$/)" in text
+    assert "expect(cell2).toHaveAccessibleName(/^行1\\s*,?\\s*列2, 白子$/)" in text
+
+
+def test_react_vite_scaffold_corrects_single_undo_turn_expectation(
+    tmp_git_repo: Path,
+):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "tests" / "undo-restart.test.tsx").write_text(
+        "import { describe, expect, it } from 'vitest'\n"
+        "describe('悔棋功能', () => {\n"
+        "  it('Given 棋盘已有3步，When 用户点击悔棋，Then 移除第3步并恢复到对应玩家回合', async () => {\n"
+        "    // 所以3步后轮到白方\n"
+        "    expect(screen.getByText('当前回合: 黑方')).toBeInTheDocument()\n"
+        "    await user.click(screen.getByTestId('undo-button'))\n"
+        "    expect(screen.getByTestId('game-status')).toHaveTextContent('当前回合: 白方')\n"
+        "  })\n"
+        "  it('Given 棋盘已有3步，When 用户连续点击悔棋两次，Then 移除第3步和第2步并恢复到第1步后的回合', async () => {\n"
+        "    await user.click(screen.getByTestId('undo-button'))\n"
+        "    await user.click(screen.getByTestId('undo-button'))\n"
+        "    expect(screen.getByTestId('game-status')).toHaveTextContent('当前回合: 白方')\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {
+        "delivery_profile": {"stack_id": "react-vite"},
+        "description": "五子棋 悔棋与重开",
+    }
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "tests" / "undo-restart.test.tsx").read_text()
+    assert "tests/undo-restart.test.tsx" in changed
+    assert "screen.getByText('当前回合: 黑方')" not in text
+    assert "expect(screen.getByTestId('game-status')).toHaveTextContent('当前回合: 白方')" in text
+    assert "toHaveTextContent('当前回合: 黑方')" in text
+    assert text.count("toHaveTextContent('当前回合: 白方')") == 2
+
+
+def test_react_vite_scaffold_preserves_current_turn_side_labels(
+    tmp_git_repo: Path,
+):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "src" / "StatusPanel.tsx").write_text(
+        "export function StatusPanel({ currentPlayer }) {\n"
+        "  const text = `当前回合: ${currentPlayer === 'black' ? '黑子' : '白子'}`\n"
+        "  const live = `当前回合: ${currentPlayer === 'black' ? '黑子' : '白子'}`\n"
+        "  return <><p data-testid=\"game-status\">{text}</p><div>{live}</div></>\n"
+        "}\n"
+    )
+    (tmp_git_repo / "tests" / "status-panel.test.tsx").write_text(
+        "import { describe, expect, it } from 'vitest'\n"
+        "describe('StatusPanel', () => {\n"
+        "  it('shows the current side', () => {\n"
+        "    expect(screen.getByTestId('game-status')).toHaveTextContent('当前回合: 黑子')\n"
+        "    expect(screen.getByTestId('game-status-live')).toHaveTextContent('当前回合: 白子')\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {
+        "delivery_profile": {"stack_id": "react-vite"},
+        "description": "五子棋 棋局状态面板与辅助功能",
+    }
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    source = (tmp_git_repo / "src" / "StatusPanel.tsx").read_text()
+    test = (tmp_git_repo / "tests" / "status-panel.test.tsx").read_text()
+    assert "src/StatusPanel.tsx" in changed
+    assert "tests/status-panel.test.tsx" in changed
+    assert "'黑方' : '白方'" in source
+    assert "当前回合: 黑方" in test
+    assert "当前回合: 白方" in test
+
+
+def test_react_vite_scaffold_targets_visible_game_status_when_live_region_duplicates_text(
+    tmp_git_repo: Path,
+):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "tests" / "Game.test.tsx").write_text(
+        "import { describe, expect, it } from 'vitest'\n"
+        "describe('Game', () => {\n"
+        "  it('checks status text', () => {\n"
+        "    expect(screen.getByText('当前回合: 黑方')).toBeInTheDocument()\n"
+        "    expect(screen.getByText(/当前回合: 白方/)).toBeInTheDocument()\n"
+        "    expect(screen.getByText('黑方获胜')).toBeInTheDocument()\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {
+        "delivery_profile": {"stack_id": "react-vite"},
+        "description": "五子棋 棋局状态面板与辅助功能",
+    }
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "tests" / "Game.test.tsx").read_text()
+    assert "tests/Game.test.tsx" in changed
+    assert "screen.getByText('当前回合: 黑方')" not in text
+    assert "screen.getByText(/当前回合: 白方/)" not in text
+    assert "screen.getByText('黑方获胜')" not in text
+    assert "expect(screen.getByTestId('game-status')).toHaveTextContent('当前回合: 黑方')" in text
+    assert "expect(screen.getByTestId('game-status')).toHaveTextContent(/当前回合: 白方/)" in text
+    assert "expect(screen.getByTestId('game-status')).toHaveTextContent('黑方获胜')" in text
+
+
+def test_react_vite_scaffold_repairs_status_panel_black_win_click_sequence(
+    tmp_git_repo: Path,
+):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "tests" / "status-panel.test.tsx").write_text(
+        "import { describe, expect, it } from 'vitest'\n"
+        "describe('StatusPanel', () => {\n"
+        "  it('shows winner', async () => {\n"
+        "    const blackMoves = [\n"
+        "      [1, 1], [1, 2], [1, 3], [1, 4],\n"
+        "      [2, 1], [2, 2], [2, 3],\n"
+        "      [1, 5],\n"
+        "    ]\n"
+        "    for (const [row, col] of blackMoves) {\n"
+        "      await user.click(getCell(row, col))\n"
+        "    }\n"
+        "    expect(screen.getByTestId('game-status')).toHaveTextContent('黑方获胜')\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {
+        "delivery_profile": {"stack_id": "react-vite"},
+        "description": "五子棋 棋局状态面板与辅助功能",
+    }
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "tests" / "status-panel.test.tsx").read_text()
+    assert "tests/status-panel.test.tsx" in changed
+    assert "[1, 1], [2, 1], [1, 2], [2, 2], [1, 3], [2, 3], [1, 4], [2, 4], [1, 5]" in text
+
+
+def test_react_vite_scaffold_removes_fake_timer_user_event_deadlock(
+    tmp_git_repo: Path,
+):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "tests" / "AppStateSync.test.tsx").write_text(
+        "import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'\n"
+        "import { render, screen, cleanup } from '@testing-library/react'\n"
+        "import userEvent from '@testing-library/user-event'\n"
+        "describe('App棋局状态同步', () => {\n"
+        "  beforeEach(() => {\n"
+        "    vi.useFakeTimers({ shouldAdvanceTime: false })\n"
+        "  })\n"
+        "  afterEach(() => {\n"
+        "    cleanup()\n"
+        "    vi.useRealTimers()\n"
+        "  })\n"
+        "  it('黑方落子后步数为1，显示白方回合', async () => {\n"
+        "    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })\n"
+        "    await user.click(screen.getByTestId('cell-7-7'))\n"
+        "    vi.advanceTimersByTime(100)\n"
+        "    expect(screen.getByTestId('step-count')).toHaveTextContent('步数: 1')\n"
+        "  })\n"
+        "  it('第一步后计时器从0开始', async () => {\n"
+        "    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })\n"
+        "    await user.click(screen.getByTestId('cell-7-7'))\n"
+        "    expect(screen.getByTestId('game-timer')).toHaveTextContent('用时: 00:00')\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {
+        "delivery_profile": {"stack_id": "react-vite"},
+        "description": "五子棋 棋局状态面板与辅助功能",
+    }
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "tests" / "AppStateSync.test.tsx").read_text()
+    assert "tests/AppStateSync.test.tsx" in changed
+    assert "userEvent.setup({ advanceTimers: vi.advanceTimersByTime })" not in text
+    assert "userEvent.setup()" in text
+    assert "vi.advanceTimersByTime" not in text
+    assert "vi.useFakeTimers" not in text
+    assert "vi.useRealTimers" not in text
+    assert "game-timer" not in text
 
 
 def test_react_vite_scaffold_repairs_unique_relative_import_target(tmp_git_repo: Path):
@@ -964,6 +1233,35 @@ def test_react_vite_scaffold_prunes_over_specific_game_over_undo_turn_test(tmp_g
     text = (tmp_git_repo / "tests" / "Undo.test.tsx").read_text()
     assert "tests/Undo.test.tsx" in changed
     assert "当前回合: 白子" not in text
+
+
+def test_react_vite_scaffold_removes_empty_suite_after_pruning_game_over_test(
+    tmp_git_repo: Path,
+):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "tests" / "Game.test.tsx").write_text(
+        "import { describe, it, expect } from 'vitest'\n"
+        "\n"
+        "describe('核心落子交互与回合管理', () => {\n"
+        "  describe('游戏结束后禁止继续落子', () => {\n"
+        "    it('Given 已经出现胜者，When 用户继续点击棋盘，Then 不再新增棋子', () => {\n"
+        "      expect(screen.getByTestId('cell-0-0')).toHaveAttribute('data-stone', null)\n"
+        "    })\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {
+        "delivery_profile": {"stack_id": "react-vite"},
+        "description": "五子棋 核心落子交互与回合管理",
+    }
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "tests" / "Game.test.tsx").read_text()
+    assert "tests/Game.test.tsx" in changed
+    assert "游戏结束后禁止继续落子" not in text
+    assert "describe('核心落子交互与回合管理'" not in text
 
 
 def test_react_vite_scaffold_prunes_early_game_over_component_tests(tmp_git_repo: Path):

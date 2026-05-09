@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from code_minions.delivery import (
     execution_profile_for_delivery,
     infer_delivery_profile,
@@ -956,15 +958,7 @@ def test_execution_profile_for_react_vite_installs_and_runs_ci_tests() -> None:
 
     assert execution == {
         "install_command": ["npm", "install", "--no-audit", "--fund=false"],
-        "pre_test_command": [
-            "npx",
-            "tsc",
-            "--noEmit",
-            "--noUnusedLocals",
-            "false",
-            "--noUnusedParameters",
-            "false",
-        ],
+        "pre_test_command": ["npm", "run", "build"],
         "test_command": ["npm", "test"],
         "env": {"CI": "true"},
         "ignored_paths": ["node_modules", "dist", "coverage"],
@@ -978,8 +972,56 @@ def test_execution_profile_can_be_selected_by_stack_id() -> None:
     })
 
     assert execution["install_command"] == ["npm", "install", "--no-audit", "--fund=false"]
+    assert execution["pre_test_command"] == ["npm", "run", "build"]
     assert execution["test_command"] == ["npm", "run", "test:unit"]
     assert execution["env"] == {"CI": "true"}
+
+
+def test_react_vite_delivery_rejects_absolute_stone_class_on_cell(tmp_path: Path) -> None:
+    (tmp_path / "src" / "components").mkdir(parents=True)
+    (tmp_path / "src" / "components" / "Board.tsx").write_text(
+        "export function Board({ cell }) {\n"
+        "  const stoneClass = cell ? `stone ${cell}` : ''\n"
+        "  return <button className={`cell ${stoneClass}`} />\n"
+        "}\n"
+    )
+    (tmp_path / "src" / "styles.css").write_text(
+        ".cell { position: relative; }\n"
+        ".stone { position: absolute; width: 80%; height: 80%; border-radius: 50%; }\n"
+    )
+    (tmp_path / "package.json").write_text(
+        '{"scripts": {"test": "vitest run", "build": "vite build"}}\n'
+    )
+    (tmp_path / "index.html").write_text('<div id="root"></div>\n')
+
+    issues = validate_delivery_profile(tmp_path, {"stack_id": "react-vite"})
+
+    assert any(issue["code"] == "react-vite-stone-class-on-cell" for issue in issues)
+
+
+def test_react_vite_delivery_allows_nested_absolute_stone_span(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir(parents=True)
+    (tmp_path / "src" / "Board.tsx").write_text(
+        "export function Board({ stone }) {\n"
+        "  return (\n"
+        "    <button className=\"cell\" data-stone={stone}>\n"
+        "      {stone && <span className={`stone ${stone}`} />}\n"
+        "    </button>\n"
+        "  )\n"
+        "}\n"
+    )
+    (tmp_path / "src" / "styles.css").write_text(
+        ".cell { position: relative; }\n"
+        ".stone { position: absolute; inset: 10%; border-radius: 50%; }\n"
+    )
+    (tmp_path / "package.json").write_text(
+        '{"scripts": {"test": "vitest run", "build": "vite build"}}\n'
+    )
+    (tmp_path / "index.html").write_text('<div id="root"></div>\n')
+
+    issues = validate_delivery_profile(tmp_path, {"stack_id": "react-vite"})
+
+    assert not any(issue["code"] == "react-vite-stone-class-on-cell" for issue in issues)
 
 
 def test_execution_profile_for_swift_xcodegen_uses_generate_then_xcodebuild() -> None:

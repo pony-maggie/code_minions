@@ -71,9 +71,12 @@ We use the **superpowers** workflow: `brainstorming` → `writing-plans` →
 - `docs/superpowers/specs/` — design docs (why + what, long-lived)
 - `docs/superpowers/plans/` — milestone execution plans (step-by-step, one per milestone)
 
+This directory is local development memory and is ignored by Git; keep it if it
+exists locally, but don't rely on it being present in a fresh public clone.
+
 Milestones shipped so far: **M1 → M5** (core platform) and **Phase C1 → C3**
-(Web dashboard). The newest plan file under `plans/` tells you what's currently
-active. Finish one milestone before starting the next — scope discipline
+(Web dashboard). The plan with `status: active` in frontmatter tells you what's
+currently active. Finish one milestone before starting the next — scope discipline
 matters more than velocity.
 
 ## Session lifecycle (read / update these every session)
@@ -81,7 +84,8 @@ matters more than velocity.
 **At session start:**
 1. Read this file (`AGENTS.md`)
 2. Read `PROGRESS.md` — last session's handoff notes
-3. Read the newest file in `docs/superpowers/plans/` — current milestone
+3. If local `docs/superpowers/plans/` exists, read the plan whose frontmatter
+   has `status: active` — current milestone
 4. `git log --oneline -20` — recent commits
 
 **At session end:**
