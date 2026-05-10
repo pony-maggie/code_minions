@@ -1226,6 +1226,34 @@ def test_python_web_accepts_form_routes_with_python_multipart_dependency(tmp_pat
     assert not any(issue["code"] == "python-web-missing-python-multipart" for issue in issues)
 
 
+def test_python_web_rejects_inline_script_when_javascript_is_forbidden(tmp_path: Path) -> None:
+    (tmp_path / "src" / "minicalc_api").mkdir(parents=True)
+    (tmp_path / "src" / "minicalc_api" / "app.py").write_text(
+        "from fastapi import FastAPI\n"
+        "from fastapi.responses import HTMLResponse\n"
+        "app = FastAPI()\n"
+        "@app.get('/')\n"
+        "def home():\n"
+        "    return HTMLResponse('<form></form><script>fetch(\"/history\")</script>')\n"
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_home.py").write_text("from minicalc_api.app import app\n")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\n"
+        "name = 'minicalc-api'\n"
+        "dependencies = ['fastapi>=0.100.0', 'uvicorn>=0.23.0']\n"
+        "[tool.pytest.ini_options]\n"
+        "pythonpath = ['src']\n"
+    )
+
+    issues = validate_delivery_profile(tmp_path, {
+        "stack_id": "python-web",
+        "forbidden_product_languages": ["javascript"],
+    })
+
+    assert any(issue["code"] == "python-web-forbidden-inline-javascript" for issue in issues)
+
+
 def test_python_web_rejects_multiple_test_app_imports(tmp_path: Path) -> None:
     (tmp_path / "src" / "minicalc_api").mkdir(parents=True)
     (tmp_path / "src" / "minicalc_api" / "app.py").write_text(

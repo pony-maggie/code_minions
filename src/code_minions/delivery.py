@@ -82,6 +82,7 @@ TYPESCRIPT_CSS_AT_IMPORT_RE = re.compile(r"""(?m)^\s*@import\s+['"]""")
 PYTHON_SRC_MODULE_IMPORT_RE = re.compile(r"""(?m)^\s*(?:from\s+src(?:\.|\s+import)|import\s+src\.)""")
 PYTHON_FASTAPI_APP_RE = re.compile(r"""(?m)^\s*app\s*=\s*FastAPI\s*\(""")
 PYTHON_FASTAPI_FORM_RE = re.compile(r"""\bForm\s*\(""")
+HTML_SCRIPT_TAG_RE = re.compile(r"""<\s*script\b""", re.IGNORECASE)
 FASTAPI_ROUTE_DECORATOR_RE = re.compile(
     r"""@(?:app|router)\.(?P<method>get|post|put|patch|delete)\(\s*['"](?P<path>/[^'"]*)['"]""",
     re.IGNORECASE,
@@ -478,6 +479,23 @@ def _python_web_form_usage_files(workdir: Path) -> list[Path]:
         except OSError:
             continue
         if PYTHON_FASTAPI_FORM_RE.search(text):
+            paths.append(path)
+    return paths
+
+
+def _python_web_inline_script_files(workdir: Path) -> list[Path]:
+    src_dir = workdir / "src"
+    if not src_dir.is_dir():
+        return []
+    paths: list[Path] = []
+    for path in src_dir.rglob("*.py"):
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(errors="ignore")
+        except OSError:
+            continue
+        if HTML_SCRIPT_TAG_RE.search(text):
             paths.append(path)
     return paths
 
@@ -1279,6 +1297,24 @@ def validate_delivery_profile(workdir: Path, profile: dict[str, Any] | None) -> 
                 ),
                 paths=paths + ["pyproject.toml"],
             ))
+        if "javascript" in forbidden:
+            inline_script_files = _python_web_inline_script_files(workdir)
+            if inline_script_files:
+                paths = [path.relative_to(workdir).as_posix() for path in inline_script_files]
+                issues.append(_delivery_issue(
+                    "python-web-forbidden-inline-javascript",
+                    (
+                        "Delivery profile forbids JavaScript product code, but Python source "
+                        "contains inline `<script>` HTML. Use server-rendered forms and normal "
+                        "HTTP form posts instead of a JavaScript interaction layer."
+                    ),
+                    repair_hint=(
+                        "Remove `<script>` blocks from rendered HTML, set form `method='post'` "
+                        "and `action='/calculate'`, and return the updated full HTML page from "
+                        "the FastAPI form handler."
+                    ),
+                    paths=paths,
+                ))
         fastapi_app_modules = _python_web_fastapi_app_modules(workdir)
         if len(fastapi_app_modules) > 1:
             paths = [path.relative_to(workdir).as_posix() for path in fastapi_app_modules]
