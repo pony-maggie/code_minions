@@ -81,6 +81,7 @@ ABSOLUTE_STONE_CLASS_RE = re.compile(
 TYPESCRIPT_CSS_AT_IMPORT_RE = re.compile(r"""(?m)^\s*@import\s+['"]""")
 PYTHON_SRC_MODULE_IMPORT_RE = re.compile(r"""(?m)^\s*(?:from\s+src(?:\.|\s+import)|import\s+src\.)""")
 PYTHON_FASTAPI_APP_RE = re.compile(r"""(?m)^\s*app\s*=\s*FastAPI\s*\(""")
+PYTHON_FASTAPI_FORM_RE = re.compile(r"""\bForm\s*\(""")
 FASTAPI_ROUTE_DECORATOR_RE = re.compile(
     r"""@(?:app|router)\.(?P<method>get|post|put|patch|delete)\(\s*['"](?P<path>/[^'"]*)['"]""",
     re.IGNORECASE,
@@ -419,6 +420,39 @@ def _pyproject_project_name(workdir: Path) -> str:
     return str(project.get("name") or "").strip()
 
 
+def _pyproject_project_dependencies(workdir: Path) -> list[str]:
+    pyproject = workdir / "pyproject.toml"
+    if not pyproject.is_file():
+        return []
+    try:
+        data = tomllib.loads(pyproject.read_text(errors="ignore"))
+    except tomllib.TOMLDecodeError:
+        return []
+    project = data.get("project", {})
+    if not isinstance(project, dict):
+        return []
+    dependencies = project.get("dependencies")
+    if not isinstance(dependencies, list):
+        return []
+    return [str(dependency) for dependency in dependencies]
+
+
+def _dependency_name(dependency: str) -> str:
+    match = re.match(r"\s*([A-Za-z0-9_.-]+)", dependency)
+    if not match:
+        return ""
+    return match.group(1).replace("_", "-").lower()
+
+
+def _python_web_declares_form_dependency(workdir: Path) -> bool:
+    dependencies = _pyproject_project_dependencies(workdir)
+    names = {_dependency_name(dependency) for dependency in dependencies}
+    if "python-multipart" in names:
+        return True
+    normalized = [dependency.replace("_", "-").lower() for dependency in dependencies]
+    return any(dependency.startswith("fastapi[standard]") or dependency.startswith("fastapi[all]") for dependency in normalized)
+
+
 def _python_web_canonical_package(workdir: Path) -> str:
     project_name = _pyproject_project_name(workdir)
     if not project_name:
@@ -429,6 +463,23 @@ def _python_web_canonical_package(workdir: Path) -> str:
     if (workdir / "src" / package_name / "app.py").is_file():
         return package_name
     return ""
+
+
+def _python_web_form_usage_files(workdir: Path) -> list[Path]:
+    src_dir = workdir / "src"
+    if not src_dir.is_dir():
+        return []
+    paths: list[Path] = []
+    for path in src_dir.rglob("*.py"):
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(errors="ignore")
+        except OSError:
+            continue
+        if PYTHON_FASTAPI_FORM_RE.search(text):
+            paths.append(path)
+    return paths
 
 
 def _python_web_src_module_import_tests(workdir: Path) -> list[Path]:
@@ -1211,6 +1262,22 @@ def validate_delivery_profile(workdir: Path, profile: dict[str, Any] | None) -> 
                     "from `<package>.app`, and keep `pyproject.toml` pytest `pythonpath = ['src']`."
                 ),
                 paths=paths,
+            ))
+        form_usage_files = _python_web_form_usage_files(workdir)
+        if form_usage_files and not _python_web_declares_form_dependency(workdir):
+            paths = [path.relative_to(workdir).as_posix() for path in form_usage_files]
+            issues.append(_delivery_issue(
+                "python-web-missing-python-multipart",
+                (
+                    "FastAPI form routes use `Form(...)`, but `pyproject.toml` does not declare "
+                    "`python-multipart` as a runtime dependency. Fresh installs can fail while "
+                    "importing the ASGI app."
+                ),
+                repair_hint=(
+                    "Add `python-multipart>=0.0.9` to `[project].dependencies`, or avoid "
+                    "`Form(...)` and parse form bodies without FastAPI's multipart dependency."
+                ),
+                paths=paths + ["pyproject.toml"],
             ))
         fastapi_app_modules = _python_web_fastapi_app_modules(workdir)
         if len(fastapi_app_modules) > 1:

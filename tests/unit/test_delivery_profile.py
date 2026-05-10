@@ -1180,6 +1180,52 @@ def test_python_web_allows_fastapi_builtin_documentation_routes(tmp_path: Path) 
     assert not any(issue["code"] == "python-web-tested-route-missing" for issue in issues)
 
 
+def test_python_web_rejects_form_routes_without_python_multipart_dependency(tmp_path: Path) -> None:
+    (tmp_path / "src" / "minicalc_api").mkdir(parents=True)
+    (tmp_path / "src" / "minicalc_api" / "app.py").write_text(
+        "from fastapi import FastAPI, Form\n"
+        "app = FastAPI()\n"
+        "@app.post('/calculate')\n"
+        "def calculate(a: float = Form(...), b: float = Form(...)): return {'result': a + b}\n"
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_form.py").write_text("from minicalc_api.app import app\n")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\n"
+        "name = 'minicalc-api'\n"
+        "dependencies = ['fastapi>=0.100.0', 'uvicorn>=0.23.0']\n"
+        "[tool.pytest.ini_options]\n"
+        "pythonpath = ['src']\n"
+    )
+
+    issues = validate_delivery_profile(tmp_path, {"stack_id": "python-web"})
+
+    assert any(issue["code"] == "python-web-missing-python-multipart" for issue in issues)
+
+
+def test_python_web_accepts_form_routes_with_python_multipart_dependency(tmp_path: Path) -> None:
+    (tmp_path / "src" / "minicalc_api").mkdir(parents=True)
+    (tmp_path / "src" / "minicalc_api" / "app.py").write_text(
+        "from fastapi import FastAPI, Form\n"
+        "app = FastAPI()\n"
+        "@app.post('/calculate')\n"
+        "def calculate(a: float = Form(...), b: float = Form(...)): return {'result': a + b}\n"
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_form.py").write_text("from minicalc_api.app import app\n")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\n"
+        "name = 'minicalc-api'\n"
+        "dependencies = ['fastapi>=0.100.0', 'uvicorn>=0.23.0', 'python-multipart>=0.0.9']\n"
+        "[tool.pytest.ini_options]\n"
+        "pythonpath = ['src']\n"
+    )
+
+    issues = validate_delivery_profile(tmp_path, {"stack_id": "python-web"})
+
+    assert not any(issue["code"] == "python-web-missing-python-multipart" for issue in issues)
+
+
 def test_python_web_rejects_multiple_test_app_imports(tmp_path: Path) -> None:
     (tmp_path / "src" / "minicalc_api").mkdir(parents=True)
     (tmp_path / "src" / "minicalc_api" / "app.py").write_text(
