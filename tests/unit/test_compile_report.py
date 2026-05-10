@@ -31,6 +31,18 @@ def test_compile_report_includes_product_acceptance(tmp_git_repo: Path) -> None:
             "accepted": False,
             "artifact_level": "prototype",
             "coverage": [{"id": "T1", "title": "Calculator", "status": "passed"}],
+            "acceptance_items": [
+                {"id": "task:T1", "title": "Calculator", "status": "pass", "kind": "task"},
+                {"id": "delivery-profile:language-mismatch", "title": "Swift required", "status": "fail", "kind": "delivery-profile"},
+            ],
+            "verifier_rounds": [
+                {
+                    "id": "acceptance-verifier-1",
+                    "status": "fail",
+                    "verifier": "deterministic-acceptance-verifier",
+                    "feedback": "Blocking acceptance item failed.",
+                }
+            ],
             "blockers": [{"code": "language-mismatch", "message": "Swift required"}],
             "warnings": [],
             "evidence": {
@@ -56,3 +68,6 @@ def test_compile_report_includes_product_acceptance(tmp_git_repo: Path) -> None:
     assert "Delivery Profile" in report
     assert "native-macos-app" in report
     assert "language-mismatch" in report
+    assert "Acceptance Items" in report
+    assert "Verifier Rounds" in report
+    assert "deterministic-acceptance-verifier" in report

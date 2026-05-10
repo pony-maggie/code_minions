@@ -100,6 +100,76 @@ def _issue(code: str, message: str, severity: str = "blocker") -> dict[str, str]
     return {"code": code, "severity": severity, "message": message}
 
 
+def _acceptance_item(
+    item_id: str,
+    *,
+    title: str,
+    kind: str,
+    status: str,
+    message: str = "",
+    evidence: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "id": item_id,
+        "title": title,
+        "kind": kind,
+        "status": status,
+        "message": message,
+        "evidence": evidence or {},
+    }
+
+
+def _task_acceptance_item(row: dict[str, Any]) -> dict[str, Any]:
+    status = "pass" if row["status"] != "missing-evidence" else "fail"
+    message = (
+        "Task has passing test evidence and changed files."
+        if status == "pass"
+        else "Task has no passing test evidence or changed files."
+    )
+    return _acceptance_item(
+        f"task:{row['id']}",
+        title=row["title"] or row["id"],
+        kind="task",
+        status=status,
+        message=message,
+        evidence={
+            "task_id": row["id"],
+            "files_changed": row["files_changed"],
+            "tests_passed": row["tests_passed"],
+        },
+    )
+
+
+def _verifier_round(items: list[dict[str, Any]]) -> dict[str, Any]:
+    failures = [item for item in items if item["status"] == "fail"]
+    warnings = [item for item in items if item["status"] == "warn"]
+    if failures:
+        feedback = "\n".join(
+            f"Blocking acceptance item failed: {item['id']} - {item.get('message') or item.get('title', '')}"
+            for item in failures
+        )
+    elif warnings:
+        feedback = "\n".join(
+            f"Acceptance warning: {item['id']} - {item.get('message') or item.get('title', '')}"
+            for item in warnings
+        )
+    else:
+        feedback = "All acceptance items passed."
+    return {
+        "id": "acceptance-verifier-1",
+        "qc_no": 1,
+        "verifier": "deterministic-acceptance-verifier",
+        "status": "fail" if failures else "pass",
+        "verdict": {
+            "pass": not failures,
+            "failures": len(failures),
+            "warnings": len(warnings),
+        },
+        "feedback": feedback,
+        "input_item_ids": [item["id"] for item in items],
+    }
+
+
 def run(ctx) -> dict[str, Any]:
     workdir = Path(ctx.workdir)
     structured_prd = ctx.inputs["structured_prd"]
@@ -123,7 +193,30 @@ def run(ctx) -> dict[str, Any]:
 
     blockers: list[dict[str, str]] = []
     warnings: list[dict[str, str]] = []
-    for issue in validate_delivery_profile(workdir, delivery_profile):
+    acceptance_items = [_task_acceptance_item(row) for row in coverage]
+    delivery_issues = validate_delivery_profile(workdir, delivery_profile)
+    if delivery_issues:
+        for issue in delivery_issues:
+            item_status = "warn" if issue.get("severity", "error") == "warning" else "fail"
+            acceptance_items.append(_acceptance_item(
+                f"delivery-profile:{issue['code']}",
+                title=issue["code"],
+                kind="delivery-profile",
+                status=item_status,
+                message=issue["message"],
+                evidence={"paths": issue.get("paths", []), "repair_hint": issue.get("repair_hint", "")},
+            ))
+    elif delivery_profile:
+        acceptance_items.append(_acceptance_item(
+            "delivery-profile",
+            title="Delivery profile",
+            kind="delivery-profile",
+            status="pass",
+            message="Delivery profile validation passed.",
+            evidence={"stack_id": delivery_profile.get("stack_id", "")},
+        ))
+
+    for issue in delivery_issues:
         if issue.get("severity", "error") == "warning":
             warnings.append(_issue(issue["code"], issue["message"], severity="warning"))
         else:
@@ -131,37 +224,74 @@ def run(ctx) -> dict[str, Any]:
 
     requires_macos, requires_swift = _requires_macos_swift(structured_prd)
     if requires_swift and languages.get("swift", 0) == 0:
+        message = "PRD requires Swift/SwiftUI/AppKit, but the worktree contains no Swift implementation files."
         blockers.append(_issue(
             "language-mismatch",
-            "PRD requires Swift/SwiftUI/AppKit, but the worktree contains no Swift implementation files.",
+            message,
+        ))
+        acceptance_items.append(_acceptance_item(
+            "platform:language-mismatch",
+            title="Swift implementation files",
+            kind="platform",
+            status="fail",
+            message=message,
+            evidence={"languages": languages},
         ))
     if requires_macos and not evidence["has_swift_app_entry"]:
+        message = "PRD requires a macOS native application, but no Swift app entry point was found."
         blockers.append(_issue(
             "platform-mismatch",
-            "PRD requires a macOS native application, but no Swift app entry point was found.",
+            message,
+        ))
+        acceptance_items.append(_acceptance_item(
+            "platform:platform-mismatch",
+            title="macOS app entry point",
+            kind="platform",
+            status="fail",
+            message=message,
+            evidence={"has_swift_app_entry": evidence["has_swift_app_entry"]},
         ))
     if requires_macos and evidence["build_system"] not in {"xcodegen", "xcodeproj", "swift-package"}:
+        message = "PRD requires a macOS deliverable, but no Xcode, XcodeGen, or SwiftPM build definition was found."
         blockers.append(_issue(
             "missing-macos-build",
-            "PRD requires a macOS deliverable, but no Xcode, XcodeGen, or SwiftPM build definition was found.",
+            message,
+        ))
+        acceptance_items.append(_acceptance_item(
+            "platform:missing-macos-build",
+            title="macOS build definition",
+            kind="platform",
+            status="fail",
+            message=message,
+            evidence={"build_system": evidence["build_system"]},
         ))
     for row in coverage:
         if row["status"] == "missing-evidence":
-            blockers.append(_issue(
-                "missing-task-evidence",
-                f"Task {row['id']} has no passing test evidence or changed files.",
-            ))
+            blockers.append(_issue("missing-task-evidence", f"Task {row['id']} has no passing test evidence or changed files."))
     if languages.get("python", 0) and requires_swift:
+        message = "Python files are present in a PRD that asks for Swift/macOS; classify this as prototype evidence only."
         warnings.append(_issue(
             "prototype-language",
-            "Python files are present in a PRD that asks for Swift/macOS; classify this as prototype evidence only.",
+            message,
             severity="warning",
         ))
+        acceptance_items.append(_acceptance_item(
+            "artifact:prototype-language",
+            title="Prototype language evidence",
+            kind="artifact",
+            status="warn",
+            message=message,
+            evidence={"languages": languages},
+        ))
+
+    verifier_rounds = [_verifier_round(acceptance_items)]
 
     return {
         "accepted": not blockers,
         "artifact_level": artifact_level,
         "coverage": coverage,
+        "acceptance_items": acceptance_items,
+        "verifier_rounds": verifier_rounds,
         "blockers": blockers,
         "warnings": warnings,
         "evidence": {**evidence, "delivery_profile": delivery_profile},

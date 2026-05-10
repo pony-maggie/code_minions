@@ -181,3 +181,85 @@ def test_relaxed_delivery_profile_issues_are_warnings_not_blockers(tmp_git_repo:
     assert out["accepted"] is True
     assert not out["blockers"]
     assert any(issue["code"] == "missing-test-file" for issue in out["warnings"])
+
+
+def test_acceptance_review_outputs_acceptance_items_and_verifier_rounds(tmp_git_repo: Path) -> None:
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src" / "minicalc_api").mkdir(parents=True)
+    (tmp_git_repo / "src" / "minicalc_api" / "__init__.py").write_text("")
+    (tmp_git_repo / "src" / "minicalc_api" / "app.py").write_text(
+        "from fastapi import FastAPI\napp = FastAPI()\n@app.get('/health')\ndef health(): return {'status': 'ok'}\n"
+    )
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "tests" / "test_app.py").write_text("from minicalc_api.app import app\n")
+    (tmp_git_repo / "pyproject.toml").write_text(
+        "[project]\nname = 'minicalc-api'\n[tool.pytest.ini_options]\npythonpath = ['src']\n"
+    )
+
+    ctx = type("Ctx", (), {})()
+    ctx.workdir = tmp_git_repo
+    ctx.inputs = {
+        "structured_prd": {
+            "goal": "Build a Python FastAPI web API",
+            "delivery_profile": {"stack_id": "python-web", "required_files": ["pyproject.toml", "src", "tests"]},
+        },
+        "tasks": [{"id": "T1", "title": "FastAPI scaffold"}],
+        "implement_results": [{
+            "files_changed": ["pyproject.toml", "src/minicalc_api/app.py", "tests/test_app.py"],
+            "test_result": {"passed": True, "output": "1 passed"},
+        }],
+    }
+
+    out = entrypoint.run(ctx)
+
+    assert out["accepted"] is True
+    assert any(item["id"] == "task:T1" and item["status"] == "pass" for item in out["acceptance_items"])
+    assert any(item["id"] == "delivery-profile" and item["status"] == "pass" for item in out["acceptance_items"])
+    assert out["verifier_rounds"] == [
+        {
+            "id": "acceptance-verifier-1",
+            "qc_no": 1,
+            "verifier": "deterministic-acceptance-verifier",
+            "status": "pass",
+            "verdict": {"pass": True, "failures": 0, "warnings": 0},
+            "feedback": "All acceptance items passed.",
+            "input_item_ids": [item["id"] for item in out["acceptance_items"]],
+        }
+    ]
+
+
+def test_acceptance_review_verifier_round_fails_on_blocking_items(tmp_git_repo: Path) -> None:
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "server.py").write_text("print('server')\n")
+
+    ctx = type("Ctx", (), {})()
+    ctx.workdir = tmp_git_repo
+    ctx.inputs = {
+        "structured_prd": {
+            "goal": "Build a Go web service",
+            "delivery_profile": {
+                "kind": "web-service",
+                "language": "go",
+                "build_system": "go-mod",
+                "required_files": ["go.mod", "**/*.go"],
+                "forbidden_product_languages": ["python"],
+            },
+        },
+        "tasks": [{"id": "T1", "title": "Go service scaffold"}],
+        "implement_results": [{
+            "files_changed": ["src/server.py"],
+            "test_result": {"passed": True, "output": "1 passed"},
+        }],
+    }
+
+    out = entrypoint.run(ctx)
+
+    assert out["accepted"] is False
+    assert any(item["id"] == "delivery-profile:missing-required-file" for item in out["acceptance_items"])
+    assert any(item["id"] == "delivery-profile:forbidden-product-language" for item in out["acceptance_items"])
+    verifier = out["verifier_rounds"][0]
+    assert verifier["status"] == "fail"
+    assert verifier["verdict"]["pass"] is False
+    assert verifier["verdict"]["failures"] >= 2
+    assert "Blocking acceptance item" in verifier["feedback"]

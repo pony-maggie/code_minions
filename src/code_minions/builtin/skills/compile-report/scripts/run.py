@@ -79,6 +79,38 @@ def _acceptance_section(acceptance: dict[str, Any] | None) -> list[str]:
     else:
         lines.append("- No coverage rows")
     lines.append("")
+
+    acceptance_items = acceptance.get("acceptance_items") or []
+    lines.append("### Acceptance Items")
+    if acceptance_items:
+        lines.append("| Item | Kind | Status | Message |")
+        lines.append("|---|---|---|---|")
+        for item in acceptance_items:
+            lines.append(
+                f"| `{item.get('id', '')}` "
+                f"| {item.get('kind', '')} "
+                f"| {item.get('status', '')} "
+                f"| {item.get('message', '')} |"
+            )
+    else:
+        lines.append("- No acceptance items")
+    lines.append("")
+
+    verifier_rounds = acceptance.get("verifier_rounds") or []
+    lines.append("### Verifier Rounds")
+    if verifier_rounds:
+        lines.append("| Round | Verifier | Status | Feedback |")
+        lines.append("|---|---|---|---|")
+        for round_ in verifier_rounds:
+            lines.append(
+                f"| `{round_.get('id', '')}` "
+                f"| {round_.get('verifier', '')} "
+                f"| {round_.get('status', '')} "
+                f"| {round_.get('feedback', '')} |"
+            )
+    else:
+        lines.append("- No verifier rounds")
+    lines.append("")
     return lines
 
 
