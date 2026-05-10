@@ -1254,6 +1254,57 @@ def test_python_web_rejects_inline_script_when_javascript_is_forbidden(tmp_path:
     assert any(issue["code"] == "python-web-forbidden-inline-javascript" for issue in issues)
 
 
+def test_python_web_rejects_raw_jinja_markers_without_template_renderer(tmp_path: Path) -> None:
+    (tmp_path / "src" / "minicalc_api").mkdir(parents=True)
+    (tmp_path / "src" / "minicalc_api" / "app.py").write_text(
+        "from fastapi import FastAPI\n"
+        "from fastapi.responses import HTMLResponse\n"
+        "app = FastAPI()\n"
+        "@app.get('/')\n"
+        "def home():\n"
+        "    return HTMLResponse('<h1>{{ title }}</h1>{% for row in rows %}<p>{{ row }}</p>{% endfor %}')\n"
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_home.py").write_text("from minicalc_api.app import app\n")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\n"
+        "name = 'minicalc-api'\n"
+        "dependencies = ['fastapi>=0.100.0', 'uvicorn>=0.23.0']\n"
+        "[tool.pytest.ini_options]\n"
+        "pythonpath = ['src']\n"
+    )
+
+    issues = validate_delivery_profile(tmp_path, {"stack_id": "python-web"})
+
+    assert any(issue["code"] == "python-web-unrendered-template-markers" for issue in issues)
+
+
+def test_python_web_allows_jinja_markers_with_template_renderer(tmp_path: Path) -> None:
+    (tmp_path / "src" / "minicalc_api").mkdir(parents=True)
+    (tmp_path / "src" / "minicalc_api" / "app.py").write_text(
+        "from fastapi import FastAPI, Request\n"
+        "from fastapi.templating import Jinja2Templates\n"
+        "app = FastAPI()\n"
+        "templates = Jinja2Templates(directory='templates')\n"
+        "@app.get('/')\n"
+        "def home(request: Request):\n"
+        "    return templates.TemplateResponse(request, 'index.html', {'title': '{{ title }}'})\n"
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_home.py").write_text("from minicalc_api.app import app\n")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\n"
+        "name = 'minicalc-api'\n"
+        "dependencies = ['fastapi>=0.100.0', 'uvicorn>=0.23.0', 'jinja2>=3.1.0']\n"
+        "[tool.pytest.ini_options]\n"
+        "pythonpath = ['src']\n"
+    )
+
+    issues = validate_delivery_profile(tmp_path, {"stack_id": "python-web"})
+
+    assert not any(issue["code"] == "python-web-unrendered-template-markers" for issue in issues)
+
+
 def test_python_web_rejects_multiple_test_app_imports(tmp_path: Path) -> None:
     (tmp_path / "src" / "minicalc_api").mkdir(parents=True)
     (tmp_path / "src" / "minicalc_api" / "app.py").write_text(

@@ -83,6 +83,7 @@ PYTHON_SRC_MODULE_IMPORT_RE = re.compile(r"""(?m)^\s*(?:from\s+src(?:\.|\s+impor
 PYTHON_FASTAPI_APP_RE = re.compile(r"""(?m)^\s*app\s*=\s*FastAPI\s*\(""")
 PYTHON_FASTAPI_FORM_RE = re.compile(r"""\bForm\s*\(""")
 HTML_SCRIPT_TAG_RE = re.compile(r"""<\s*script\b""", re.IGNORECASE)
+JINJA_TEMPLATE_MARKER_RE = re.compile(r"""({{.*?}}|{%.*?%})""", re.DOTALL)
 FASTAPI_ROUTE_DECORATOR_RE = re.compile(
     r"""@(?:app|router)\.(?P<method>get|post|put|patch|delete)\(\s*['"](?P<path>/[^'"]*)['"]""",
     re.IGNORECASE,
@@ -496,6 +497,27 @@ def _python_web_inline_script_files(workdir: Path) -> list[Path]:
         except OSError:
             continue
         if HTML_SCRIPT_TAG_RE.search(text):
+            paths.append(path)
+    return paths
+
+
+def _python_web_unrendered_template_marker_files(workdir: Path) -> list[Path]:
+    src_dir = workdir / "src"
+    if not src_dir.is_dir():
+        return []
+    paths: list[Path] = []
+    for path in src_dir.rglob("*.py"):
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(errors="ignore")
+        except OSError:
+            continue
+        if (
+            JINJA_TEMPLATE_MARKER_RE.search(text)
+            and "Jinja2Templates" not in text
+            and "TemplateResponse" not in text
+        ):
             paths.append(path)
     return paths
 
@@ -1315,6 +1337,22 @@ def validate_delivery_profile(workdir: Path, profile: dict[str, Any] | None) -> 
                     ),
                     paths=paths,
                 ))
+        unrendered_template_marker_files = _python_web_unrendered_template_marker_files(workdir)
+        if unrendered_template_marker_files:
+            paths = [path.relative_to(workdir).as_posix() for path in unrendered_template_marker_files]
+            issues.append(_delivery_issue(
+                "python-web-unrendered-template-markers",
+                (
+                    "Python source contains Jinja-style template markers (`{{ ... }}` or `{% ... %}`) "
+                    "but does not use FastAPI/Jinja template rendering. These markers can leak into "
+                    "the browser as raw page text."
+                ),
+                repair_hint=(
+                    "Either render HTML with `Jinja2Templates`/`TemplateResponse`, or remove Jinja "
+                    "markers and build the server-rendered HTML string directly before returning it."
+                ),
+                paths=paths,
+            ))
         fastapi_app_modules = _python_web_fastapi_app_modules(workdir)
         if len(fastapi_app_modules) > 1:
             paths = [path.relative_to(workdir).as_posix() for path in fastapi_app_modules]
