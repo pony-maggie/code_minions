@@ -1715,6 +1715,7 @@ def test_python_web_guidance_rejects_dict_response_model():
     assert "Pydantic model" in guidance
     assert "python-multipart" in guidance
     assert "`/openapi.json`" in guidance
+    assert "Do not make HTML tests depend on single vs double attribute quotes" in guidance
 
 
 def test_xcodegen_duplicate_product_name_failure_gets_repair_hint(tmp_git_repo: Path, monkeypatch):

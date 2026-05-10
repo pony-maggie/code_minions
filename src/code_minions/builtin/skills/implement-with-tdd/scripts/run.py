@@ -639,6 +639,8 @@ def _delivery_guidance_context(ticket: dict[str, Any]) -> str:
             "FastAPI `/docs` is a Swagger shell whose route list is loaded from `/openapi.json`; "
             "tests should assert `/docs` returns 200 and assert declared paths through `/openapi.json`, "
             "not by searching for route strings in the raw `/docs` HTML. "
+            "Do not make HTML tests depend on single vs double attribute quotes; use tolerant checks "
+            "such as a regex for `type=['\"]number['\"]`, an HTML parser, or semantic browser tests. "
             "Tests must import from the package, such as `from <package>.app import app`, never "
             "`from src.main import app` or `import src.*`. Configure pytest for the src layout in "
             "`pyproject.toml` with `[tool.pytest.ini_options]`, `pythonpath = [\"src\"]`, and "
