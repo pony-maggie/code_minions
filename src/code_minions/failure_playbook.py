@@ -130,6 +130,12 @@ PLAYBOOK: tuple[tuple[tuple[str, ...], str], ...] = (
         "or an explicit `INFOPLIST_FILE`/`info.path` for every application and unit-test target, "
         "especially the test bundle target.",
     ),
+    (
+        ("attributeerror: 'dict' object has no attribute '__module__'", "response_model"),
+        "FastAPI `response_model` must be a Pydantic model class or valid Python type, not a dict "
+        "literal. Define a Pydantic model such as `class AddResponse(BaseModel): result: float`, use "
+        "`response_model=AddResponse`, or omit `response_model` for simple dict responses.",
+    ),
 )
 
 

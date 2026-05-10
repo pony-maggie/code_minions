@@ -213,6 +213,17 @@ def test_playbook_hints_for_xcodegen_missing_infoplist_generation() -> None:
     ]
 
 
+def test_playbook_hints_for_fastapi_dict_response_model() -> None:
+    hints = failure_hints_for_output(
+        "AttributeError: 'dict' object has no attribute '__module__'\n"
+        "@app.post('/calculate/add', response_model={'result': float})"
+    )
+
+    assert hints
+    assert "FastAPI `response_model`" in hints[0]
+    assert "Pydantic model" in hints[0]
+
+
 def test_failure_findings_for_output_preserves_structured_runtime_hint() -> None:
     findings = failure_findings_for_output(
         "ReferenceError: describe is not defined",

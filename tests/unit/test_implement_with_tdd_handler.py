@@ -1705,6 +1705,16 @@ def test_turn_based_board_game_guidance_defers_game_over_sequences_before_win_de
     assert "Do not write or keep tests named `已存在游戏结束状态`" in guidance
 
 
+def test_python_web_guidance_rejects_dict_response_model():
+    entrypoint = _load_entrypoint()
+    ticket = {"delivery_profile": {"stack_id": "python-web"}}
+
+    guidance = entrypoint._delivery_guidance_context(ticket)
+
+    assert "Do not pass a dict literal to FastAPI `response_model`" in guidance
+    assert "Pydantic model" in guidance
+
+
 def test_xcodegen_duplicate_product_name_failure_gets_repair_hint(tmp_git_repo: Path, monkeypatch):
     entrypoint = _load_entrypoint()
     (tmp_git_repo / "project.yml").write_text(
