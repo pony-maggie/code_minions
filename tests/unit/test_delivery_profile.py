@@ -1154,6 +1154,32 @@ def test_python_web_rejects_tested_route_without_fastapi_decorator(tmp_path: Pat
     assert any(issue["code"] == "python-web-tested-route-missing" for issue in issues)
 
 
+def test_python_web_allows_fastapi_builtin_documentation_routes(tmp_path: Path) -> None:
+    (tmp_path / "src" / "minicalc_api").mkdir(parents=True)
+    (tmp_path / "src" / "minicalc_api" / "app.py").write_text(
+        "from fastapi import FastAPI\n"
+        "app = FastAPI()\n"
+        "@app.get('/health')\n"
+        "def health(): return {'status': 'ok'}\n"
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_docs.py").write_text(
+        "from fastapi.testclient import TestClient\n"
+        "from minicalc_api.app import app\n"
+        "def test_docs():\n"
+        "    client = TestClient(app)\n"
+        "    assert client.get('/docs').status_code == 200\n"
+        "    assert client.get('/openapi.json').status_code == 200\n"
+    )
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname = 'minicalc-api'\n[tool.pytest.ini_options]\npythonpath = ['src']\n"
+    )
+
+    issues = validate_delivery_profile(tmp_path, {"stack_id": "python-web"})
+
+    assert not any(issue["code"] == "python-web-tested-route-missing" for issue in issues)
+
+
 def test_python_web_rejects_multiple_test_app_imports(tmp_path: Path) -> None:
     (tmp_path / "src" / "minicalc_api").mkdir(parents=True)
     (tmp_path / "src" / "minicalc_api" / "app.py").write_text(

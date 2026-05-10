@@ -99,6 +99,7 @@ POSTCSS_CONFIG_NAMES = (
     "postcss.config.ts",
 )
 POSTCSS_PLUGIN_PACKAGES = ("tailwindcss", "autoprefixer", "postcss-preset-env")
+FASTAPI_BUILTIN_GET_ROUTES = {"/docs", "/docs/oauth2-redirect", "/openapi.json", "/redoc"}
 
 
 def _text_from_prd(structured_prd: dict[str, Any]) -> str:
@@ -502,6 +503,8 @@ def _python_web_missing_tested_routes(workdir: Path) -> list[tuple[Path, str, st
             method = match.group("method").lower()
             route_path = match.group("path")
             key = (path, method, route_path)
+            if method == "get" and route_path in FASTAPI_BUILTIN_GET_ROUTES:
+                continue
             if (method, route_path) not in declared_routes and key not in seen:
                 missing.append(key)
                 seen.add(key)
