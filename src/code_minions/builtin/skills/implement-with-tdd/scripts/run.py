@@ -643,7 +643,7 @@ def _delivery_guidance_context(ticket: dict[str, Any]) -> str:
             "such as a regex for `type=['\"]number['\"]`, an HTML parser, or semantic browser tests. "
             "If you use Jinja2Templates in a src-layout package, set the directory from the package "
             "file, for example `Path(__file__).parent / \"templates\"`, not a process-cwd-relative "
-            "`minicalc_api/templates` path. "
+            "`minicalc_api/templates` path, and add `jinja2>=3.1.0` to `[project].dependencies`. "
             "Tests must import from the package, such as `from <package>.app import app`, never "
             "`from src.main import app` or `import src.*`. Configure pytest for the src layout in "
             "`pyproject.toml` with `[tool.pytest.ini_options]`, `pythonpath = [\"src\"]`, and "

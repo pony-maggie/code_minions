@@ -455,6 +455,12 @@ def _python_web_declares_form_dependency(workdir: Path) -> bool:
     return any(dependency.startswith("fastapi[standard]") or dependency.startswith("fastapi[all]") for dependency in normalized)
 
 
+def _python_web_declares_jinja_dependency(workdir: Path) -> bool:
+    dependencies = _pyproject_project_dependencies(workdir)
+    names = {_dependency_name(dependency) for dependency in dependencies}
+    return "jinja2" in names
+
+
 def _python_web_canonical_package(workdir: Path) -> str:
     project_name = _pyproject_project_name(workdir)
     if not project_name:
@@ -518,6 +524,23 @@ def _python_web_unrendered_template_marker_files(workdir: Path) -> list[Path]:
             and "Jinja2Templates" not in text
             and "TemplateResponse" not in text
         ):
+            paths.append(path)
+    return paths
+
+
+def _python_web_jinja_template_files(workdir: Path) -> list[Path]:
+    src_dir = workdir / "src"
+    if not src_dir.is_dir():
+        return []
+    paths: list[Path] = []
+    for path in src_dir.rglob("*.py"):
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(errors="ignore")
+        except OSError:
+            continue
+        if "Jinja2Templates" in text:
             paths.append(path)
     return paths
 
@@ -1317,6 +1340,19 @@ def validate_delivery_profile(workdir: Path, profile: dict[str, Any] | None) -> 
                     "Add `python-multipart>=0.0.9` to `[project].dependencies`, or avoid "
                     "`Form(...)` and parse form bodies without FastAPI's multipart dependency."
                 ),
+                paths=paths + ["pyproject.toml"],
+            ))
+        jinja_template_files = _python_web_jinja_template_files(workdir)
+        if jinja_template_files and not _python_web_declares_jinja_dependency(workdir):
+            paths = [path.relative_to(workdir).as_posix() for path in jinja_template_files]
+            issues.append(_delivery_issue(
+                "python-web-missing-jinja2",
+                (
+                    "FastAPI Jinja template rendering uses `Jinja2Templates`, but "
+                    "`pyproject.toml` does not declare `jinja2` as a runtime dependency. "
+                    "Fresh installs can fail while importing the ASGI app."
+                ),
+                repair_hint="Add `jinja2>=3.1.0` to `[project].dependencies`, or avoid Jinja2Templates.",
                 paths=paths + ["pyproject.toml"],
             ))
         if "javascript" in forbidden:

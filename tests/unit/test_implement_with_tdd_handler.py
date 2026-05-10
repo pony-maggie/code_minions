@@ -1717,6 +1717,7 @@ def test_python_web_guidance_rejects_dict_response_model():
     assert "`/openapi.json`" in guidance
     assert "Do not make HTML tests depend on single vs double attribute quotes" in guidance
     assert "Path(__file__).parent / \"templates\"" in guidance
+    assert "jinja2" in guidance
 
 
 def test_xcodegen_duplicate_product_name_failure_gets_repair_hint(tmp_git_repo: Path, monkeypatch):
