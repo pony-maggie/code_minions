@@ -82,8 +82,9 @@ def _file_options_for_inputs(inputs: dict[str, Any]) -> dict[str, list[str]]:
 async def new_run_page(request: Request) -> HTMLResponse:
     templates = request.app.state.templates
     return templates.TemplateResponse(
+        request,
         "new_run.html",
-        {"request": request, "workflow_names": _list_workflow_names()},
+        {"workflow_names": _list_workflow_names()},
     )
 
 
@@ -95,9 +96,9 @@ async def new_run_inputs_fragment(request: Request, workflow: str) -> HTMLRespon
         raise HTTPException(status_code=404, detail=str(e)) from e
     templates = request.app.state.templates
     return templates.TemplateResponse(
+        request,
         "partials/inputs_form.html",
         {
-            "request": request,
             "workflow": workflow,
             "inputs": wf.inputs,
             "file_options": _file_options_for_inputs(wf.inputs),

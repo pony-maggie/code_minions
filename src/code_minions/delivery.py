@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -542,6 +543,36 @@ def _python_web_jinja_template_files(workdir: Path) -> list[Path]:
             continue
         if "Jinja2Templates" in text:
             paths.append(path)
+    return paths
+
+
+def _python_web_legacy_template_response_order_files(workdir: Path) -> list[Path]:
+    src_dir = workdir / "src"
+    if not src_dir.is_dir():
+        return []
+    paths: list[Path] = []
+    for path in src_dir.rglob("*.py"):
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(errors="ignore")
+            tree = ast.parse(text)
+        except (OSError, SyntaxError):
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not isinstance(func, ast.Attribute) or func.attr != "TemplateResponse":
+                continue
+            if (
+                len(node.args) >= 2
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+                and isinstance(node.args[1], ast.Dict)
+            ):
+                paths.append(path)
+                break
     return paths
 
 
@@ -1354,6 +1385,23 @@ def validate_delivery_profile(workdir: Path, profile: dict[str, Any] | None) -> 
                 ),
                 repair_hint="Add `jinja2>=3.1.0` to `[project].dependencies`, or avoid Jinja2Templates.",
                 paths=paths + ["pyproject.toml"],
+            ))
+        legacy_template_response_files = _python_web_legacy_template_response_order_files(workdir)
+        if legacy_template_response_files:
+            paths = [path.relative_to(workdir).as_posix() for path in legacy_template_response_files]
+            issues.append(_delivery_issue(
+                "python-web-legacy-template-response-order",
+                (
+                    "FastAPI/Jinja `TemplateResponse` uses the legacy positional order "
+                    "`TemplateResponse(name, context)`. FastAPI 0.136 / Starlette 1.0 require "
+                    "`TemplateResponse(request, name, context)`, otherwise page requests can fail "
+                    "with `TypeError: unhashable type: 'dict'`."
+                ),
+                repair_hint=(
+                    "Pass the request as the first positional argument, for example "
+                    "`templates.TemplateResponse(request, 'index.html', {'title': title})`."
+                ),
+                paths=paths,
             ))
         if "javascript" in forbidden:
             inline_script_files = _python_web_inline_script_files(workdir)

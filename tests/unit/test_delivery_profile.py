@@ -1355,6 +1355,35 @@ def test_python_web_accepts_jinja_templates_with_jinja2_dependency(tmp_path: Pat
     assert not any(issue["code"] == "python-web-missing-jinja2" for issue in issues)
 
 
+def test_python_web_rejects_legacy_template_response_argument_order(tmp_path: Path) -> None:
+    (tmp_path / "src" / "minicalc_api").mkdir(parents=True)
+    (tmp_path / "src" / "minicalc_api" / "app.py").write_text(
+        "from fastapi import FastAPI, Request\n"
+        "from fastapi.templating import Jinja2Templates\n"
+        "app = FastAPI()\n"
+        "templates = Jinja2Templates(directory='templates')\n"
+        "@app.get('/')\n"
+        "def home(request: Request):\n"
+        "    return templates.TemplateResponse(\n"
+        "        'index.html',\n"
+        "        {'request': request, 'title': 'MiniCalc'},\n"
+        "    )\n"
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_home.py").write_text("from minicalc_api.app import app\n")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\n"
+        "name = 'minicalc-api'\n"
+        "dependencies = ['fastapi>=0.100.0', 'uvicorn>=0.23.0', 'jinja2>=3.1.0']\n"
+        "[tool.pytest.ini_options]\n"
+        "pythonpath = ['src']\n"
+    )
+
+    issues = validate_delivery_profile(tmp_path, {"stack_id": "python-web"})
+
+    assert any(issue["code"] == "python-web-legacy-template-response-order" for issue in issues)
+
+
 def test_python_web_rejects_multiple_test_app_imports(tmp_path: Path) -> None:
     (tmp_path / "src" / "minicalc_api").mkdir(parents=True)
     (tmp_path / "src" / "minicalc_api" / "app.py").write_text(

@@ -40,8 +40,9 @@ async def runs_list(request: Request) -> HTMLResponse:
     runs = store.list_runs(limit=30)
     templates = request.app.state.templates
     return templates.TemplateResponse(
+        request,
         "runs_list.html",
-        {"request": request, "runs": runs},
+        {"runs": runs},
     )
 
 
@@ -54,8 +55,9 @@ async def run_detail(request: Request, run_id: str) -> HTMLResponse:
     steps = store.list_steps(run_id)
     templates = request.app.state.templates
     return templates.TemplateResponse(
+        request,
         "run_detail.html",
-        {"request": request, "run": run, "steps": steps, "gate_findings": _step_findings(steps)},
+        {"run": run, "steps": steps, "gate_findings": _step_findings(steps)},
     )
 
 
