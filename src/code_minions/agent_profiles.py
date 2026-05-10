@@ -67,7 +67,8 @@ def _python_web_profile(role: str, strictness: str) -> AgentProfile:
             "`src/<package>/app.py` exports the ASGI `app`, tests import from `<package>.app`, "
             "later tasks extend that same package instead of creating a second app package, "
             "existing route paths stay stable across tasks, "
-            "and `pyproject.toml` configures pytest with `pythonpath = ['src']`.",
+            "`pyproject.toml` configures pytest with `pythonpath = ['src']`, "
+            "and FastAPI `Form(...)` routes declare `python-multipart` as a runtime dependency.",
         ),
     )
 

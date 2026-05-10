@@ -634,6 +634,8 @@ def _delivery_guidance_context(ticket: dict[str, Any]) -> str:
             "Do not pass a dict literal to FastAPI `response_model`; use a Pydantic model class such "
             "as `class AddResponse(BaseModel): result: float`, a normal Python type, or omit "
             "`response_model` when returning a simple dict. "
+            "If you use FastAPI `Form(...)` for HTML form posts, add `python-multipart>=0.0.9` "
+            "to `[project].dependencies` in `pyproject.toml`; FastAPI requires it at import/runtime. "
             "Tests must import from the package, such as `from <package>.app import app`, never "
             "`from src.main import app` or `import src.*`. Configure pytest for the src layout in "
             "`pyproject.toml` with `[tool.pytest.ini_options]`, `pythonpath = [\"src\"]`, and "

@@ -42,6 +42,7 @@ def test_python_web_implementer_profile_guides_canonical_src_app_layout() -> Non
     guidance = "\n".join(profile.guidance)
     assert "FastAPI" in guidance
     assert "src/<package>/app.py" in guidance
+    assert "python-multipart" in guidance
 
 
 def test_unknown_requested_profile_falls_back_with_warning() -> None:
