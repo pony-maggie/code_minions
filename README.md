@@ -90,15 +90,19 @@ the hood, so OpenAI, Anthropic, Gemini, DeepSeek, MiniMax, Ollama, and other
 LiteLLM-compatible providers share the same workflow engine. In the common
 cloud-provider case, setup is just:
 
-1. Add the provider/model to `devflow.yaml`.
-2. Export the referenced API key environment variable.
-3. Set `llm.default` to the provider you want to use.
+1. Add provider/model entries to `devflow.yaml`.
+2. Export the referenced API key environment variables.
+3. Set `llm.default` to the fallback provider, and optionally set
+   `llm.roles` for role-specific providers.
 
 Example:
 
 ```yaml
 llm:
   default: minimax
+  roles:
+    implementer: minimax
+    reviewer: anthropic
   providers:
     openai:
       model: gpt-5.5
@@ -114,6 +118,14 @@ llm:
       api_key_env: MINIMAX_API_KEY
       api_base: https://api.minimaxi.com/v1
 ```
+
+`llm.roles` is optional. When present, a skill whose `SKILL.md` declares a
+matching `role` uses that provider instead of `llm.default`. The built-in
+implementation loop declares `role: implementer`, and `ai-code-review` declares
+`role: reviewer`, so implementation and AI review calls can run on different
+models/providers. Each role provider must also be listed under `llm.providers`
+and have its API key available. Deterministic product/browser acceptance skills
+do not use an LLM provider.
 
 For provider details, Jira/GitHub MCP examples, and full PRD-to-PR
 prerequisites, follow the [quickstart](docs/quickstart.md).

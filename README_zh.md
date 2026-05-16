@@ -79,14 +79,18 @@ LiteLLM 兼容 provider，都可以复用同一套 workflow engine。对常见�
 配置通常只需要三步：
 
 1. 在 `devflow.yaml` 里加入 provider/model。
-2. 导出该 provider 对应的 API key 环境变量。
-3. 把 `llm.default` 切到你想使用的 provider。
+2. 导出这些 provider 对应的 API key 环境变量。
+3. 把 `llm.default` 设为默认兜底 provider；如有需要，再用
+   `llm.roles` 为不同角色指定不同 provider。
 
 示例：
 
 ```yaml
 llm:
   default: minimax
+  roles:
+    implementer: minimax
+    reviewer: anthropic
   providers:
     openai:
       model: gpt-5.5
@@ -102,6 +106,13 @@ llm:
       api_key_env: MINIMAX_API_KEY
       api_base: https://api.minimaxi.com/v1
 ```
+
+`llm.roles` 是可选配置。当某个 skill 的 `SKILL.md` 声明了匹配的
+`role` 时，它会使用该 role 指定的 provider，而不是 `llm.default`。
+内置实现循环声明了 `role: implementer`，`ai-code-review` 声明了
+`role: reviewer`，所以实现和 AI review 可以使用不同模型/provider。
+每个 role 指向的 provider 都必须写在 `llm.providers` 下，并且对应 API key
+可用。确定性的 product/browser acceptance skill 本身不调用 LLM provider。
 
 LLM provider 细节、Jira/GitHub MCP 示例、完整 PRD-to-PR 前置条件，请看
 [快速上手](docs/quickstart.md)。
