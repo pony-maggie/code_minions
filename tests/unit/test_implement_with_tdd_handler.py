@@ -19,6 +19,17 @@ def _load_entrypoint():
     return mod
 
 
+def test_compact_test_output_keeps_start_and_end() -> None:
+    entrypoint = _load_entrypoint()
+    output = "FIRST FAILURE\n" + ("middle\n" * 100) + "LAST FAILURE\n"
+
+    compacted = entrypoint._compact_test_output(output, limit=80)
+
+    assert "FIRST FAILURE" in compacted
+    assert "LAST FAILURE" in compacted
+    assert "truncated" in compacted
+
+
 def test_happy_path_one_round(tmp_git_repo: Path, monkeypatch):
     entrypoint = _load_entrypoint()
 
@@ -39,7 +50,15 @@ def test_happy_path_one_round(tmp_git_repo: Path, monkeypatch):
     monkeypatch.setattr("subprocess.run", fake_run)
 
     ctx = MagicMock()
-    ctx.inputs = {"ticket": {"id": "T1", "title": "hello"}}
+    ctx.inputs = {
+        "ticket": {
+            "id": "T1",
+            "title": "hello",
+            "trace_id": "cm_task_1",
+            "expected_paths": ["x.py", "tests/**"],
+            "acceptance_criteria": ["x.py is created"],
+        }
+    }
     ctx.workdir = tmp_git_repo
     ctx.llm = llm
     ctx.invoke_skill = invoke_skill
@@ -48,6 +67,86 @@ def test_happy_path_one_round(tmp_git_repo: Path, monkeypatch):
     assert out["test_result"]["passed"] is True
     assert out["rounds_used"] == 1
     assert out["review_report"]["approved"] is True
+    assert out["trace_id"] == "cm_task_1"
+    assert out["task_id"] == "T1"
+    assert out["plan_commitment"] == {
+        "trace_id": "cm_task_1",
+        "task_id": "T1",
+        "will_change_paths": ["x.py", "tests/**"],
+        "will_not_change_paths": ["paths outside expected_paths"],
+        "acceptance_criteria": ["x.py is created"],
+        "exit_criteria": ["tests pass", "review has no blocker or major findings"],
+    }
+
+
+def test_resume_adopts_existing_worktree_changes_before_coder_call(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+
+    (tmp_git_repo / "x.py").write_text("x = 1\n")
+
+    llm = MagicMock()
+
+    monkeypatch.setattr(entrypoint, "_run_delivery_profile_gate", lambda *args, **kwargs: (True, "", []))
+    monkeypatch.setattr(entrypoint, "_run_tests_with_optional_events", lambda *args, **kwargs: (True, "tests passed"))
+
+    ctx = MagicMock()
+    ctx.inputs = {
+        "ticket": {
+            "id": "T1",
+            "title": "resume",
+            "expected_paths": ["x.py", "tests/**"],
+        }
+    }
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.extras = {"is_resume": True}
+    ctx.skill = SimpleNamespace(meta=SimpleNamespace(policies={"reviewer_max_rounds": 0}))
+
+    out = entrypoint.run(ctx)
+
+    assert out["test_result"]["passed"] is True
+    assert out["files_changed"] == ["x.py"]
+    llm.chat.assert_not_called()
+
+
+def test_initial_run_does_not_adopt_user_project_files_as_resume_changes(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+
+    from code_minions.llm.types import Message, Response, Usage
+
+    (tmp_git_repo / "project.yml").write_text("name: demo\n")
+    llm = MagicMock()
+    llm.chat.return_value = Response(
+        message=Message(
+            role="assistant",
+            content='{"files_written": [{"path": "x.py", "content": "x = 1\\n"}], "reasoning": "initial"}',
+        ),
+        usage=Usage(1, 1),
+        model="gemini",
+        stop_reason="end_turn",
+    )
+
+    monkeypatch.setattr(entrypoint, "_run_delivery_profile_gate", lambda *args, **kwargs: (True, "", []))
+    monkeypatch.setattr(entrypoint, "_run_tests_with_optional_events", lambda *args, **kwargs: (True, "tests passed"))
+
+    ctx = MagicMock()
+    ctx.inputs = {
+        "ticket": {
+            "id": "T1",
+            "title": "initial run",
+            "expected_paths": ["x.py", "tests/**"],
+        }
+    }
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.extras = {"is_resume": False}
+    ctx.skill = SimpleNamespace(meta=SimpleNamespace(policies={"reviewer_max_rounds": 0}))
+
+    out = entrypoint.run(ctx)
+
+    assert out["test_result"]["passed"] is True
+    assert "x.py" in out["files_changed"]
+    llm.chat.assert_called_once()
 
 
 def test_retries_when_llm_returns_invalid_json(tmp_git_repo: Path, monkeypatch):
@@ -186,6 +285,50 @@ def test_retries_when_llm_returns_no_files_written(tmp_git_repo: Path, monkeypat
     assert "files_written" in retry_messages[-1].content
 
 
+def test_retries_when_llm_returns_malformed_files_written_entries(
+    tmp_git_repo: Path,
+    monkeypatch,
+):
+    entrypoint = _load_entrypoint()
+
+    from code_minions.llm.types import Message, Response, Usage
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        Response(
+            message=Message(role="assistant", content='{"files_written": ["src/App.tsx"], "reasoning": "bad"}'),
+            usage=Usage(1, 1),
+            model="fake",
+            stop_reason="end_turn",
+        ),
+        Response(
+            message=Message(
+                role="assistant",
+                content='{"files_written": [{"path": "x.py", "content": "x = 1\\n"}], "reasoning": "ok"}',
+            ),
+            usage=Usage(1, 1),
+            model="fake",
+            stop_reason="end_turn",
+        ),
+    ]
+
+    def fake_run(cmd, **kw):
+        return MagicMock(returncode=0, stdout="abc123\n", stderr="")
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    ctx = MagicMock()
+    ctx.inputs = {"ticket": {"id": "T1", "title": "hello"}}
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.invoke_skill = lambda name, inputs: {"issues": [], "summary": "lgtm", "approved": True}
+
+    out = entrypoint.run(ctx)
+
+    assert out["files_changed"] == ["x.py"]
+    assert llm.chat.call_count == 2
+    retry_messages = llm.chat.call_args_list[1].kwargs["messages"]
+    assert any("path/content entries" in message.content for message in retry_messages)
+
+
 def test_bails_when_tests_never_green(tmp_git_repo: Path, monkeypatch):
     entrypoint = _load_entrypoint()
     from code_minions.engine.skill_runtime import SkillExecutionError
@@ -216,6 +359,361 @@ def test_bails_when_tests_never_green(tmp_git_repo: Path, monkeypatch):
         assert "aborted" in e.output["review_report"]["summary"]
     else:
         raise AssertionError("expected SkillExecutionError")
+
+
+def test_repair_cannot_add_skip_to_make_tests_pass(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+    from code_minions.engine.skill_runtime import SkillExecutionError
+    from code_minions.llm.types import Message, Response, Usage
+
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        Response(
+            message=Message(
+                role="assistant",
+                content='{"files_written": [{"path":"tests/test_x.py","content":"def test_x():\\n    assert False\\n"}]}',
+            ),
+            usage=Usage(1, 1), model="fake", stop_reason="end_turn",
+        ),
+        Response(
+            message=Message(
+                role="assistant",
+                content=(
+                    '{"files_written": [{"path":"tests/test_x.py","content":'
+                    '"import pytest\\n@pytest.mark.skip(reason=\\"later\\")\\ndef test_x():\\n    assert True\\n"}]}'
+                ),
+            ),
+            usage=Usage(1, 1), model="fake", stop_reason="end_turn",
+        ),
+    ]
+    monkeypatch.setattr(entrypoint, "_run_delivery_profile_gate", lambda *args: (True, "", []))
+    monkeypatch.setattr(entrypoint, "_run_tests", MagicMock(return_value=(False, "failed")))
+
+    ctx = MagicMock()
+    ctx.inputs = {"ticket": {"id": "T1", "title": "hello"}}
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.invoke_skill = MagicMock()
+    ctx.skill = SimpleNamespace(meta=SimpleNamespace(policies={
+        "self_heal_max_rounds": 1,
+        "reviewer_max_rounds": 0,
+    }))
+
+    with pytest.raises(SkillExecutionError) as exc:
+        entrypoint.run(ctx)
+
+    assert "test quality gate failed" in str(exc.value)
+    assert exc.value.run_status == "needs_human"
+    codes = {finding["code"] for finding in exc.value.output["gate_findings"]}
+    assert "skip-or-xfail-added" in codes
+
+
+def test_require_tests_policy_rejects_green_run_without_tests(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+    from code_minions.engine.skill_runtime import SkillExecutionError
+    from code_minions.llm.types import Message, Response, Usage
+
+    llm = MagicMock()
+    llm.chat.return_value = Response(
+        message=Message(
+            role="assistant",
+            content='{"files_written": [{"path":"src/app.py","content":"VALUE = 1\\n"}]}',
+        ),
+        usage=Usage(1, 1),
+        model="fake",
+        stop_reason="end_turn",
+    )
+    monkeypatch.setattr(entrypoint, "_run_delivery_profile_gate", lambda *args: (True, "", []))
+    monkeypatch.setattr(entrypoint, "_run_tests", MagicMock(return_value=(True, "tests passed")))
+
+    ctx = MagicMock()
+    ctx.inputs = {"ticket": {"id": "T1", "title": "hello"}}
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.invoke_skill = MagicMock()
+    ctx.skill = SimpleNamespace(meta=SimpleNamespace(policies={
+        "self_heal_max_rounds": 0,
+        "reviewer_max_rounds": 0,
+        "require_tests": True,
+    }))
+
+    with pytest.raises(SkillExecutionError) as exc:
+        entrypoint.run(ctx)
+
+    assert "no executable tests detected" in str(exc.value)
+    assert exc.value.run_status == "needs_human"
+    assert exc.value.output["test_result"]["passed"] is False
+    codes = {finding["code"] for finding in exc.value.output["gate_findings"]}
+    assert "tests-actually-exist" in codes
+    assert not exc.value.output["commit_sha"]
+
+
+def test_test_quality_snapshot_counts_tests_inside_devflow_worktree(tmp_path: Path) -> None:
+    entrypoint = _load_entrypoint()
+    workdir = tmp_path / ".devflow" / "runs" / "r1" / "worktree"
+    test_path = workdir / "src" / "App.test.tsx"
+    test_path.parent.mkdir(parents=True)
+    test_path.write_text(
+        "import { it, expect } from 'vitest'\n"
+        "it('renders', () => {\n"
+        "  expect(true).toBe(true)\n"
+        "})\n"
+    )
+
+    snapshot = entrypoint._test_quality_snapshot(workdir)
+
+    assert snapshot["files"] == 1
+    assert snapshot["tests"] == 1
+    assert snapshot["assertions"] == 1
+
+
+def test_reviewer_blockers_do_not_create_wip_commit(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+    from code_minions.engine.skill_runtime import SkillExecutionError
+    from code_minions.llm.types import Message, Response, Usage
+
+    llm = MagicMock()
+    llm.chat.return_value = Response(
+        message=Message(
+            role="assistant",
+            content='{"files_written": [{"path": "x.py", "content": "x = 1\\n"}], "reasoning": "ok"}',
+        ),
+        usage=Usage(1, 1),
+        model="fake",
+        stop_reason="end_turn",
+    )
+    committed = {"value": False}
+
+    def fake_run(cmd, **kw):
+        if cmd[:2] == ["git", "commit"]:
+            committed["value"] = True
+        return MagicMock(returncode=0, stdout="abc123\n", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    ctx = MagicMock()
+    ctx.inputs = {"ticket": {"id": "T1", "title": "hello"}}
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.invoke_skill = lambda name, inputs: {
+        "issues": [{"severity": "blocker", "file": "x.py", "line": 1, "description": "wrong"}],
+        "summary": "not ready",
+        "approved": False,
+    }
+    ctx.skill = SimpleNamespace(meta=SimpleNamespace(policies={
+        "self_heal_max_rounds": 0,
+        "reviewer_max_rounds": 1,
+    }))
+
+    with pytest.raises(SkillExecutionError) as exc:
+        entrypoint.run(ctx)
+
+    assert committed["value"] is False
+    assert exc.value.run_status == "needs_human"
+    assert exc.value.output["commit_sha"] == ""
+    assert exc.value.output["review_report"]["approved"] is False
+
+
+def test_reviewer_blockers_feed_one_repair_round(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+    from code_minions.llm.types import Message, Response, Usage
+
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        Response(
+            message=Message(
+                role="assistant",
+                content='{"files_written": [{"path": "x.py", "content": "x = 1\\n"}], "reasoning": "first"}',
+            ),
+            usage=Usage(1, 1),
+            model="fake",
+            stop_reason="end_turn",
+        ),
+        Response(
+            message=Message(
+                role="assistant",
+                content='{"files_written": [{"path": "x.py", "content": "x = 2\\n"}], "reasoning": "fixed"}',
+            ),
+            usage=Usage(1, 1),
+            model="fake",
+            stop_reason="end_turn",
+        ),
+    ]
+    commits: list[list[str]] = []
+
+    def fake_run(cmd, **kw):
+        if cmd[:2] == ["git", "commit"]:
+            commits.append(cmd)
+        return MagicMock(returncode=0, stdout="abc123\n", stderr="")
+
+    reviews = iter([
+        {
+            "issues": [{
+                "severity": "major",
+                "file": "x.py",
+                "line": 1,
+                "description": "wrong",
+                "suggested_fix": "write x.py and tests/test_x.py",
+            }],
+            "summary": "not ready",
+            "approved": False,
+        },
+        {"issues": [], "summary": "lgtm", "approved": True},
+    ])
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    ctx = MagicMock()
+    ctx.inputs = {"ticket": {"id": "T1", "title": "hello"}}
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.invoke_skill = lambda name, inputs: next(reviews)
+    ctx.skill = SimpleNamespace(meta=SimpleNamespace(policies={
+        "self_heal_max_rounds": 0,
+        "reviewer_max_rounds": 2,
+    }))
+
+    out = entrypoint.run(ctx)
+
+    assert out["commit_sha"] == "abc123"
+    assert out["rounds_used"] == 2
+    assert out["review_report"]["approved"] is True
+    assert commits
+    second_messages = llm.chat.call_args_list[1].kwargs["messages"]
+    second_prompt = "\n".join(
+        message.content if hasattr(message, "content") else message["content"]
+        for message in second_messages
+    )
+    assert "Previous reviewer feedback" in second_prompt
+    assert "[major] x.py:1: wrong" in second_prompt
+    assert "Suggested fix: write x.py and tests/test_x.py" in second_prompt
+    assert "Review summary: not ready" in second_prompt
+
+
+def test_expected_paths_reject_scope_drift(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    from code_minions.engine.skill_runtime import SkillExecutionError
+    from code_minions.llm.types import Message, Response, Usage
+
+    llm = MagicMock()
+    llm.chat.return_value = Response(
+        message=Message(
+            role="assistant",
+            content='{"files_written": [{"path": "README.md", "content": "outside\\n"}], "reasoning": "ok"}',
+        ),
+        usage=Usage(1, 1),
+        model="fake",
+        stop_reason="end_turn",
+    )
+    ctx = MagicMock()
+    ctx.inputs = {
+        "ticket": {
+            "id": "T1",
+            "title": "hello",
+            "expected_paths": ["src/**", "tests/**"],
+        }
+    }
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.invoke_skill = MagicMock()
+    ctx.skill = SimpleNamespace(meta=SimpleNamespace(policies={
+        "self_heal_max_rounds": 0,
+        "reviewer_max_rounds": 0,
+    }))
+
+    with pytest.raises(SkillExecutionError) as exc:
+        entrypoint.run(ctx)
+
+    assert "scope drift" in str(exc.value)
+    assert exc.value.run_status == "needs_human"
+    assert exc.value.output["gate_findings"][0]["code"] == "scope-drift"
+    assert (tmp_git_repo / "README.md").read_text() == "# tmp\n"
+
+
+def test_expected_paths_include_delivery_bootstrap_scaffold_paths() -> None:
+    entrypoint = _load_entrypoint()
+    ticket = {
+        "expected_paths": ["src/**", "tests/**/*.test.tsx"],
+        "delivery_profile": {
+            "kind": "web-app",
+            "framework": "react",
+            "build_system": "vite",
+            "required_files": ["package.json", "index.html", "src/**/*.tsx"],
+        },
+    }
+
+    expected_paths = entrypoint._normalized_expected_paths(ticket)
+
+    assert entrypoint._path_allowed_by_expected_paths("index.html", expected_paths)
+    assert entrypoint._path_allowed_by_expected_paths("package.json", expected_paths)
+    assert entrypoint._path_allowed_by_expected_paths("vite.config.ts", expected_paths)
+    assert entrypoint._path_allowed_by_expected_paths("tsconfig.node.json", expected_paths)
+    assert entrypoint._path_allowed_by_expected_paths("src/App.tsx", expected_paths)
+    assert entrypoint._path_allowed_by_expected_paths("tests/hooks/useGameControls.test.ts", expected_paths)
+    assert not entrypoint._path_allowed_by_expected_paths("README.md", expected_paths)
+
+
+def test_expected_paths_double_star_matches_root_and_nested_files() -> None:
+    entrypoint = _load_entrypoint()
+
+    assert entrypoint._path_allowed_by_expected_paths(
+        "tests/game.test.tsx",
+        ["tests/**/*.test.tsx"],
+    )
+    assert entrypoint._path_allowed_by_expected_paths(
+        "tests/features/game.test.tsx",
+        ["tests/**/*.test.tsx"],
+    )
+    assert not entrypoint._path_allowed_by_expected_paths(
+        "src/game.test.tsx",
+        ["tests/**/*.test.tsx"],
+    )
+
+
+def test_test_quality_allows_pruning_known_invalid_generated_react_tests() -> None:
+    entrypoint = _load_entrypoint()
+
+    findings = entrypoint._test_quality_regressions(
+        {"files": 3, "tests": 97, "assertions": 120, "skip_xfail": 0, "weak_assertions": 0},
+        {"files": 3, "tests": 95, "assertions": 118, "skip_xfail": 0, "weak_assertions": 0},
+        allowed_test_count_drop=2,
+    )
+
+    assert [finding.code for finding in findings] == []
+
+
+def test_generated_test_contract_findings_allow_test_pruning() -> None:
+    entrypoint = _load_entrypoint()
+    from code_minions.gates import GateFinding
+
+    findings = [
+        GateFinding(
+            code="react-generated-test-brittle-long-timer-state",
+            severity="error",
+            stage="generated-test-contract",
+            message="generated timer test is brittle",
+            repair_hint="repair generated test",
+            source="react-vite",
+        )
+    ]
+
+    assert entrypoint._allowed_generated_test_prune_count(findings) == 10
+
+
+def test_repairable_generated_test_contract_findings_do_not_allow_test_pruning() -> None:
+    entrypoint = _load_entrypoint()
+    from code_minions.gates import GateFinding
+
+    findings = [
+        GateFinding(
+            code="react-generated-test-ambiguous-text-query",
+            severity="error",
+            stage="generated-test-contract",
+            message="generated query is ambiguous",
+            repair_hint="anchor the query",
+            source="react-vite",
+        )
+    ]
+
+    assert entrypoint._allowed_generated_test_prune_count(findings) == 0
 
 
 def test_python_projects_run_pytest_with_current_interpreter_and_workdir_on_pythonpath(
@@ -367,27 +865,38 @@ def test_delivery_profile_build_failure_stops_before_npm_test(tmp_git_repo: Path
     assert "declared but its value is never read" in output
 
 
-def test_react_vite_scaffold_creates_stable_project_files(tmp_git_repo: Path):
+def test_execution_profile_test_timeout_returns_failure_evidence(
+    tmp_git_repo: Path,
+    monkeypatch,
+):
     entrypoint = _load_entrypoint()
-    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+    import subprocess
 
-    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+    def fake_run(cmd, **kw):
+        if cmd == ["npm", "test"]:
+            raise subprocess.TimeoutExpired(
+                cmd,
+                timeout=300,
+                output="partial stdout",
+                stderr="partial stderr",
+            )
+        return MagicMock(returncode=0, stdout=f"{' '.join(cmd)} ok", stderr="")
 
-    assert "package.json" in changed
-    assert "vite.config.ts" in changed
-    assert "tsconfig.json" in changed
-    assert "tsconfig.node.json" in changed
-    assert "src/setupTests.ts" in changed
-    assert "src/vite-env.d.ts" in changed
-    assert "src/index.css" in changed
-    assert "src/App.test.tsx" in changed
-    assert "src/main.tsx" in changed
-    package_json = (tmp_git_repo / "package.json").read_text()
-    assert '"@testing-library/user-event": "14.6.1"' in package_json
-    assert '"vite": "5.4.11"' in package_json
-    assert "afterEach(cleanup)" in (tmp_git_repo / "src" / "setupTests.ts").read_text()
-    assert "afterEach(cleanup())" not in (tmp_git_repo / "src" / "setupTests.ts").read_text()
-    assert (tmp_git_repo / "src" / "vite-env.d.ts").read_text() == "/// <reference types=\"vite/client\" />\n"
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    passed, output = entrypoint._run_execution_profile_tests(
+        tmp_git_repo,
+        {
+            "install_command": ["npm", "install", "--no-audit", "--fund=false"],
+            "test_command": ["npm", "test"],
+            "env": {"CI": "true"},
+        },
+    )
+
+    assert passed is False
+    assert "timed out after 300s" in output
+    assert "partial stdout" in output
+    assert "partial stderr" in output
 
 
 def test_react_vite_scaffold_ensures_main_imports_index_css(tmp_git_repo: Path):
@@ -400,8 +909,8 @@ def test_react_vite_scaffold_ensures_main_imports_index_css(tmp_git_repo: Path):
         "\n"
         "ReactDOM.createRoot(document.getElementById('root')!).render(<App />)\n"
     )
-    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
 
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
     changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
 
     text = (tmp_git_repo / "src" / "main.tsx").read_text()
@@ -425,7 +934,6 @@ def test_react_vite_scaffold_repairs_llm_modified_harness_files(tmp_git_repo: Pa
         "afterEach(cleanup())\n"
     )
     ticket = {"delivery_profile": {"stack_id": "react-vite"}}
-
     changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
 
     assert sorted(changed) == sorted([
@@ -505,7 +1013,6 @@ def test_react_vite_scaffold_imports_used_vitest_test_apis(tmp_git_repo: Path):
         "})\n"
     )
     ticket = {"delivery_profile": {"stack_id": "react-vite"}}
-
     changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
 
     text = (tmp_git_repo / "src" / "App.test.tsx").read_text()
@@ -515,6 +1022,27 @@ def test_react_vite_scaffold_imports_used_vitest_test_apis(tmp_git_repo: Path):
     assert passed is True
     assert "vitest-global-api-mismatch" not in output
     assert not findings
+
+
+def test_react_vite_scaffold_merges_duplicate_vitest_imports(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "movement.test.tsx").write_text(
+        "import { describe, it, expect, beforeEach, vi } from 'vitest';\n"
+        "import { vi } from 'vitest';\n"
+        "describe('movement', () => {\n"
+        "  beforeEach(() => vi.useFakeTimers())\n"
+        "  it('moves', () => expect(vi).toBeDefined())\n"
+        "})\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "movement.test.tsx").read_text()
+    assert "src/movement.test.tsx" in changed
+    assert text.count("from 'vitest'") == 1
+    assert "import { beforeEach, describe, expect, it, vi } from 'vitest'" in text
 
 
 def test_react_vite_scaffold_anchors_board_coordinate_regex_queries(tmp_git_repo: Path):
@@ -530,7 +1058,6 @@ def test_react_vite_scaffold_anchors_board_coordinate_regex_queries(tmp_git_repo
         "})\n"
     )
     ticket = {"delivery_profile": {"stack_id": "react-vite"}}
-
     changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
 
     text = (tmp_git_repo / "tests" / "StatusPanel.test.tsx").read_text()
@@ -558,7 +1085,6 @@ def test_react_vite_scaffold_allows_coordinate_label_commas_in_regex_queries(
         "})\n"
     )
     ticket = {"delivery_profile": {"stack_id": "react-vite"}}
-
     changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
 
     text = (tmp_git_repo / "tests" / "Place.test.tsx").read_text()
@@ -591,190 +1117,1061 @@ def test_react_vite_scaffold_allows_coordinate_label_commas_in_aria_assertions(
     assert "expect(cell2).toHaveAccessibleName(/^行1\\s*,?\\s*列2, 白子$/)" in text
 
 
-def test_react_vite_scaffold_corrects_single_undo_turn_expectation(
-    tmp_git_repo: Path,
-):
+def test_react_vite_scaffold_anchors_broad_chinese_score_text_queries(tmp_git_repo: Path):
     entrypoint = _load_entrypoint()
     (tmp_git_repo / "tests").mkdir()
-    (tmp_git_repo / "tests" / "undo-restart.test.tsx").write_text(
-        "import { describe, expect, it } from 'vitest'\n"
-        "describe('悔棋功能', () => {\n"
-        "  it('Given 棋盘已有3步，When 用户点击悔棋，Then 移除第3步并恢复到对应玩家回合', async () => {\n"
-        "    // 所以3步后轮到白方\n"
-        "    expect(screen.getByText('当前回合: 黑方')).toBeInTheDocument()\n"
-        "    await user.click(screen.getByTestId('undo-button'))\n"
-        "    expect(screen.getByTestId('game-status')).toHaveTextContent('当前回合: 白方')\n"
-        "  })\n"
-        "  it('Given 棋盘已有3步，When 用户连续点击悔棋两次，Then 移除第3步和第2步并恢复到第1步后的回合', async () => {\n"
-        "    await user.click(screen.getByTestId('undo-button'))\n"
-        "    await user.click(screen.getByTestId('undo-button'))\n"
-        "    expect(screen.getByTestId('game-status')).toHaveTextContent('当前回合: 白方')\n"
-        "  })\n"
+    (tmp_git_repo / "tests" / "App.test.tsx").write_text(
+        "import { screen } from '@testing-library/react'\n"
+        "import { expect, it } from 'vitest'\n"
+        "it('shows score', () => {\n"
+        "  expect(screen.getByText(/分数: 0/)).toBeInTheDocument()\n"
+        "  const scoreText = screen.getByText(/分数: (\\d+)/)\n"
+        "  const scoreMatch = scoreText.textContent?.match(/分数: (\\d+)/)\n"
+        "  expect(scoreMatch).toBeTruthy()\n"
         "})\n"
     )
-    ticket = {
-        "delivery_profile": {"stack_id": "react-vite"},
-        "description": "五子棋 悔棋与重开",
-    }
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
 
     changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
 
-    text = (tmp_git_repo / "tests" / "undo-restart.test.tsx").read_text()
-    assert "tests/undo-restart.test.tsx" in changed
-    assert "screen.getByText('当前回合: 黑方')" not in text
-    assert "expect(screen.getByTestId('game-status')).toHaveTextContent('当前回合: 白方')" in text
-    assert "toHaveTextContent('当前回合: 黑方')" in text
-    assert text.count("toHaveTextContent('当前回合: 白方')") == 2
+    text = (tmp_git_repo / "tests" / "App.test.tsx").read_text()
+    assert "tests/App.test.tsx" in changed
+    assert "screen.getByText(/分数: 0/)" not in text
+    assert "screen.getByText(/分数: (\\d+)/)" not in text
+    assert "screen.getByText(/^分数:\\s*0$/)" in text
+    assert "screen.getByText(/^分数:\\s*(\\d+)$/)" in text
 
 
-def test_react_vite_scaffold_preserves_current_turn_side_labels(
-    tmp_git_repo: Path,
-):
+def test_react_vite_scaffold_rewrites_pagewide_button_cell_counts(tmp_git_repo: Path):
     entrypoint = _load_entrypoint()
     (tmp_git_repo / "src").mkdir()
-    (tmp_git_repo / "tests").mkdir()
-    (tmp_git_repo / "src" / "StatusPanel.tsx").write_text(
-        "export function StatusPanel({ currentPlayer }) {\n"
-        "  const text = `当前回合: ${currentPlayer === 'black' ? '黑子' : '白子'}`\n"
-        "  const live = `当前回合: ${currentPlayer === 'black' ? '黑子' : '白子'}`\n"
-        "  return <><p data-testid=\"game-status\">{text}</p><div>{live}</div></>\n"
-        "}\n"
-    )
-    (tmp_git_repo / "tests" / "status-panel.test.tsx").write_text(
-        "import { describe, expect, it } from 'vitest'\n"
-        "describe('StatusPanel', () => {\n"
-        "  it('shows the current side', () => {\n"
-        "    expect(screen.getByTestId('game-status')).toHaveTextContent('当前回合: 黑子')\n"
-        "    expect(screen.getByTestId('game-status-live')).toHaveTextContent('当前回合: 白子')\n"
-        "  })\n"
+    (tmp_git_repo / "src" / "Game.test.tsx").write_text(
+        "import { render, screen } from '@testing-library/react'\n"
+        "import { expect, it } from 'vitest'\n"
+        "import { DEFAULT_GRID_SIZE } from './types'\n"
+        "it('renders a 20x20 grid board', () => {\n"
+        "  render(<Game />)\n"
+        "  const cells = screen.getAllByRole('button')\n"
+        "  expect(cells).toHaveLength(DEFAULT_GRID_SIZE.rows * DEFAULT_GRID_SIZE.cols)\n"
         "})\n"
     )
-    ticket = {
-        "delivery_profile": {"stack_id": "react-vite"},
-        "description": "五子棋 棋局状态面板与辅助功能",
-    }
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
 
     changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
 
-    source = (tmp_git_repo / "src" / "StatusPanel.tsx").read_text()
-    test = (tmp_git_repo / "tests" / "status-panel.test.tsx").read_text()
-    assert "src/StatusPanel.tsx" in changed
-    assert "tests/status-panel.test.tsx" in changed
-    assert "'黑方' : '白方'" in source
-    assert "当前回合: 黑方" in test
-    assert "当前回合: 白方" in test
+    text = (tmp_git_repo / "src" / "Game.test.tsx").read_text()
+    assert "src/Game.test.tsx" in changed
+    assert "screen.getAllByRole('button')" not in text
+    assert "const cells = screen.getAllByTestId(/^cell-/)" in text
+    assert "expect(cells).toHaveLength(DEFAULT_GRID_SIZE.rows * DEFAULT_GRID_SIZE.cols)" in text
 
 
-def test_react_vite_scaffold_targets_visible_game_status_when_live_region_duplicates_text(
-    tmp_git_repo: Path,
-):
+def test_react_vite_scaffold_rewrites_single_regex_testid_queries(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "Game.test.tsx").write_text(
+        "import { render, screen, within } from '@testing-library/react'\n"
+        "import { expect, it } from 'vitest'\n"
+        "it('uses a cell', () => {\n"
+        "  render(<Game />)\n"
+        "  const cell = screen.getByTestId(/^cell-\\d+-\\d+$/)\n"
+        "  const scoped = within(screen.getByRole('grid')).getByTestId(/cell-\\d+-\\d+/)\n"
+        "  expect(cell).toBeInTheDocument()\n"
+        "  expect(scoped).toBeInTheDocument()\n"
+        "})\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "Game.test.tsx").read_text()
+    assert "src/Game.test.tsx" in changed
+    assert "getByTestId(/^cell-" not in text
+    assert "screen.getAllByTestId(/^cell-\\d+-\\d+$/)[0]" in text
+    assert "within(screen.getByRole('grid')).getAllByTestId(/cell-\\d+-\\d+/)[0]" in text
+
+
+def test_react_vite_scaffold_rewrites_stateful_cell_testid_queries(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "Game.test.tsx").write_text(
+        "import { render, screen } from '@testing-library/react'\n"
+        "import { expect, it } from 'vitest'\n"
+        "it('renders cell states', () => {\n"
+        "  render(<Game />)\n"
+        "  const snakeCells = screen.getAllByTestId(/^cell-.*state-snake/)\n"
+        "  const foodCells = screen.getAllByTestId(/^cell-.*state-food/)\n"
+        "  expect(snakeCells.length).toBeGreaterThan(0)\n"
+        "  expect(foodCells).toHaveLength(1)\n"
+        "})\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "Game.test.tsx").read_text()
+    assert "src/Game.test.tsx" in changed
+    assert "screen.getAllByTestId(/^cell-.*state-snake/)" not in text
+    assert "screen.getAllByTestId(/^cell-.*state-food/)" not in text
+    assert "document.querySelectorAll<HTMLElement>('[data-testid^=\"cell-\"][data-state=\"snake\"]')" in text
+    assert "document.querySelectorAll<HTMLElement>('[data-testid^=\"cell-\"][data-state=\"food\"]')" in text
+
+
+def test_react_vite_scaffold_rewrites_coordinate_cell_attribute_queries(tmp_git_repo: Path):
     entrypoint = _load_entrypoint()
     (tmp_git_repo / "tests").mkdir()
     (tmp_git_repo / "tests" / "Game.test.tsx").write_text(
-        "import { describe, expect, it } from 'vitest'\n"
-        "describe('Game', () => {\n"
-        "  it('checks status text', () => {\n"
-        "    expect(screen.getByText('当前回合: 黑方')).toBeInTheDocument()\n"
-        "    expect(screen.getByText(/当前回合: 白方/)).toBeInTheDocument()\n"
-        "    expect(screen.getByText('黑方获胜')).toBeInTheDocument()\n"
-        "  })\n"
+        "import { render, screen } from '@testing-library/react'\n"
+        "import { expect, it } from 'vitest'\n"
+        "it('renders occupied cells', () => {\n"
+        "  render(<Game />)\n"
+        "  const snakeCells = screen.getAllByTestId(/^cell-10-[5-7]$/)\n"
+        "  for (const cell of snakeCells) {\n"
+        "    expect(cell).toHaveAttribute('data-occupied', 'true')\n"
+        "  }\n"
         "})\n"
     )
-    ticket = {
-        "delivery_profile": {"stack_id": "react-vite"},
-        "description": "五子棋 棋局状态面板与辅助功能",
-    }
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
 
     changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
 
     text = (tmp_git_repo / "tests" / "Game.test.tsx").read_text()
     assert "tests/Game.test.tsx" in changed
-    assert "screen.getByText('当前回合: 黑方')" not in text
-    assert "screen.getByText(/当前回合: 白方/)" not in text
-    assert "screen.getByText('黑方获胜')" not in text
-    assert "expect(screen.getByTestId('game-status')).toHaveTextContent('当前回合: 黑方')" in text
-    assert "expect(screen.getByTestId('game-status')).toHaveTextContent(/当前回合: 白方/)" in text
-    assert "expect(screen.getByTestId('game-status')).toHaveTextContent('黑方获胜')" in text
+    assert "screen.getAllByTestId(/^cell-10-[5-7]$/)" not in text
+    assert "document.querySelectorAll<HTMLElement>('[data-testid^=\"cell-\"][data-occupied=\"true\"]')" in text
 
 
-def test_react_vite_scaffold_repairs_status_panel_black_win_click_sequence(
-    tmp_git_repo: Path,
-):
+def test_react_vite_scaffold_rewrites_within_grid_label_status_queries(tmp_git_repo: Path):
     entrypoint = _load_entrypoint()
-    (tmp_git_repo / "tests").mkdir()
-    (tmp_git_repo / "tests" / "status-panel.test.tsx").write_text(
-        "import { describe, expect, it } from 'vitest'\n"
-        "describe('StatusPanel', () => {\n"
-        "  it('shows winner', async () => {\n"
-        "    const blackMoves = [\n"
-        "      [1, 1], [1, 2], [1, 3], [1, 4],\n"
-        "      [2, 1], [2, 2], [2, 3],\n"
-        "      [1, 5],\n"
-        "    ]\n"
-        "    for (const [row, col] of blackMoves) {\n"
-        "      await user.click(getCell(row, col))\n"
-        "    }\n"
-        "    expect(screen.getByTestId('game-status')).toHaveTextContent('黑方获胜')\n"
-        "  })\n"
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "Game.test.tsx").write_text(
+        "import { render, screen, within } from '@testing-library/react'\n"
+        "import { expect, it } from 'vitest'\n"
+        "it('checks status label', () => {\n"
+        "  render(<Game />)\n"
+        "  let grid = screen.getByRole('grid')\n"
+        "  expect(within(grid).getByLabelText(/状态: 运行中/i)).toBeInTheDocument()\n"
         "})\n"
     )
-    ticket = {
-        "delivery_profile": {"stack_id": "react-vite"},
-        "description": "五子棋 棋局状态面板与辅助功能",
-    }
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
 
     changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
 
-    text = (tmp_git_repo / "tests" / "status-panel.test.tsx").read_text()
-    assert "tests/status-panel.test.tsx" in changed
-    assert "[1, 1], [2, 1], [1, 2], [2, 2], [1, 3], [2, 3], [1, 4], [2, 4], [1, 5]" in text
+    text = (tmp_git_repo / "src" / "Game.test.tsx").read_text()
+    assert "src/Game.test.tsx" in changed
+    assert "within(grid).getByLabelText" not in text
+    assert "expect(grid).toHaveAttribute('aria-label', expect.stringMatching(/状态: 运行中/i))" in text
 
 
-def test_react_vite_scaffold_removes_fake_timer_user_event_deadlock(
+def test_react_vite_scaffold_uses_status_aria_label_for_status_role(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "App.test.tsx").write_text(
+        "import { describe, expect, it } from 'vitest'\n"
+        "import { render, screen } from '@testing-library/react'\n"
+        "describe('App', () => {\n"
+        "  it('starts', () => {\n"
+        "    render(<App />)\n"
+        "    const status = screen.getByRole('status')\n"
+        "    expect(status).toHaveTextContent('进行中')\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "App.test.tsx").read_text()
+    assert "src/App.test.tsx" in changed
+    assert "toHaveTextContent('进行中')" not in text
+    assert "toHaveAttribute('aria-label', expect.stringContaining('进行中'))" in text
+
+
+def test_react_vite_scaffold_rewrites_throwing_testid_fallback_queries(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "DirectionButtons.test.tsx").write_text(
+        "import { fireEvent, render, screen } from '@testing-library/react'\n"
+        "import { it } from 'vitest'\n"
+        "it('clicks fallback direction buttons', () => {\n"
+        "  render(<DirectionButtons />)\n"
+        "  const upButton = screen.getByTestId('up-btn') ||\n"
+        "    document.querySelector<HTMLElement>('[data-direction=\"UP\"]') ||\n"
+        "    document.querySelector<HTMLElement>('.direction-btn.up')\n"
+        "  fireEvent.click(upButton as HTMLElement)\n"
+        "})\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "DirectionButtons.test.tsx").read_text()
+    assert "src/DirectionButtons.test.tsx" in changed
+    assert "screen.getByTestId('up-btn') ||" not in text
+    assert "screen.queryByTestId('up-btn') ||" in text
+
+
+def test_react_vite_scaffold_removes_unused_user_event_setup_binding(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "App.test.tsx").write_text(
+        "import { beforeEach, it, vi } from 'vitest'\n"
+        "import userEvent from '@testing-library/user-event'\n"
+        "let user: ReturnType<typeof userEvent.setup>\n"
+        "beforeEach(() => {\n"
+        "  vi.useFakeTimers()\n"
+        "  user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })\n"
+        "})\n"
+        "it('uses fireEvent only', () => {\n"
+        "  expect(true).toBe(true)\n"
+        "})\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "App.test.tsx").read_text()
+    assert "src/App.test.tsx" in changed
+    assert "userEvent" not in text
+    assert "let user" not in text
+    assert "user = userEvent.setup" not in text
+
+
+def test_react_vite_scaffold_converts_public_next_direction_ref_to_state(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "useGameLoop.ts").write_text(
+        "import { useEffect, useRef, useCallback } from 'react'\n"
+        "import { Direction } from '../types'\n"
+        "export function useGameLoop() {\n"
+        "  const directionRef = useRef<Direction | null>('RIGHT')\n"
+        "  const nextDirectionRef = useRef<Direction | null>(null)\n"
+        "  useEffect(() => {\n"
+        "    directionRef.current = 'RIGHT'\n"
+        "  }, [])\n"
+        "  const turn = useCallback((newDirection: Direction) => {\n"
+        "    directionRef.current = newDirection\n"
+        "    nextDirectionRef.current = newDirection\n"
+        "  }, [])\n"
+        "  return {\n"
+        "    turn,\n"
+        "    direction: directionRef.current,\n"
+        "    nextDirection: nextDirectionRef.current,\n"
+        "  }\n"
+        "}\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "useGameLoop.ts").read_text()
+    assert "src/useGameLoop.ts" in changed
+    assert "useState" in text
+    assert "const [nextDirection, setNextDirection] = useState<Direction | null>(null)" in text
+    assert "setNextDirection(newDirection)" in text
+    assert "nextDirection: nextDirectionRef.current" not in text
+    assert "nextDirection," in text
+
+
+def test_react_vite_scaffold_removes_unused_source_named_imports(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "useGameState.ts").write_text(
+        "import { useState } from 'react'\n"
+        "import { GameState, Position, createInitialGameState } from '../types'\n"
+        "export function useGameState() {\n"
+        "  const [gameState] = useState<GameState>(createInitialGameState())\n"
+        "  return { gameState }\n"
+        "}\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "useGameState.ts").read_text()
+    assert "src/useGameState.ts" in changed
+    assert "Position" not in text
+    assert "GameState" in text
+    assert "createInitialGameState" in text
+
+
+def test_react_vite_scaffold_imports_used_sibling_named_exports(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "types.ts").write_text(
+        "export type CellState = 'empty' | 'filled'\n"
+        "export const GRID_SIZE = 20\n"
+    )
+    (tmp_git_repo / "src" / "Board.tsx").write_text(
+        "import { CellState } from './types'\n"
+        "export function Board({ board }: { board: CellState[][] }) {\n"
+        "  return <div style={{ gridTemplateColumns: `repeat(${GRID_SIZE}, 1fr)` }}>{board.length}</div>\n"
+        "}\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "Board.tsx").read_text()
+    assert "src/Board.tsx" in changed
+    assert "import { CellState, GRID_SIZE } from './types'" in text
+
+
+def test_react_vite_scaffold_renames_unused_function_parameters(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "types.ts").write_text(
+        "export type CellState = 'empty' | 'filled'\n"
+        "export interface Position { row: number; col: number }\n"
+        "export function findOpenCell(board: CellState[][], snake: Position[]): Position {\n"
+        "  const occupied = new Set(snake.map((p) => `${p.row},${p.col}`))\n"
+        "  return { row: occupied.size, col: 0 }\n"
+        "}\n"
+        "export function initializeBoard(): CellState[][] {\n"
+        "  const board = [['empty']]\n"
+        "  return board as CellState[][]\n"
+        "}\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "types.ts").read_text()
+    assert "src/types.ts" in changed
+    assert "findOpenCell(_board: CellState[][], snake: Position[])" in text
+
+
+def test_react_vite_scaffold_writes_returned_food_to_board(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "types.ts").write_text(
+        "export const CELL_EMPTY = 0\n"
+        "export const CELL_SNAKE = 1\n"
+        "export const CELL_FOOD = 2\n"
+        "export type CellState = typeof CELL_EMPTY | typeof CELL_SNAKE | typeof CELL_FOOD\n"
+        "export interface Position { row: number; col: number }\n"
+    )
+    (tmp_git_repo / "src" / "gameLogic.ts").write_text(
+        "import { CELL_EMPTY, CELL_SNAKE, CellState, Position } from './types'\n"
+        "export function initializeGameBoard(): { board: CellState[][], food: Position } {\n"
+        "  const board = [[CELL_EMPTY]]\n"
+        "  const boardWithSnake = board.map(row => [...row])\n"
+        "  boardWithSnake[0][0] = CELL_SNAKE\n"
+        "  const food = { row: 0, col: 0 }\n"
+        "  return { board: boardWithSnake, food }\n"
+        "}\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "gameLogic.ts").read_text()
+    assert "src/gameLogic.ts" in changed
+    assert "import { CELL_EMPTY, CELL_SNAKE, CellState, Position, CELL_FOOD } from './types'" in text
+    assert "const boardWithSnakeWithFood = boardWithSnake.map(row => [...row])" in text
+    assert "boardWithSnakeWithFood[food.row][food.col] = CELL_FOOD" in text
+    assert "return { board: boardWithSnakeWithFood, food }" in text
+
+
+def test_react_vite_scaffold_replaces_commented_cell_state_literals(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "types.ts").write_text(
+        "export const CELL_FOOD = 2\n"
+        "export type CellState = 0 | typeof CELL_FOOD\n"
+    )
+    (tmp_git_repo / "src" / "useGameState.ts").write_text(
+        "import { CellState } from './types'\n"
+        "export function buildBoard(): CellState[][] {\n"
+        "  const result: CellState[][] = [[0]]\n"
+        "  result[0][0] = 2 // CELL_FOOD\n"
+        "  return result\n"
+        "}\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "useGameState.ts").read_text()
+    assert "src/useGameState.ts" in changed
+    assert "import { CellState, CELL_FOOD } from './types'" in text
+    assert "result[0][0] = CELL_FOOD" in text
+    assert "2 // CELL_FOOD" not in text
+
+
+def test_react_vite_scaffold_moves_window_keydown_assignment_into_effect(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "App.tsx").write_text(
+        "export default function App() {\n"
+        "  const handleKeyDown = (event: KeyboardEvent) => {\n"
+        "    if (event.key === 'Enter') startGame()\n"
+        "  }\n"
+        "  if (typeof window !== 'undefined') {\n"
+        "    window.onkeydown = handleKeyDown\n"
+        "  }\n"
+        "  return <main />\n"
+        "}\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "App.tsx").read_text()
+    assert "src/App.tsx" in changed
+    assert "import { useCallback, useEffect } from 'react'" in text
+    assert "const handleKeyDown = useCallback((event: KeyboardEvent) => {" in text
+    assert "}, [startGame])" in text
+    assert "window.onkeydown" not in text
+    assert "window.addEventListener('keydown', handleKeyDown)" in text
+    assert "window.removeEventListener('keydown', handleKeyDown)" in text
+
+
+def test_react_vite_scaffold_relaxes_drifted_component_prop_contracts(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "ScoreBoard.tsx").write_text(
+        "interface ScoreBoardProps {\n"
+        "  score: number\n"
+        "  status: 'ready' | 'running'\n"
+        "}\n"
+        "export default function ScoreBoard({ score, status }: ScoreBoardProps) {\n"
+        "  return <div>{score}{status}</div>\n"
+        "}\n"
+    )
+    (tmp_git_repo / "src" / "Board.tsx").write_text(
+        "interface BoardProps {\n"
+        "  board: string[][]\n"
+        "}\n"
+        "export default function Board({ board }: BoardProps) {\n"
+        "  return <div>{board.length}</div>\n"
+        "}\n"
+    )
+    (tmp_git_repo / "src" / "App.tsx").write_text(
+        "import Board from './Board'\n"
+        "import ScoreBoard from './ScoreBoard'\n"
+        "export default function App() {\n"
+        "  return <><ScoreBoard score={0} /><Board board={[]} snake={[]} /></>\n"
+        "}\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    score_text = (tmp_git_repo / "src" / "ScoreBoard.tsx").read_text()
+    board_text = (tmp_git_repo / "src" / "Board.tsx").read_text()
+    assert "src/ScoreBoard.tsx" in changed
+    assert "src/Board.tsx" in changed
+    assert "status?: 'ready' | 'running'" in score_text
+    assert "snake?: unknown" in board_text
+
+
+def test_react_vite_scaffold_rewrites_user_event_timer_method_calls(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "App.test.tsx").write_text(
+        "import { describe, expect, it, beforeEach, vi } from 'vitest'\n"
+        "import { render, screen, fireEvent, act } from '@testing-library/react'\n"
+        "import userEvent from '@testing-library/user-event'\n"
+        "async function startGameAndGetHead(user: ReturnType<typeof userEvent.setup>) {\n"
+        "  await act(async () => {\n"
+        "    user.advanceTimersByTime(150)\n"
+        "  })\n"
+        "}\n"
+        "describe('movement', () => {\n"
+        "  let user: ReturnType<typeof userEvent.setup>\n"
+        "  beforeEach(() => {\n"
+        "    vi.useFakeTimers()\n"
+        "    user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })\n"
+        "  })\n"
+        "  it('moves', async () => {\n"
+        "    render(<App />)\n"
+        "    await startGameAndGetHead(user)\n"
+        "    await act(async () => {\n"
+        "      fireEvent.keyDown(window, { key: 'ArrowUp' })\n"
+        "      user.advanceTimersByTime(150)\n"
+        "    })\n"
+        "    expect(screen.getByRole('grid')).toBeInTheDocument()\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "App.test.tsx").read_text()
+    assert "src/App.test.tsx" in changed
+    assert "user.advanceTimersByTime" not in text
+    assert "vi.advanceTimersByTime(150)" in text
+    assert "function startGameAndGetHead()" in text
+    assert "startGameAndGetHead(user)" not in text
+    assert "@testing-library/user-event" not in text
+
+
+def test_react_vite_scaffold_adds_advance_timers_for_user_event_with_fake_timers(
     tmp_git_repo: Path,
 ):
     entrypoint = _load_entrypoint()
     (tmp_git_repo / "tests").mkdir()
-    (tmp_git_repo / "tests" / "AppStateSync.test.tsx").write_text(
-        "import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'\n"
-        "import { render, screen, cleanup } from '@testing-library/react'\n"
+    (tmp_git_repo / "tests" / "movement.test.tsx").write_text(
+        "import { beforeEach, describe, expect, it, vi } from 'vitest'\n"
         "import userEvent from '@testing-library/user-event'\n"
-        "describe('App棋局状态同步', () => {\n"
+        "describe('movement', () => {\n"
         "  beforeEach(() => {\n"
-        "    vi.useFakeTimers({ shouldAdvanceTime: false })\n"
+        "    vi.useFakeTimers()\n"
+        "  })\n"
+        "  it('clicks while timers are mocked', async () => {\n"
+        "    const user = userEvent.setup()\n"
+        "    vi.advanceTimersByTime(150)\n"
+        "    expect(user).toBeDefined()\n"
+        "    expect(true).toBe(true)\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "tests" / "movement.test.tsx").read_text()
+    assert "tests/movement.test.tsx" in changed
+    assert "userEvent.setup({ advanceTimers: vi.advanceTimersByTime })" in text
+
+
+def test_react_vite_scaffold_adds_missing_user_event_default_import(
+    tmp_git_repo: Path,
+):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "tests" / "movement.test.tsx").write_text(
+        "import { beforeEach, describe, expect, it, vi } from 'vitest'\n"
+        "describe('movement', () => {\n"
+        "  let user: ReturnType<typeof userEvent.setup>\n"
+        "  beforeEach(() => {\n"
+        "    user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })\n"
+        "    vi.useFakeTimers()\n"
+        "  })\n"
+        "  it('defines a user', () => expect(user).toBeDefined())\n"
+        "})\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "tests" / "movement.test.tsx").read_text()
+    assert "tests/movement.test.tsx" in changed
+    assert "import userEvent from '@testing-library/user-event'" in text
+
+
+def test_react_vite_scaffold_removes_unused_user_event_default_import(
+    tmp_git_repo: Path,
+):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "tests" / "movement.test.tsx").write_text(
+        "import { describe, expect, it } from 'vitest'\n"
+        "import userEvent from '@testing-library/user-event'\n"
+        "describe('movement', () => {\n"
+        "  it('does not use userEvent', () => expect(true).toBe(true))\n"
+        "})\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "tests" / "movement.test.tsx").read_text()
+    assert "tests/movement.test.tsx" in changed
+    assert "@testing-library/user-event" not in text
+
+
+def test_react_vite_scaffold_uses_fire_event_for_fake_timer_user_interactions(
+    tmp_git_repo: Path,
+):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "tests" / "movement.test.tsx").write_text(
+        "import { beforeEach, describe, expect, it, vi } from 'vitest'\n"
+        "import { render, screen, act } from '@testing-library/react'\n"
+        "import userEvent from '@testing-library/user-event'\n"
+        "describe('movement', () => {\n"
+        "  beforeEach(() => {\n"
+        "    vi.useFakeTimers()\n"
+        "  })\n"
+        "  it('clicks and presses keys while timers are mocked', async () => {\n"
+        "    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })\n"
+        "    await user.click(screen.getByTestId('start-button'))\n"
+        "    await user.keyboard('{ArrowUp}')\n"
+        "    act(() => {\n"
+        "      vi.advanceTimersByTime(150)\n"
+        "    })\n"
+        "    expect(true).toBe(true)\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "tests" / "movement.test.tsx").read_text()
+    assert "tests/movement.test.tsx" in changed
+    assert "userEvent" not in text
+    assert "import { act, fireEvent, screen } from '@testing-library/react'" in text
+    assert "fireEvent.click(screen.getByTestId('start-button'))" in text
+    assert "fireEvent.keyDown(window, { key: 'ArrowUp' })" in text
+
+
+def test_react_vite_scaffold_uses_fire_event_for_user_event_aliases(
+    tmp_git_repo: Path,
+):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "tests" / "movement.test.tsx").write_text(
+        "import { beforeEach, describe, expect, it, vi } from 'vitest'\n"
+        "import { render, screen, act } from '@testing-library/react'\n"
+        "import userEvent from '@testing-library/user-event'\n"
+        "describe('movement', () => {\n"
+        "  beforeEach(() => {\n"
+        "    vi.useFakeTimers()\n"
+        "  })\n"
+        "  it('clicks and presses keys with an alias', async () => {\n"
+        "    const u = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })\n"
+        "    await act(async () => {\n"
+        "      await u.click(screen.getByTestId('start-button'))\n"
+        "      await u.keyboard('{ArrowUp}')\n"
+        "    })\n"
+        "    expect(true).toBe(true)\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "tests" / "movement.test.tsx").read_text()
+    assert "tests/movement.test.tsx" in changed
+    assert "userEvent" not in text
+    assert "await u." not in text
+    assert "fireEvent.click(screen.getByTestId('start-button'))" in text
+    assert "fireEvent.keyDown(window, { key: 'ArrowUp' })" in text
+
+
+def test_react_vite_scaffold_uses_fire_event_for_unawaited_fake_timer_user_interactions(
+    tmp_git_repo: Path,
+):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src" / "hooks").mkdir(parents=True)
+    (tmp_git_repo / "src" / "hooks" / "useGame.test.tsx").write_text(
+        "import { beforeEach, describe, it, vi } from 'vitest'\n"
+        "import { act, render, screen } from '@testing-library/react'\n"
+        "import userEvent from '@testing-library/user-event'\n"
+        "describe('movement', () => {\n"
+        "  beforeEach(() => {\n"
+        "    vi.useFakeTimers()\n"
+        "  })\n"
+        "  it('uses user inside act', () => {\n"
+        "    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })\n"
+        "    act(() => {\n"
+        "      user.click(screen.getByTestId('start'))\n"
+        "      user.keyboard('{ArrowLeft}')\n"
+        "    })\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "hooks" / "useGame.test.tsx").read_text()
+    assert "src/hooks/useGame.test.tsx" in changed
+    assert "userEvent" not in text
+    assert "fireEvent.click(screen.getByTestId('start'))" in text
+    assert "fireEvent.keyDown(window, { key: 'ArrowLeft' })" in text
+
+
+def test_react_vite_scaffold_replaces_global_math_stubs_with_random_spy(
+    tmp_git_repo: Path,
+):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "App.test.tsx").write_text(
+        "import { beforeEach, afterEach, describe, it, vi } from 'vitest'\n"
+        "describe('movement', () => {\n"
+        "  beforeEach(() => {\n"
+        "    vi.useFakeTimers()\n"
+        "    vi.stubGlobal('Math', {\n"
+        "      ...Math,\n"
+        "      random: () => 0.5,\n"
+        "    })\n"
         "  })\n"
         "  afterEach(() => {\n"
-        "    cleanup()\n"
         "    vi.useRealTimers()\n"
+        "    vi.unstubAllGlobals()\n"
         "  })\n"
-        "  it('黑方落子后步数为1，显示白方回合', async () => {\n"
-        "    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })\n"
-        "    await user.click(screen.getByTestId('cell-7-7'))\n"
-        "    vi.advanceTimersByTime(100)\n"
-        "    expect(screen.getByTestId('step-count')).toHaveTextContent('步数: 1')\n"
-        "  })\n"
-        "  it('第一步后计时器从0开始', async () => {\n"
-        "    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })\n"
-        "    await user.click(screen.getByTestId('cell-7-7'))\n"
-        "    expect(screen.getByTestId('game-timer')).toHaveTextContent('用时: 00:00')\n"
-        "  })\n"
+        "  it('runs', () => {})\n"
         "})\n"
     )
-    ticket = {
-        "delivery_profile": {"stack_id": "react-vite"},
-        "description": "五子棋 棋局状态面板与辅助功能",
-    }
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
 
     changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
 
-    text = (tmp_git_repo / "tests" / "AppStateSync.test.tsx").read_text()
-    assert "tests/AppStateSync.test.tsx" in changed
-    assert "userEvent.setup({ advanceTimers: vi.advanceTimersByTime })" not in text
-    assert "userEvent.setup()" in text
-    assert "vi.advanceTimersByTime" not in text
-    assert "vi.useFakeTimers" not in text
-    assert "vi.useRealTimers" not in text
-    assert "game-timer" not in text
+    text = (tmp_git_repo / "src" / "App.test.tsx").read_text()
+    assert "src/App.test.tsx" in changed
+    assert "stubGlobal('Math'" not in text
+    assert "vi.spyOn(Math, 'random').mockReturnValue(0.5)" in text
+    assert "vi.restoreAllMocks()" in text
+
+
+def test_react_vite_scaffold_resets_local_storage_mock_return_values(
+    tmp_git_repo: Path,
+):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "tests" / "storage.test.ts").write_text(
+        "const localStorageMock = (() => {\n"
+        "  let store: Record<string, string> = {}\n"
+        "  return {\n"
+        "    getItem: vi.fn((key: string) => store[key] ?? null),\n"
+        "    clear: () => {\n"
+        "      store = {}\n"
+        "    },\n"
+        "  }\n"
+        "})()\n"
+        "beforeEach(() => {\n"
+        "  localStorageMock.clear()\n"
+        "  vi.clearAllMocks()\n"
+        "})\n"
+        "it('uses mock return value', () => localStorageMock.getItem.mockReturnValue('50'))\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "tests" / "storage.test.ts").read_text()
+    assert "tests/storage.test.ts" in changed
+    assert "localStorageMock.getItem.mockImplementation((key: string) => store[key] ?? null)" in text
+
+
+def test_react_vite_scaffold_advances_fake_timers_after_fire_event_interactions(
+    tmp_git_repo: Path,
+):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "tests" / "movement.test.tsx").write_text(
+        "import { act, fireEvent, render, screen } from '@testing-library/react'\n"
+        "import { beforeEach, describe, expect, it, vi } from 'vitest'\n"
+        "describe('movement', () => {\n"
+        "  beforeEach(() => {\n"
+        "    vi.useFakeTimers()\n"
+        "  })\n"
+        "  it('ticks after timer-driven input', async () => {\n"
+        "    await act(async () => {\n"
+        "      fireEvent.keyDown(window, { key: 'ArrowUp' })\n"
+        "    })\n"
+        "    await act(async () => {\n"
+        "      fireEvent.click(screen.getByTestId('btn-up'))\n"
+        "    })\n"
+        "    expect(true).toBe(true)\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "tests" / "movement.test.tsx").read_text()
+    assert "tests/movement.test.tsx" in changed
+    assert text.count("vi.advanceTimersByTime(150)") == 2
+    assert "fireEvent.keyDown(window, { key: 'ArrowUp' })\n      vi.advanceTimersByTime(150)" in text
+    assert "fireEvent.click(screen.getByTestId('btn-up'))\n      vi.advanceTimersByTime(150)" in text
+
+
+def test_react_vite_scaffold_fills_empty_act_timer_ticks(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "tests" / "movement.test.tsx").write_text(
+        "import { act } from '@testing-library/react'\n"
+        "import { describe, it, vi } from 'vitest'\n"
+        "describe('movement', () => {\n"
+        "  beforeEach(() => {\n"
+        "    vi.useFakeTimers()\n"
+        "  })\n"
+        "  it('moves after a tick', () => {\n"
+        "    // Advance time by one tick interval\n"
+        "    act(() => {\n"
+        "    })\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "tests" / "movement.test.tsx").read_text()
+    assert "tests/movement.test.tsx" in changed
+    assert "act(() => {\n      vi.advanceTimersByTime(150)\n    })" in text
+
+
+def test_react_vite_scaffold_fills_empty_async_act_timer_ticks(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "tests" / "movement.test.tsx").write_text(
+        "import { act } from '@testing-library/react'\n"
+        "import { describe, it, vi } from 'vitest'\n"
+        "describe('movement', () => {\n"
+        "  beforeEach(() => {\n"
+        "    vi.useFakeTimers()\n"
+        "  })\n"
+        "  it('moves after an async tick', async () => {\n"
+        "    await act(async () => {\n"
+        "    })\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "tests" / "movement.test.tsx").read_text()
+    assert "tests/movement.test.tsx" in changed
+    assert "act(async () => {\n      vi.advanceTimersByTime(150)\n    })" in text
+
+
+def test_react_vite_scaffold_captures_act_callback_return_values(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "tests" / "hook.test.tsx").write_text(
+        "import { renderHook, act } from '@testing-library/react'\n"
+        "import { describe, expect, it } from 'vitest'\n"
+        "import { useGame } from '../src/useGame'\n"
+        "describe('hook', () => {\n"
+        "  it('asserts a callback return value', () => {\n"
+        "    const { result } = renderHook(() => useGame())\n"
+        "    const accepted = act(() => {\n"
+        "      return result.current.changeDirection('LEFT')\n"
+        "    })\n"
+        "    expect(accepted).toBe(false)\n"
+        "  })\n"
+        "})\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "tests" / "hook.test.tsx").read_text()
+    assert "tests/hook.test.tsx" in changed
+    assert "const accepted = act" not in text
+    assert "let accepted" in text
+    assert "accepted = result.current.changeDirection('LEFT')" in text
+    assert "expect(accepted).toBe(false)" in text
+
+
+def test_react_vite_scaffold_normalizes_inline_style_attribute_names(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "tests" / "layout.test.tsx").write_text(
+        "import { screen } from '@testing-library/react'\n"
+        "import { expect, it } from 'vitest'\n"
+        "it('checks inline style text', () => {\n"
+        "  const container = screen.getByTestId('board')\n"
+        "  expect(container).toHaveAttribute('style', expect.stringContaining('maxWidth'))\n"
+        "  expect(container).toHaveAttribute('style', expect.stringContaining('overflowX'))\n"
+        "})\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "tests" / "layout.test.tsx").read_text()
+    assert "tests/layout.test.tsx" in changed
+    assert "maxWidth" not in text
+    assert "overflowX" not in text
+    assert "max-width" in text
+    assert "overflow-x" in text
+
+
+def test_react_vite_scaffold_camel_cases_inline_style_object_keys(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src" / "components").mkdir(parents=True)
+    (tmp_git_repo / "src" / "components" / "GameBoard.tsx").write_text(
+        "export function GameBoard() {\n"
+        "  return (\n"
+        "    <div\n"
+        "      style={{\n"
+        "        'max-width': 'min(100vw, 560px)',\n"
+        "        'grid-template-columns': 'repeat(20, 1fr)',\n"
+        "        'overflow-x': 'hidden',\n"
+        "      }}\n"
+        "    />\n"
+        "  )\n"
+        "}\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "components" / "GameBoard.tsx").read_text()
+    assert "src/components/GameBoard.tsx" in changed
+    assert "'max-width'" not in text
+    assert "'grid-template-columns'" not in text
+    assert "'overflow-x'" not in text
+    assert "maxWidth: 'min(100vw, 560px)'" in text
+    assert "gridTemplateColumns: 'repeat(20, 1fr)'" in text
+    assert "overflowX: 'hidden'" in text
+
+
+def test_react_vite_scaffold_adds_default_export_for_default_imported_component(
+    tmp_git_repo: Path,
+):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "src" / "App.tsx").write_text(
+        "export function App() {\n"
+        "  return <main />\n"
+        "}\n"
+    )
+    (tmp_git_repo / "tests" / "App.test.tsx").write_text(
+        "import App from '../src/App'\n"
+        "import { render } from '@testing-library/react'\n"
+        "import { it } from 'vitest'\n"
+        "it('renders', () => render(<App />))\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "App.tsx").read_text()
+    assert "src/App.tsx" in changed
+    assert "export default App" in text
+
+
+def test_react_vite_scaffold_adds_named_export_for_named_imported_default_component(
+    tmp_git_repo: Path,
+):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "src" / "App.tsx").write_text(
+        "function App() {\n"
+        "  return <main />\n"
+        "}\n"
+        "\n"
+        "export default App\n"
+    )
+    (tmp_git_repo / "tests" / "App.test.tsx").write_text(
+        "import { App } from '../src/App'\n"
+        "import { render } from '@testing-library/react'\n"
+        "import { it } from 'vitest'\n"
+        "it('renders', () => render(<App />))\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "App.tsx").read_text()
+    assert "src/App.tsx" in changed
+    assert "export { App }" in text
+
+
+def test_react_vite_scaffold_adds_named_export_for_default_function_component(
+    tmp_git_repo: Path,
+):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "src" / "App.tsx").write_text(
+        "export default function App() {\n"
+        "  return <main />\n"
+        "}\n"
+    )
+    (tmp_git_repo / "tests" / "App.test.tsx").write_text(
+        "import { App } from '../src/App'\n"
+        "import { render } from '@testing-library/react'\n"
+        "import { it } from 'vitest'\n"
+        "it('renders', () => render(<App />))\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "App.tsx").read_text()
+    assert "src/App.tsx" in changed
+    assert "export default function App()" in text
+    assert "export { App }" in text
+
+
+def test_react_vite_scaffold_does_not_duplicate_existing_named_component_export(
+    tmp_git_repo: Path,
+):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "src" / "GameBoard.tsx").write_text(
+        "export const GameBoard = () => {\n"
+        "  return <main />\n"
+        "}\n"
+        "\n"
+        "export default GameBoard\n"
+    )
+    (tmp_git_repo / "tests" / "GameBoard.test.tsx").write_text(
+        "import { GameBoard } from '../src/GameBoard'\n"
+        "import { render } from '@testing-library/react'\n"
+        "import { it } from 'vitest'\n"
+        "it('renders', () => render(<GameBoard />))\n"
+    )
+    changed = entrypoint._stabilize_default_imported_component_exports(tmp_git_repo)
+
+    text = (tmp_git_repo / "src" / "GameBoard.tsx").read_text()
+    assert "src/GameBoard.tsx" not in changed
+    assert text.count("export { GameBoard }") == 0
+    assert "export const GameBoard" in text
+
+
+def test_react_vite_scaffold_removes_redundant_component_re_export(
+    tmp_git_repo: Path,
+):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "src" / "GameBoard.tsx").write_text(
+        "export const GameBoard = () => {\n"
+        "  return <main />\n"
+        "}\n"
+        "\n"
+        "export default GameBoard\n"
+        "\n"
+        "export { GameBoard }\n"
+    )
+    (tmp_git_repo / "tests" / "GameBoard.test.tsx").write_text(
+        "import { GameBoard } from '../src/GameBoard'\n"
+        "import { render } from '@testing-library/react'\n"
+        "import { it } from 'vitest'\n"
+        "it('renders', () => render(<GameBoard />))\n"
+    )
+    changed = entrypoint._stabilize_default_imported_component_exports(tmp_git_repo)
+
+    text = (tmp_git_repo / "src" / "GameBoard.tsx").read_text()
+    assert "src/GameBoard.tsx" in changed
+    assert text.count("export { GameBoard }") == 0
+    assert "export const GameBoard" in text
+
+
+def test_react_vite_scaffold_adds_local_storage_mock_for_tests(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "tests" / "storage.test.tsx").write_text(
+        "import { beforeEach, it } from 'vitest'\n"
+        "beforeEach(() => localStorage.clear())\n"
+        "it('stores', () => localStorage.setItem('x', '1'))\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    setup_text = (tmp_git_repo / "src" / "setupTests.ts").read_text()
+    assert "src/setupTests.ts" in changed
+    assert "Object.defineProperty(globalThis, 'localStorage'" in setup_text
+    assert "clear: vi.fn" in setup_text
 
 
 def test_react_vite_scaffold_repairs_unique_relative_import_target(tmp_git_repo: Path):
@@ -1038,524 +2435,74 @@ def test_react_vite_scaffold_preserves_board_type_helpers_imported_by_tests(tmp_
     assert "BOARD_SIZE" in text
 
 
-def test_react_vite_scaffold_prunes_over_detailed_gomoku_ui_tests(tmp_git_repo: Path):
+def test_react_vite_test_stabilizer_rewrites_computed_style_truthy_layout_assertion(tmp_git_repo: Path):
     entrypoint = _load_entrypoint()
-    (tmp_git_repo / "src").mkdir()
-    (tmp_git_repo / "tests").mkdir()
-    (tmp_git_repo / "tests" / "App.test.tsx").write_text(
-        "import { describe, it, expect } from 'vitest'\n"
+    (tmp_git_repo / "tests").mkdir(parents=True)
+    (tmp_git_repo / "tests" / "Grid.test.tsx").write_text(
+        "import { expect, test } from 'vitest'\n"
         "\n"
-        "describe('胜负判定与获胜棋子高亮', () => {\n"
-        "  it('Given 黑方横向连续五子，When 第五子落下，Then 显示黑方获胜并高亮这五子', async () => {\n"
-        "    expect(true).toBe(true)\n"
-        "  })\n"
+        "test('grid fits mobile viewport', () => {\n"
+        "  const grid = container.querySelector('.game-grid')\n"
+        "  expect(grid).toBeInTheDocument()\n"
+        "  const style = window.getComputedStyle(grid!)\n"
+        "  expect(style.width).toBeTruthy()\n"
+        "})\n"
+    )
+
+    changed = entrypoint._stabilize_react_vite_tests(tmp_git_repo)
+
+    text = (tmp_git_repo / "tests" / "Grid.test.tsx").read_text()
+    assert "tests/Grid.test.tsx" in changed
+    assert "getComputedStyle" not in text
+    assert "style.width" not in text
+    assert "expect(grid).toHaveClass('game-grid')" in text
+
+
+def test_react_vite_test_stabilizer_rewrites_computed_style_numeric_layout_assertion(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "tests").mkdir(parents=True)
+    (tmp_git_repo / "tests" / "Grid.test.tsx").write_text(
+        "import { expect, test } from 'vitest'\n"
         "\n"
-        "  it('Given 白方纵向连续五子，When 第五子落下，Then 显示白方获胜并高亮这五子', async () => {\n"
-        "    expect(true).toBe(true)\n"
-        "  })\n"
+        "test('grid fits mobile viewport', () => {\n"
+        "  const grid = container.querySelector('.game-grid') as HTMLElement\n"
+        "  expect(grid).toBeTruthy()\n"
+        "  const style = window.getComputedStyle(grid)\n"
+        "  expect(parseFloat(style.width)).toBeLessThanOrEqual(375)\n"
+        "})\n"
+    )
+
+    changed = entrypoint._stabilize_react_vite_tests(tmp_git_repo)
+
+    text = (tmp_git_repo / "tests" / "Grid.test.tsx").read_text()
+    assert "tests/Grid.test.tsx" in changed
+    assert "getComputedStyle" not in text
+    assert "parseFloat" not in text
+    assert "toBeTruthy" not in text
+    assert "expect(grid).toHaveClass('game-grid')" in text
+
+
+def test_react_vite_test_stabilizer_rewrites_exact_visual_style_assertion(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "tests").mkdir(parents=True)
+    (tmp_git_repo / "tests" / "Controls.test.tsx").write_text(
+        "import { expect, test } from 'vitest'\n"
         "\n"
-        "  it('Given 白方左上到右下斜线连续五子，When 第五子落下，Then 显示白方获胜并高亮', async () => {\n"
-        "    expect(true).toBe(true)\n"
+        "test('controls render with their configured visual treatment', () => {\n"
+        "  const buttons = screen.getAllByRole('button')\n"
+        "  buttons.forEach((button) => {\n"
+        "    expect(button).toHaveStyle({ backgroundColor: '#e8c47c' })\n"
         "  })\n"
         "})\n"
     )
-    ticket = {
-        "delivery_profile": {"stack_id": "react-vite"},
-        "features": [{"name": "胜负判定", "description": "五子棋 本地双人对战 黑棋白棋轮流回合"}],
-    }
 
-    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+    changed = entrypoint._stabilize_react_vite_tests(tmp_git_repo)
 
-    text = (tmp_git_repo / "tests" / "App.test.tsx").read_text()
-    assert "tests/App.test.tsx" in changed
-    assert "黑方横向连续五子" in text
-    assert "白方纵向连续五子" not in text
-    assert "左上到右下斜线" not in text
-
-
-def test_react_vite_scaffold_prunes_gomoku_tests_from_win_task_without_product_name(tmp_git_repo: Path):
-    entrypoint = _load_entrypoint()
-    (tmp_git_repo / "src").mkdir()
-    (tmp_git_repo / "src" / "App.test.tsx").write_text(
-        "import { describe, it, expect } from 'vitest'\n"
-        "\n"
-        "describe('胜负判定与获胜棋子高亮', () => {\n"
-        "  it('Given 黑方横向连续五子，When 第五子落下，Then 显示黑方获胜并高亮这五子', async () => {\n"
-        "    expect(true).toBe(true)\n"
-        "  })\n"
-        "\n"
-        "  it('Given 白方纵向连续五子，When 第五子落下，Then 显示白方获胜并高亮这五子', async () => {\n"
-        "    expect(true).toBe(true)\n"
-        "  })\n"
-        "\n"
-        "  it('Given 棋盘已满且无人五连，When 最后一手落下，Then 显示平局', async () => {\n"
-        "    expect(screen.getByText('平局')).toBeInTheDocument()\n"
-        "  })\n"
-        "})\n"
-    )
-    ticket = {
-        "delivery_profile": {"stack_id": "react-vite"},
-        "title": "胜负判定与获胜棋子高亮",
-        "acceptance_criteria": [
-            "Given 黑方横向连续五子，When 第五子落下，Then 显示黑方获胜",
-            "Given 白方纵向连续五子，When 第五子落下，Then 显示白方获胜",
-        ],
-    }
-
-    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
-
-    text = (tmp_git_repo / "src" / "App.test.tsx").read_text()
-    assert "src/App.test.tsx" in changed
-    assert "黑方横向连续五子" in text
-    assert "白方纵向连续五子" not in text
-    assert "平局" not in text
-
-
-def test_react_vite_scaffold_prunes_brittle_gomoku_board_class_tests(tmp_git_repo: Path):
-    entrypoint = _load_entrypoint()
-    (tmp_git_repo / "tests").mkdir()
-    (tmp_git_repo / "tests" / "Board.test.tsx").write_text(
-        "import { describe, it, expect } from 'vitest'\n"
-        "\n"
-        "describe('Board 组件', () => {\n"
-        "  it('渲染完整的 15x15 棋盘', () => {\n"
-        "    expect(true).toBe(true)\n"
-        "  })\n"
-        "\n"
-        "  it('渲染星位标记', () => {\n"
-        "    const starPoints = document.querySelectorAll('.star-point')\n"
-        "    expect(starPoints).toHaveLength(5)\n"
-        "  })\n"
-        "\n"
-        "  it('用户落子后显示黑色棋子', () => {\n"
-        "    expect(cell.querySelector('.stone.black')).toBeInTheDocument()\n"
-        "  })\n"
-        "\n"
-        "  it('最后落子位置显示标记', () => {\n"
-        "    expect(cell.querySelector('.last-move-mark')).toBeInTheDocument()\n"
-        "  })\n"
-        "})\n"
-    )
-    ticket = {
-        "delivery_profile": {"stack_id": "react-vite"},
-        "features": [{"name": "棋盘与交互", "description": "五子棋 棋盘 黑棋白棋轮流回合"}],
-    }
-
-    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
-
-    text = (tmp_git_repo / "tests" / "Board.test.tsx").read_text()
-    assert "tests/Board.test.tsx" in changed
-    assert "渲染完整的 15x15 棋盘" in text
-    assert "渲染星位标记" not in text
-    assert ".stone.black" not in text
-    assert ".last-move-mark" not in text
-
-
-def test_react_vite_scaffold_prunes_brittle_gomoku_star_point_text_tests(tmp_git_repo: Path):
-    entrypoint = _load_entrypoint()
-    (tmp_git_repo / "src" / "tests").mkdir(parents=True)
-    (tmp_git_repo / "src" / "tests" / "Board.test.tsx").write_text(
-        "import { describe, expect, it } from 'vitest'\n"
-        "\n"
-        "describe('Board', () => {\n"
-        "  it('contains star points at correct coordinates', () => {\n"
-        "    const starPoints = screen.getAllByText('星位')\n"
-        "    expect(starPoints).toHaveLength(9)\n"
-        "  })\n"
-        "\n"
-        "  it('keeps a basic cell smoke test', () => {\n"
-        "    expect(screen.getByTestId('cell-0-0')).toBeTruthy()\n"
-        "  })\n"
-        "})\n"
-    )
-    ticket = {
-        "delivery_profile": {"stack_id": "react-vite"},
-        "description": "五子棋 棋盘 渲染",
-    }
-
-    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
-
-    text = (tmp_git_repo / "src" / "tests" / "Board.test.tsx").read_text()
-    assert "src/tests/Board.test.tsx" in changed
-    assert "contains star points" not in text
-    assert "星位" not in text
-    assert "basic cell smoke test" in text
-
-
-def test_react_vite_scaffold_prunes_brittle_gomoku_last_move_tests_without_turn_text(tmp_git_repo: Path):
-    entrypoint = _load_entrypoint()
-    (tmp_git_repo / "src" / "components").mkdir(parents=True)
-    (tmp_git_repo / "src" / "components" / "Board.test.tsx").write_text(
-        "import { describe, it, expect } from 'vitest'\n"
-        "\n"
-        "describe('Board', () => {\n"
-        "  it('renders 15x15 grid with all lines', () => {\n"
-        "    expect(true).toBe(true)\n"
-        "  })\n"
-        "\n"
-        "  it('shows last-move class on the most recent stone', async () => {\n"
-        "    expect(cell2).toHaveClass('last-move')\n"
-        "  })\n"
-        "})\n"
-    )
-    ticket = {
-        "delivery_profile": {"stack_id": "react-vite"},
-        "description": "搭建五子棋棋盘渲染",
-    }
-
-    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
-
-    text = (tmp_git_repo / "src" / "components" / "Board.test.tsx").read_text()
-    assert "src/components/Board.test.tsx" in changed
-    assert "renders 15x15 grid" in text
-    assert "last-move" not in text
-
-
-def test_react_vite_scaffold_prunes_over_specific_game_over_undo_turn_test(tmp_git_repo: Path):
-    entrypoint = _load_entrypoint()
-    (tmp_git_repo / "tests").mkdir()
-    (tmp_git_repo / "tests" / "Undo.test.tsx").write_text(
-        "import { describe, it, expect } from 'vitest'\n"
-        "\n"
-        "describe('游戏结束后悔棋', () => {\n"
-        "  it('Given 游戏已经结束，When 用户点击悔棋，Then 取消胜负状态并回到可继续对局状态', async () => {\n"
-        "    expect(screen.getByRole('status')).toHaveTextContent('当前回合: 白子')\n"
-        "  })\n"
-        "})\n"
-    )
-    ticket = {
-        "delivery_profile": {"stack_id": "react-vite"},
-        "features": [{"name": "悔棋与重开", "description": "五子棋 黑棋白棋轮流回合"}],
-    }
-
-    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
-
-    text = (tmp_git_repo / "tests" / "Undo.test.tsx").read_text()
-    assert "tests/Undo.test.tsx" in changed
-    assert "当前回合: 白子" not in text
-
-
-def test_react_vite_scaffold_removes_empty_suite_after_pruning_game_over_test(
-    tmp_git_repo: Path,
-):
-    entrypoint = _load_entrypoint()
-    (tmp_git_repo / "tests").mkdir()
-    (tmp_git_repo / "tests" / "Game.test.tsx").write_text(
-        "import { describe, it, expect } from 'vitest'\n"
-        "\n"
-        "describe('核心落子交互与回合管理', () => {\n"
-        "  describe('游戏结束后禁止继续落子', () => {\n"
-        "    it('Given 已经出现胜者，When 用户继续点击棋盘，Then 不再新增棋子', () => {\n"
-        "      expect(screen.getByTestId('cell-0-0')).toHaveAttribute('data-stone', null)\n"
-        "    })\n"
-        "  })\n"
-        "})\n"
-    )
-    ticket = {
-        "delivery_profile": {"stack_id": "react-vite"},
-        "description": "五子棋 核心落子交互与回合管理",
-    }
-
-    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
-
-    text = (tmp_git_repo / "tests" / "Game.test.tsx").read_text()
-    assert "tests/Game.test.tsx" in changed
-    assert "游戏结束后禁止继续落子" not in text
-    assert "describe('核心落子交互与回合管理'" not in text
-
-
-def test_react_vite_scaffold_prunes_early_game_over_component_tests(tmp_git_repo: Path):
-    entrypoint = _load_entrypoint()
-    (tmp_git_repo / "src" / "components").mkdir(parents=True)
-    (tmp_git_repo / "src" / "components" / "Board.test.tsx").write_text(
-        "import { describe, it, expect } from 'vitest'\n"
-        "\n"
-        "describe('BoardComponent - 落子交互与回合管理', () => {\n"
-        "  it('Given 空棋盘，When 黑方点击一个空交叉点，Then 该位置显示黑子', () => {\n"
-        "    expect(true).toBe(true)\n"
-        "  })\n"
-        "\n"
-        "  it('Given 已经出现胜者 > When 用户继续点击棋盘, Then 不再新增棋子', () => {\n"
-        "    expect(emptyCell).toHaveAttribute('data-stone', null)\n"
-        "  })\n"
-        "})\n"
-    )
-    ticket = {
-        "delivery_profile": {"stack_id": "react-vite"},
-        "description": "五子棋 棋盘 黑方 白方 回合",
-    }
-
-    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
-
-    text = (tmp_git_repo / "src" / "components" / "Board.test.tsx").read_text()
-    assert "src/components/Board.test.tsx" in changed
-    assert "空棋盘" in text
-    assert "已经出现胜者" not in text
-    assert "data-stone', null" not in text
-
-
-def test_react_vite_scaffold_removes_duplicate_cell_testids_from_wrappers(tmp_git_repo: Path):
-    entrypoint = _load_entrypoint()
-    (tmp_git_repo / "src" / "components").mkdir(parents=True)
-    (tmp_git_repo / "src" / "components" / "Board.tsx").write_text(
-        "export function Board({ rowIndex, colIndex }) {\n"
-        "  return (\n"
-        "    <div data-testid={`cell-${rowIndex}-${colIndex}`} className=\"cell-wrapper\">\n"
-        "      <button data-testid={`cell-${rowIndex}-${colIndex}`} aria-label=\"行1列1, 空\" />\n"
-        "    </div>\n"
-        "  )\n"
-        "}\n"
-    )
-    ticket = {
-        "delivery_profile": {"stack_id": "react-vite"},
-        "description": "五子棋 棋盘",
-    }
-
-    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
-
-    text = (tmp_git_repo / "src" / "components" / "Board.tsx").read_text()
-    assert "src/components/Board.tsx" in changed
-    assert '<div className="cell-wrapper">' in text
-    assert text.count('data-testid={`cell-${rowIndex}-${colIndex}`}') == 1
-
-
-def test_react_vite_scaffold_adds_noop_board_click_handler_in_tests(tmp_git_repo: Path):
-    entrypoint = _load_entrypoint()
-    (tmp_git_repo / "src" / "components").mkdir(parents=True)
-    (tmp_git_repo / "src" / "components" / "Board.test.tsx").write_text(
-        "import { describe, it } from 'vitest'\n"
-        "import Board from './Board'\n"
-        "\n"
-        "describe('Board', () => {\n"
-        "  it('renders board', () => {\n"
-        "    render(<Board board={board} />)\n"
-        "    render(<Board board={board} lastMove={{ row: 1, col: 1 }} />)\n"
-        "  })\n"
-        "})\n"
-    )
-    ticket = {
-        "delivery_profile": {"stack_id": "react-vite"},
-        "description": "五子棋 棋盘",
-    }
-
-    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
-
-    text = (tmp_git_repo / "src" / "components" / "Board.test.tsx").read_text()
-    assert "src/components/Board.test.tsx" in changed
-    assert "render(<Board board={board} onCellClick={() => {}} />)" in text
-    assert "lastMove={{ row: 1, col: 1 }} onCellClick={() => {}}" in text
-
-
-def test_react_vite_scaffold_keeps_turn_on_occupied_cell_click(tmp_git_repo: Path):
-    entrypoint = _load_entrypoint()
-    (tmp_git_repo / "src").mkdir()
-    (tmp_git_repo / "src" / "App.tsx").write_text(
-        "import { useCallback, useState } from 'react'\n"
-        "\n"
-        "export default function App() {\n"
-        "  const [board, setBoard] = useState(createEmptyBoard())\n"
-        "  const [currentPlayer, setCurrentPlayer] = useState<'black' | 'white'>('black')\n"
-        "  const [gameStatus, setGameStatus] = useState('playing')\n"
-        "\n"
-        "  const handleCellClick = useCallback((row: number, col: number) => {\n"
-        "    if (gameStatus !== 'playing') return\n"
-        "\n"
-        "    setBoard(prev => {\n"
-        "      if (prev[row][col].stone !== null) return prev\n"
-        "      const next = prev.map(r => r.map(c => ({ ...c })))\n"
-        "      next[row][col] = { stone: currentPlayer }\n"
-        "      return next\n"
-        "    })\n"
-        "    setCurrentPlayer(prev => prev === 'black' ? 'white' : 'black')\n"
-        "  }, [currentPlayer, gameStatus])\n"
-        "\n"
-        "  return <div />\n"
-        "}\n"
-    )
-    ticket = {
-        "delivery_profile": {"stack_id": "react-vite"},
-        "description": "五子棋 棋盘 黑方 白方 回合",
-    }
-
-    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
-
-    text = (tmp_git_repo / "src" / "App.tsx").read_text()
-    assert "src/App.tsx" in changed
-    assert "if (board[row][col].stone !== null) return" in text
-    assert "}, [board, currentPlayer, gameStatus])" in text
-
-
-def test_react_vite_scaffold_allows_nullable_win_result_state(tmp_git_repo: Path):
-    entrypoint = _load_entrypoint()
-    (tmp_git_repo / "src").mkdir()
-    (tmp_git_repo / "src" / "App.tsx").write_text(
-        "import { useState } from 'react'\n"
-        "import { type WinResult } from './utils/winDetection'\n"
-        "\n"
-        "export default function App() {\n"
-        "  const [winResult, setWinResult] = useState<WinResult>(null)\n"
-        "  return <div>{winResult?.winner}</div>\n"
-        "}\n"
-    )
-    ticket = {
-        "delivery_profile": {"stack_id": "react-vite"},
-        "description": "五子棋 胜负判定 连续五子",
-    }
-
-    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
-
-    text = (tmp_git_repo / "src" / "App.tsx").read_text()
-    assert "src/App.tsx" in changed
-    assert "useState<WinResult | null>(null)" in text
-
-
-def test_react_vite_scaffold_adds_button_role_to_clickable_cell_divs(tmp_git_repo: Path):
-    entrypoint = _load_entrypoint()
-    (tmp_git_repo / "src" / "components").mkdir(parents=True)
-    (tmp_git_repo / "src" / "components" / "Board.tsx").write_text(
-        "export function Board({ board, onCellClick }) {\n"
-        "  return <div>{board.map((row, rowIndex) => row.map((cellState, colIndex) => {\n"
-        "    const label = getCellLabel(rowIndex, colIndex, cellState)\n"
-        "    return (\n"
-        "      <div\n"
-        "        key={`${rowIndex}-${colIndex}`}\n"
-        "        data-testid={`cell-${rowIndex}-${colIndex}`}\n"
-        "        className=\"cell\"\n"
-        "        onClick={() => onCellClick?.(rowIndex, colIndex)}\n"
-        "      />\n"
-        "    )\n"
-        "  }))}</div>\n"
-        "}\n"
-    )
-    ticket = {
-        "delivery_profile": {"stack_id": "react-vite"},
-        "description": "五子棋 棋盘 交叉点 aria-label",
-    }
-
-    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
-
-    text = (tmp_git_repo / "src" / "components" / "Board.tsx").read_text()
-    assert "src/components/Board.tsx" in changed
-    assert 'role="button"' in text
-    assert "tabIndex={0}" in text
-    assert "aria-label={label}" in text
-
-
-def test_react_vite_scaffold_types_board_test_literal_fixtures(tmp_git_repo: Path):
-    entrypoint = _load_entrypoint()
-    (tmp_git_repo / "src" / "components").mkdir(parents=True)
-    (tmp_git_repo / "src" / "types.ts").write_text(
-        "export type CellState = 'empty' | 'black' | 'white'\n"
-        "export type Board = CellState[][]\n"
-    )
-    (tmp_git_repo / "src" / "components" / "Board.test.tsx").write_text(
-        "import Board from './Board'\n"
-        "\n"
-        "const mockBoard = [\n"
-        "  ['empty', 'black'],\n"
-        "  ['white', 'empty'],\n"
-        "]\n"
-        "\n"
-        "test('renders fixture', () => render(<Board board={mockBoard} />))\n"
-    )
-    ticket = {
-        "delivery_profile": {"stack_id": "react-vite"},
-        "description": "五子棋 棋盘 黑方 白方",
-    }
-
-    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
-
-    text = (tmp_git_repo / "src" / "components" / "Board.test.tsx").read_text()
-    assert "src/components/Board.test.tsx" in changed
-    assert "import type { Board as BoardState } from '../types'" in text
-    assert "const mockBoard: BoardState = [" in text
-
-
-def test_react_vite_scaffold_types_create_empty_board_state_as_board(tmp_git_repo: Path):
-    entrypoint = _load_entrypoint()
-    (tmp_git_repo / "src").mkdir()
-    (tmp_git_repo / "src" / "types.ts").write_text(
-        "export type Stone = 'black' | 'white' | null\n"
-        "export type Board = Stone[][]\n"
-        "export function createEmptyBoard(): Board { return [] }\n"
-    )
-    (tmp_git_repo / "src" / "GameBoard.tsx").write_text(
-        "import { useState } from 'react'\n"
-        "import { Board } from './Board'\n"
-        "import { Stone, createEmptyBoard } from './types'\n"
-        "\n"
-        "export function GameBoard() {\n"
-        "  const [board, setBoard] = useState<(Stone)[]>(() => createEmptyBoard())\n"
-        "  return <Board board={board} />\n"
-        "}\n"
-    )
-    ticket = {
-        "delivery_profile": {"stack_id": "react-vite"},
-        "description": "五子棋 棋盘 黑方 白方 回合",
-    }
-
-    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
-
-    text = (tmp_git_repo / "src" / "GameBoard.tsx").read_text()
-    assert "src/GameBoard.tsx" in changed
-    assert "type Board as BoardState" in text
-    assert "useState<BoardState>(() => createEmptyBoard())" in text
-
-
-def test_react_vite_scaffold_clicks_cell_when_child_button_is_absent(tmp_git_repo: Path):
-    entrypoint = _load_entrypoint()
-    (tmp_git_repo / "src" / "components").mkdir(parents=True)
-    (tmp_git_repo / "src" / "components" / "Board.test.tsx").write_text(
-        "import { fireEvent, screen } from '@testing-library/react'\n"
-        "\n"
-        "it('点击单元格触发回调', () => {\n"
-        "  const cell = screen.getByTestId('cell-7-7')\n"
-        "  const button = cell.querySelector('button')\n"
-        "  fireEvent.click(button!)\n"
-        "  expect(handleClick).toHaveBeenCalledWith(7, 7)\n"
-        "})\n"
-    )
-    ticket = {
-        "delivery_profile": {"stack_id": "react-vite"},
-        "description": "五子棋 棋盘 黑方 白方 回合",
-    }
-
-    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
-
-    text = (tmp_git_repo / "src" / "components" / "Board.test.tsx").read_text()
-    assert "src/components/Board.test.tsx" in changed
-    assert "querySelector('button')" not in text
-    assert "fireEvent.click(cell)" in text
-
-
-def test_react_vite_scaffold_prunes_contradictory_occupied_cell_test(tmp_git_repo: Path):
-    entrypoint = _load_entrypoint()
-    (tmp_git_repo / "tests").mkdir()
-    (tmp_git_repo / "tests" / "App.test.tsx").write_text(
-        "import { describe, expect, it } from 'vitest'\n"
-        "\n"
-        "describe('occupied cells', () => {\n"
-        "  it('Given 白方落子后，When 黑方再次点击白方的位置，Then 棋盘状态不变', () => {\n"
-        "    const stillWhiteStone = cell0.querySelector('[data-stone=\"white\"]')\n"
-        "    expect(stillWhiteStone).toBeInTheDocument()\n"
-        "  })\n"
-        "\n"
-        "  it('keeps basic occupied-cell behavior', () => {\n"
-        "    expect(screen.getByText('当前: 白方')).toBeInTheDocument()\n"
-        "  })\n"
-        "})\n"
-    )
-    ticket = {
-        "delivery_profile": {"stack_id": "react-vite"},
-        "description": "五子棋 棋盘 黑方 白方 回合",
-    }
-
-    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
-
-    text = (tmp_git_repo / "tests" / "App.test.tsx").read_text()
-    assert "tests/App.test.tsx" in changed
-    assert "黑方再次点击白方的位置" not in text
-    assert "basic occupied-cell behavior" in text
+    text = (tmp_git_repo / "tests" / "Controls.test.tsx").read_text()
+    assert "tests/Controls.test.tsx" in changed
+    assert "toHaveStyle" not in text
+    assert "backgroundColor" not in text
+    assert "expect(button).toBeVisible()" in text
 
 
 def test_react_vite_scaffold_replaces_brittle_ready_smoke_test(tmp_git_repo: Path):
@@ -1582,6 +2529,54 @@ def test_react_vite_scaffold_replaces_brittle_ready_smoke_test(tmp_git_repo: Pat
     assert "src/App.test.tsx" in changed
     assert "Ready" not in text
     assert "expect(container).toBeDefined()" in text
+
+
+def test_react_vite_scaffold_removes_blank_app_placeholder_text(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "App.tsx").write_text(
+        "export default function App() {\n"
+        "  return <main>Ready</main>\n"
+        "}\n"
+    )
+    ticket = {
+        "delivery_profile": {"stack_id": "react-vite"},
+        "acceptance_criteria": ["Given project created, When npm run dev, Then browser shows a blank app"],
+    }
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "App.tsx").read_text()
+    assert "src/App.tsx" in changed
+    assert "Ready" not in text
+    assert "return <main />" in text
+
+
+def test_react_vite_scaffold_stabilizes_board_cell_css_geometry(tmp_git_repo: Path):
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "index.css").write_text(
+        ".board { display: flex; }\n"
+        ".cell { width: 2rem; height: 2rem; position: relative; }\n"
+        ".cell::before { content: ''; position: absolute; top: 50%; left: 0; right: 0; height: 1px; }\n"
+        ".cell::after { content: ''; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; }\n"
+        ".cell.star::before,\n"
+        ".cell.star::after { display: none; }\n"
+        ".cell.star { width: 0.75rem; height: 0.75rem; margin: auto; }\n"
+        ".cell.black,\n"
+        ".cell.white { width: 1.5rem; height: 1.5rem; margin: auto; }\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
+
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
+
+    text = (tmp_git_repo / "src" / "index.css").read_text()
+    assert "src/index.css" in changed
+    assert "code_minions: keep board cell geometry stable" in text
+    assert ".board .cell {" in text
+    assert "border-right: 1px solid #333" in text
+    assert ".board .cell.star," in text
+    assert "background: radial-gradient(circle at center, #333 0 0.18rem, transparent 0.2rem)" in text
 
 
 def test_react_vite_scaffold_renames_ts_tests_that_contain_jsx(tmp_git_repo: Path):
@@ -1644,65 +2639,51 @@ def test_react_vite_scaffold_removes_duplicate_types_self_barrel(tmp_git_repo: P
     assert "export type Player" in (tmp_git_repo / "src" / "types.ts").read_text()
 
 
-def test_turn_based_board_game_guidance_limits_complex_gomoku_rule_tests():
+def test_react_vite_scaffold_removes_duplicate_types_star_barrel_with_siblings(tmp_git_repo: Path):
     entrypoint = _load_entrypoint()
-    ticket = {
-        "delivery_profile": {"stack_id": "react-vite"},
-        "description": "五子棋，黑白轮流落子，白方纵向五子也要正确获胜",
-    }
+    (tmp_git_repo / "src" / "types").mkdir(parents=True)
+    (tmp_git_repo / "src" / "types.ts").write_text("export type Direction = 'left' | 'right'\n")
+    (tmp_git_repo / "src" / "types" / "index.ts").write_text("export * from '../types'\n")
+    (tmp_git_repo / "src" / "types" / "Direction.ts").write_text("export type DirectionName = string\n")
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
 
-    guidance = entrypoint._delivery_guidance_context(ticket)
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
 
-    assert "Keep Gomoku tests lightweight" in guidance
-    assert "acceptance-level" in guidance
-    assert "Avoid exhaustive public-click tests" in guidance
-    assert "Do not let synthetic full-board" in guidance
-    assert "Do not write UI tests that fill or click the whole board to prove a draw" in guidance
-    assert "omit automated draw tests for the Gomoku MVP" in guidance
-    assert "Do not write or keep UI tests for white vertical wins, diagonal wins, or full-board draws" in guidance
+    assert "src/types/index.ts" in changed
+    assert not (tmp_git_repo / "src" / "types" / "index.ts").exists()
+    assert (tmp_git_repo / "src" / "types" / "Direction.ts").exists()
+    assert (tmp_git_repo / "src" / "types").exists()
 
 
-def test_turn_based_board_game_guidance_preserves_current_turn_status_contract():
+def test_react_vite_scaffold_removes_duplicate_types_delete_sentinel(tmp_git_repo: Path):
     entrypoint = _load_entrypoint()
-    ticket = {
-        "delivery_profile": {"stack_id": "react-vite"},
-        "description": "五子棋，显示当前回合并判定胜负",
-    }
+    (tmp_git_repo / "src" / "types").mkdir(parents=True)
+    (tmp_git_repo / "src" / "types.ts").write_text("export type Direction = 'LEFT' | 'RIGHT'\n")
+    (tmp_git_repo / "src" / "types" / "index.ts").write_text("DELETE\n")
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
 
-    guidance = entrypoint._delivery_guidance_context(ticket)
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
 
-    assert "Preserve existing current-turn status text" in guidance
-    assert "当前回合: 黑子" in guidance
-    assert "黑子落子" in guidance
+    assert "src/types/index.ts" in changed
+    assert not (tmp_git_repo / "src" / "types" / "index.ts").exists()
+    assert not (tmp_git_repo / "src" / "types").exists()
 
 
-def test_turn_based_board_game_guidance_keeps_gomoku_tests_lightweight():
+def test_react_vite_scaffold_removes_duplicate_types_comment_only_file(tmp_git_repo: Path):
     entrypoint = _load_entrypoint()
-    ticket = {
-        "delivery_profile": {"stack_id": "react-vite"},
-        "description": "五子棋，黑白轮流落子，支持基础胜负判定",
-    }
+    (tmp_git_repo / "src" / "types").mkdir(parents=True)
+    (tmp_git_repo / "src" / "types.ts").write_text("export type Direction = 'LEFT' | 'RIGHT'\n")
+    (tmp_git_repo / "src" / "types" / "index.ts").write_text(
+        "// This file intentionally removed to avoid duplicate type module entry\n"
+        "// Import shared types from '../types'\n"
+    )
+    ticket = {"delivery_profile": {"stack_id": "react-vite"}}
 
-    guidance = entrypoint._delivery_guidance_context(ticket)
+    changed = entrypoint._stabilize_react_vite_scaffold(tmp_git_repo, ticket)
 
-    assert "Keep Gomoku tests lightweight" in guidance
-    assert "one black horizontal win" in guidance
-    assert "(10,10)" not in guidance
-
-
-def test_turn_based_board_game_guidance_defers_game_over_sequences_before_win_detection():
-    entrypoint = _load_entrypoint()
-    ticket = {
-        "delivery_profile": {"stack_id": "react-vite"},
-        "title": "核心落子交互与回合管理",
-        "description": "实现五子棋棋盘点击落子、回合切换、已有棋子不可重复落子",
-    }
-
-    guidance = entrypoint._delivery_guidance_context(ticket)
-
-    assert "Do not test game-over behavior by constructing a five-in-row sequence" in guidance
-    assert "defer that assertion to the win-detection task" in guidance
-    assert "Do not write or keep tests named `已存在游戏结束状态`" in guidance
+    assert "src/types/index.ts" in changed
+    assert not (tmp_git_repo / "src" / "types" / "index.ts").exists()
+    assert not (tmp_git_repo / "src" / "types").exists()
 
 
 def test_python_web_guidance_rejects_dict_response_model():
@@ -1799,6 +2780,22 @@ def test_project_context_includes_existing_source_contract_excerpts(tmp_git_repo
     assert "src/types.ts" in context
     assert "export type Player = 'black' | 'white'" in context
     assert "src/App.tsx" in context
+
+
+def test_project_context_includes_project_memory_from_project_root(tmp_git_repo: Path, tmp_path: Path):
+    entrypoint = _load_entrypoint()
+    project_root = tmp_path / "project"
+    worktree = tmp_path / "worktree"
+    (project_root / ".devflow").mkdir(parents=True)
+    worktree.mkdir()
+    (project_root / ".devflow" / "memory.md").write_text(
+        "# code_minions Project Memory\n\n- Prefer Vitest for UI tests.\n"
+    )
+
+    context = entrypoint._project_context(worktree, project_root=project_root)
+
+    assert "Project memory" in context
+    assert "Prefer Vitest for UI tests." in context
 
 
 def test_self_heal_prompt_includes_current_build_file_after_failure(tmp_git_repo: Path, monkeypatch):
@@ -1905,6 +2902,8 @@ def test_self_heal_prompt_includes_failure_playbook_hints(tmp_git_repo: Path, mo
 
     repair_user_message = llm.chat.call_args_list[1].kwargs["messages"][1].content
     assert "Failure playbook hints" in repair_user_message
+    assert "failed-to-resolve-import-testing-library-jest-dom" in repair_user_message
+    assert "auto_fixable: False" in repair_user_message
     assert "Add it to devDependencies or remove the setup import" in repair_user_message
 
 
@@ -2049,59 +3048,10 @@ def test_react_vite_profile_adds_test_environment_guidance_to_coder_prompt(tmp_g
     assert "jsdom does not compute layout" in coder_user
     assert "semantic click targets" in coder_user
     assert "Preserve existing exported type contracts" in coder_user
-    assert "Stone.Black" in coder_user
     assert "single canonical shared type module" in coder_user
     assert "src/types.ts" in coder_user
     assert "do not create `src/types/index.ts`" in coder_user
     assert "import React hooks explicitly" in coder_user
-
-
-def test_turn_based_board_game_ticket_adds_valid_move_sequence_guidance(tmp_git_repo: Path, monkeypatch):
-    entrypoint = _load_entrypoint()
-    from code_minions.llm.types import Message, Response, Usage
-
-    llm = MagicMock()
-    llm.chat.return_value = Response(
-        message=Message(
-            role="assistant",
-            content='{"files_written": [{"path": "package.json", "content": "{\\"scripts\\":{\\"test\\":\\"vitest run\\"}}\\n"}, {"path": "index.html", "content": "<div id=\\"root\\"></div>\\n"}, {"path": "src/game.ts", "content": "export const ok = true\\n"}, {"path": "src/game.test.ts", "content": "import { test } from \\"vitest\\"\\ntest(\\"runs\\", () => {})\\n"}], "reasoning": "ok"}',
-        ),
-        usage=Usage(1, 1),
-        model="fake",
-        stop_reason="end_turn",
-    )
-    monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: MagicMock(returncode=0, stdout="ok", stderr=""))
-
-    profile = {
-        "kind": "web-app",
-        "language": "typescript",
-        "framework": "react",
-        "build_system": "vite",
-        "test_command": "npm test",
-    }
-    ctx = MagicMock()
-    ctx.inputs = {
-        "ticket": {
-            "id": "T1",
-            "title": "Gomoku board",
-            "description": "实现 15x15 五子棋，本地双人对战，黑白双方轮流落子，黑棋先手。",
-            "acceptance_criteria": ["黑方横向连续五子获胜", "白方纵向连续五子获胜"],
-            "delivery_profile": profile,
-        }
-    }
-    ctx.workdir = tmp_git_repo
-    ctx.llm = llm
-    ctx.invoke_skill = lambda name, inputs: {"issues": [], "summary": "lgtm", "approved": True}
-    ctx.skill = None
-
-    entrypoint.run(ctx)
-
-    coder_user = llm.chat.call_args.kwargs["messages"][1].content
-    assert "turn-based board game" in coder_user
-    assert "Keep Gomoku tests lightweight" in coder_user
-    assert "one black horizontal win" in coder_user
-    assert "Avoid exhaustive public-click tests" in coder_user
-    assert "pure helper test" in coder_user
 
 
 def test_swift_xcodegen_profile_adds_infoplist_guidance_to_coder_prompt(tmp_git_repo: Path, monkeypatch):
@@ -2148,11 +3098,11 @@ def test_delivery_profile_failure_enters_self_heal_loop(tmp_git_repo: Path, monk
 
     llm = MagicMock()
     llm.chat.side_effect = [
-        Response(
-            message=Message(
-                role="assistant",
-                content='{"files_written": [{"path": "README.md", "content": "wrong stack\\n"}], "reasoning": "wrong stack"}',
-            ),
+            Response(
+                message=Message(
+                    role="assistant",
+                    content='{"files_written": [{"path": "main.go", "content": "package main\\n"}], "reasoning": "missing go.mod"}',
+                ),
             usage=Usage(1, 1),
             model="fake",
             stop_reason="end_turn",
@@ -2444,6 +3394,51 @@ def test_llm_can_write_files_with_tools(tmp_git_repo: Path, monkeypatch):
     assert out["files_changed"] == ["x.py"]
 
 
+def test_llm_tool_write_with_file_path_alias_is_recorded(tmp_git_repo: Path, monkeypatch):
+    entrypoint = _load_entrypoint()
+    from code_minions.llm.types import Message, Response, ToolCall, Usage
+
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        Response(
+            message=Message(
+                role="assistant",
+                tool_calls=[ToolCall(
+                    id="call-1",
+                    name="Write",
+                    arguments={"file_path": "x.py", "content": "x = 1\n"},
+                )],
+            ),
+            usage=Usage(1, 1),
+            model="fake",
+            stop_reason="tool_use",
+        ),
+        Response(
+            message=Message(role="assistant", content='{"reasoning": "done"}'),
+            usage=Usage(1, 1),
+            model="fake",
+            stop_reason="end_turn",
+        ),
+    ]
+
+    def fake_run(cmd, **kw):
+        return MagicMock(returncode=0, stdout="abc123\n", stderr="")
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    ctx = MagicMock()
+    ctx.inputs = {"ticket": {"id": "T1", "title": "hello"}}
+    ctx.workdir = tmp_git_repo
+    ctx.llm = llm
+    ctx.invoke_skill = lambda name, inputs: {"issues": [], "summary": "lgtm", "approved": True}
+    ctx.skill = None
+
+    out = entrypoint.run(ctx)
+
+    assert (tmp_git_repo / "x.py").read_text() == "x = 1\n"
+    assert out["files_changed"] == ["x.py"]
+    assert llm.chat.call_count == 2
+
+
 def test_tool_writes_are_recorded(tmp_git_repo: Path, monkeypatch):
     entrypoint = _load_entrypoint()
     from code_minions.llm.types import Message, Response, ToolCall, Usage
@@ -2650,18 +3645,18 @@ def test_coder_llm_calls_are_recorded(tmp_git_repo: Path, monkeypatch):
 
     entrypoint.run(ctx)
 
-    llm_events = [e for e in events if e["event_type"] == "llm_call"]
-    assert llm_events == [{
-        "event_type": "llm_call",
-        "payload": {
-            "step_id": "implement[0]",
-            "skill": "implement-with-tdd",
-            "model": "fake",
-            "stop_reason": "end_turn",
-            "usage": {"input_tokens": 7, "output_tokens": 3},
-            "tool_calls": [],
-        },
-    }]
+    llm_events = [e for e in events if e["event_type"].startswith("llm_call_")]
+    assert [event["event_type"] for event in llm_events] == [
+        "llm_call_started",
+        "llm_call_finished",
+    ]
+    assert llm_events[0]["payload"]["step_id"] == "implement[0]"
+    assert llm_events[0]["payload"]["skill"] == "implement-with-tdd"
+    assert llm_events[0]["payload"]["role"] == "implementer"
+    assert llm_events[1]["payload"]["model"] == "fake"
+    assert llm_events[1]["payload"]["stop_reason"] == "end_turn"
+    assert llm_events[1]["payload"]["usage"] == {"input_tokens": 7, "output_tokens": 3}
+    assert llm_events[1]["payload"]["tool_calls"] == []
 
 
 def test_tool_call_rounds_do_not_consume_json_retry_budget(tmp_git_repo: Path, monkeypatch):

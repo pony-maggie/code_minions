@@ -15,6 +15,34 @@ def test_load_minimal(tmp_path: Path):
     assert cfg.servers["fs"].args == ["ok"]
 
 
+def test_load_allowed_arguments(tmp_path: Path):
+    (tmp_path / ".mcp.json").write_text(
+        """
+{
+  "mcpServers": {
+    "jira": {
+      "command": "jira-mcp",
+      "allowed_arguments": {
+        "create_issue": {
+          "project_key": ["ABC"],
+          "issue_type": ["Epic", "Story"]
+        }
+      }
+    }
+  }
+}
+""".strip()
+    )
+    cfg = load_mcp_config(tmp_path / ".mcp.json")
+
+    assert cfg.servers["jira"].allowed_arguments == {
+        "create_issue": {
+            "project_key": ["ABC"],
+            "issue_type": ["Epic", "Story"],
+        }
+    }
+
+
 def test_empty_servers(tmp_path: Path):
     (tmp_path / ".mcp.json").write_text('{"mcpServers": {}}')
     cfg = load_mcp_config(tmp_path / ".mcp.json")

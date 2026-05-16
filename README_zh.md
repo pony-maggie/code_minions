@@ -46,6 +46,12 @@ pip install -e .
 
 要求 Python 3.11+。
 
+如果你要开发 `code_minions` 本仓库并在本地运行测试或 lint，请安装开发依赖：
+
+```bash
+pip install -e '.[dev]'
+```
+
 ## 两分钟烟雾测试
 
 ```bash
@@ -57,8 +63,8 @@ code-minions status <run-id>
 ```
 
 `hello-world` 不需要 LLM key、MCP server 或 git repo。它用来验证初始化、run 存储、
-scratch workspace 创建和确定性 skill 执行是否正常。`prd-to-commit`、`prd-to-pr`
-这类会修改代码的 workflow 仍然要求本地 git repo，且至少已有一个 commit。
+scratch workspace 创建和确定性 skill 执行是否正常。会修改代码的 PRD workflow
+仍然要求本地 git repo，且至少已有一个 commit。
 
 PRD workflow 建议在 PRD 中写清 `Delivery Contract` / `delivery_profile`，
 明确交付物类型、语言、构建系统、测试命令、必须出现的文件和禁止作为产品代码的语言。
@@ -100,13 +106,25 @@ llm:
 LLM provider 细节、Jira/GitHub MCP 示例、完整 PRD-to-PR 前置条件，请看
 [快速上手](docs/quickstart.md)。
 
+### Runtime 观测
+
+每次 run 都会把结构化 runtime event 写入 `.devflow/runs.db` 的
+`run_events` 表。长时间的 LLM、tool、测试命令会记录 started、finished、failed
+事件，包括 provider/model、role、timeout、attempt、耗时、压缩后的输出大小和失败分类。
+event payload 不保存完整 prompt、API key 或大段原始 tool 输出，只保存元数据、分类和
+artifact 路径。
+
+常用环境变量：
+
+- `CODE_MINIONS_LLM_TIMEOUT_SECONDS` 控制 provider 请求超时时间。
+- `CODE_MINIONS_CONTEXT_BUDGET_CHARS` 控制 agent 对话超过多大后进行压缩。
+
 ## 内置 Workflows
 
 | Workflow | 适合什么时候用 | 最小命令 |
 |---|---|---|
 | `hello-world` | 验证安装和 runtime 基础能力；不需要 AI 或外部服务。 | `code-minions run hello-world --input name=world` |
 | `summarize-file` | 做一个小型 AI smoke test：确定性读取本地文件，再调用一次 LLM 输出摘要。 | `code-minions run summarize-file --input file=./README.md` |
-| `prd-to-commit` | 跑 PRD -> 任务拆解 -> 实现 commit -> report，不接 Jira/GitHub。 | `code-minions run prd-to-commit --input prd=./my-prd.md` |
 | `react-vite-prd-to-commit` | 跑同一条本地 commit 链路，但预先固定 React + TypeScript + Vite 规则。 | `code-minions run react-vite-prd-to-commit --input prd=./my-prd.md` |
 | `swift-xcodegen-prd-to-commit` | 跑同一条本地 commit 链路，但预先固定 Swift + SwiftUI + XcodeGen 规则。 | `code-minions run swift-xcodegen-prd-to-commit --input prd=./my-prd.md` |
 | `go-service-prd-to-commit` | 跑同一条本地 commit 链路，但预先固定 Go service 规则。 | `code-minions run go-service-prd-to-commit --input prd=./my-prd.md` |
@@ -115,23 +133,14 @@ LLM provider 细节、Jira/GitHub MCP 示例、完整 PRD-to-PR 前置条件，�
 | `react-vite-prd-to-pr` | 跑完整 PR 链路，并预先固定 React + TypeScript + Vite 规则。 | `code-minions run react-vite-prd-to-pr --input prd=./my-prd.md --input project_key=ABC --input epic_title="Feature"` |
 | `python-cli-prd-to-pr` | 跑完整 PR 链路，并预先固定 Python CLI 规则。 | `code-minions run python-cli-prd-to-pr --input prd=./my-prd.md --input project_key=ABC --input epic_title="Feature"` |
 | `python-web-prd-to-pr` | 跑 Python FastAPI 的完整 PR 链路，并带 canonical app/package 门禁。 | `code-minions run python-web-prd-to-pr --input prd=./my-prd.md --input project_key=ABC --input epic_title="Feature"` |
-| `prd-to-pr` | 跑自定义栈或 PRD 已经写完整交付契约的完整 PR 链路。 | 见 [快速上手](docs/quickstart.md#run-a-workflow)。 |
 
-`prd-to-commit` 是通用入口。它不会默认使用 React/Vite；如果 PRD 中有
-`delivery_profile`，它会按该配置执行，否则会依赖栈推断。已知产品栈时，优先用
-`react-vite-prd-to-commit`、`python-cli-prd-to-commit` 这类 stack-specific
-workflow，让 harness 从一开始就固定交付约束。`python-web-prd-to-commit`
-不只是薄 alias：它会使用 FastAPI 专用 planner，把小型服务保持在一个
-canonical `src/<package>/app.py` 实现任务里。通用 workflow 也可以显式指定：
-
-```bash
-code-minions run prd-to-commit \
-  --input prd=./my-prd.md \
-  --input delivery_stack_id=python-cli
-```
+PRD run 建议优先选择明确写出项目技术栈的 workflow。stack-specific workflow
+会在 parse 和 plan 之前固定交付规则，不需要依赖运行时栈推断。
+`python-web-prd-to-commit` 不只是薄 alias：它会使用 FastAPI 专用 planner，把
+小型服务保持在一个 canonical `src/<package>/app.py` 实现任务里。
 
 PRD-to-PR 也建议优先使用匹配项目的 stack-specific workflow。它们复用
-`prd-to-pr` 的 Jira/GitHub 链路，但会在 parse 和 plan 之前固定技术栈：
+Jira/GitHub 交付链路，同时会在 parse 和 plan 之前固定技术栈：
 
 ```bash
 code-minions run python-cli-prd-to-pr \
@@ -142,12 +151,12 @@ code-minions run python-cli-prd-to-pr \
 code-minions run react-vite-prd-to-pr \
   --input prd=./my-prd.md \
   --input project_key=ABC \
-  --input epic_title="Gomoku web app"
+  --input epic_title="Kanban web app"
 
 code-minions run python-web-prd-to-pr \
   --input prd=./my-prd.md \
   --input project_key=ABC \
-  --input epic_title="MiniCalc API"
+  --input epic_title="Inventory API"
 ```
 
 run 结束后：
@@ -158,9 +167,15 @@ ls .devflow/runs/<run-id>/
 code-minions resume <run-id>
 ```
 
-对于会改代码的 run，实现 commit 在 `.devflow/runs/<run-id>/worktree`
-里的 `code-minions/<run-id>` 分支上。验收 worktree 和 `report.md` 后，把分支
-merge 回你的项目分支：
+如果 PRD 明确交付 Web UI，PRD workflow 会在 product acceptance 前执行浏览器验收。
+支持的栈会生成 `.devflow/browser-evidence/`，包括桌面/移动截图、console 诊断、
+布局指标和场景结果。生成的单元测试、浏览器验收、产品验收会作为独立质量信号写入最终 report。
+
+对于会改代码的 run，engine 会从项目仓库当前的 `HEAD` 新建
+`code-minions/<run-id>` 分支；它不一定基于远端默认分支。实现 commit 位于
+`.devflow/runs/<run-id>/worktree` 里的这个 run 分支上。`*-prd-to-commit`
+workflow 不会自动把分支 merge 回你当前 checkout 的项目分支。验收 worktree 和
+`report.md` 后，把分支 merge 回你的项目分支：
 
 ```bash
 git switch main
@@ -168,6 +183,9 @@ git merge --no-ff code-minions/<run-id>
 git worktree remove .devflow/runs/<run-id>/worktree
 git branch -d code-minions/<run-id>
 ```
+
+`*-prd-to-pr` workflow 使用同一个 run 分支和 worktree；product acceptance 通过后，
+它会把该分支 push 到 `origin` 并创建 PR，但不会自动 merge PR。
 
 更多验收、冲突处理和清理说明见 [quickstart](docs/quickstart.md#land-worktree-results)。
 

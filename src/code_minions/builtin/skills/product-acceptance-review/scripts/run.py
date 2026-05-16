@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 
@@ -64,6 +65,18 @@ def _has_tests(files: list[Path]) -> bool:
     return any("test" in path.name.lower() or "tests" in {p.lower() for p in path.parts} for path in files)
 
 
+def _is_test_path(path: str) -> bool:
+    normalized = path.replace("\\", "/")
+    parts = {part.lower() for part in normalized.split("/")}
+    name = normalized.rsplit("/", 1)[-1].lower()
+    return (
+        "tests" in parts
+        or name.startswith("test_")
+        or name.endswith((".test.ts", ".test.tsx", ".test.js", ".test.jsx", "_test.go"))
+        or ".spec." in name
+    )
+
+
 def _artifact_level(evidence: dict[str, Any]) -> str:
     languages = evidence["languages"]
     if evidence["has_swift_app_entry"] and evidence["build_system"] in {
@@ -85,12 +98,16 @@ def _task_coverage(tasks: list[dict[str, Any]], implement_results: list[dict[str
         result = implement_results[idx] if idx < len(implement_results) else {}
         files = result.get("files_changed") or []
         test_result = result.get("test_result") or {}
+        test_files = [path for path in files if isinstance(path, str) and _is_test_path(path)]
         status = "passed" if test_result.get("passed") and files else "missing-evidence"
         rows.append({
             "id": task.get("id", f"task-{idx + 1}"),
+            "trace_id": result.get("trace_id") or task.get("trace_id") or f"cm_task_{idx + 1}",
             "title": task.get("title") or task.get("name") or "",
+            "acceptance_criteria": task.get("acceptance_criteria") or [],
             "status": status,
             "files_changed": files,
+            "test_files": test_files,
             "tests_passed": bool(test_result.get("passed")),
         })
     return rows
@@ -133,11 +150,124 @@ def _task_acceptance_item(row: dict[str, Any]) -> dict[str, Any]:
         status=status,
         message=message,
         evidence={
+            "trace_id": row["trace_id"],
             "task_id": row["id"],
             "files_changed": row["files_changed"],
+            "test_files": row["test_files"],
             "tests_passed": row["tests_passed"],
         },
     )
+
+
+def _criterion_acceptance_items(row: dict[str, Any]) -> list[dict[str, Any]]:
+    criteria = row.get("acceptance_criteria") or []
+    if not isinstance(criteria, list):
+        return []
+    items: list[dict[str, Any]] = []
+    for idx, criterion in enumerate(criteria, start=1):
+        criterion_text = str(criterion).strip()
+        if not criterion_text:
+            continue
+        has_test_evidence = row["tests_passed"] and bool(row["test_files"])
+        items.append(_acceptance_item(
+            f"criterion:{row['trace_id']}:{idx}",
+            title=criterion_text,
+            kind="criterion",
+            status="pass" if has_test_evidence else "fail",
+            message=(
+                "Criterion is attached to passing task-level test evidence."
+                if has_test_evidence
+                else "Criterion has no passing task-level test evidence."
+            ),
+            evidence={
+                "trace_id": row["trace_id"],
+                "task_id": row["id"],
+                "criterion_index": idx,
+                "criterion": criterion_text,
+                "test_files": row["test_files"],
+                "tests_passed": row["tests_passed"],
+            },
+        ))
+    return items
+
+
+def _plan_commitment_item(result: dict[str, Any], idx: int) -> dict[str, Any] | None:
+    commitment = result.get("plan_commitment")
+    if not isinstance(commitment, dict):
+        return None
+    trace_id = result.get("trace_id") or commitment.get("trace_id") or f"cm_task_{idx + 1}"
+    expected = [str(path) for path in commitment.get("will_change_paths") or [] if str(path).strip()]
+    files = [str(path) for path in result.get("files_changed") or [] if str(path).strip()]
+    unexpected = [
+        path for path in files
+        if expected and not any(_glob_path_matches(path, pattern) for pattern in expected)
+    ]
+    return _acceptance_item(
+        f"commitment:{trace_id}",
+        title="Plan commitment",
+        kind="commitment",
+        status="fail" if unexpected else "pass",
+        message=(
+            "Actual changed files stayed within the implementation commitment."
+            if not unexpected
+            else "Actual changed files drifted outside the implementation commitment."
+        ),
+        evidence={
+            "trace_id": trace_id,
+            "will_change_paths": expected,
+            "files_changed": files,
+            "unexpected_files": unexpected,
+        },
+    )
+
+
+def _glob_path_matches(path: str, pattern: str) -> bool:
+    normalized = path.replace("\\", "/").lstrip("./")
+    candidate = pattern.replace("\\", "/").lstrip("./").rstrip("/")
+    if fnmatch(normalized, candidate) or normalized == candidate:
+        return True
+    if "**/" not in candidate:
+        return False
+    zero_depth_pattern = candidate.replace("**/", "")
+    return fnmatch(normalized, zero_depth_pattern) or normalized == zero_depth_pattern.rstrip("/")
+
+
+def _browser_acceptance_items(browser_acceptance: dict[str, Any]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for scenario in browser_acceptance.get("scenarios") or []:
+        status = scenario.get("status") or scenario.get("result")
+        if status == "skip":
+            continue
+        scenario_id = scenario.get("id") or f"browser:{len(items) + 1}"
+        items.append(_acceptance_item(
+            scenario_id,
+            title=scenario.get("title") or scenario.get("name") or scenario_id,
+            kind="browser",
+            status="warn" if status == "warn" else status,
+            message=scenario.get("message") or scenario.get("notes") or "",
+            evidence={
+                "stack_id": browser_acceptance.get("stack_id", ""),
+                "scenario_evidence": scenario.get("evidence") or {},
+                "artifacts": browser_acceptance.get("artifacts") or {},
+            },
+        ))
+    if (
+        browser_acceptance.get("supported")
+        and browser_acceptance.get("accepted") is False
+        and not any(item["status"] == "fail" for item in items)
+    ):
+        items.append(_acceptance_item(
+            "browser:accepted",
+            title="Browser acceptance accepted the UI",
+            kind="browser",
+            status="fail",
+            message="Supported Web UI browser acceptance did not accept the final UI.",
+            evidence={
+                "stack_id": browser_acceptance.get("stack_id", ""),
+                "artifacts": browser_acceptance.get("artifacts") or {},
+            },
+        ))
+    return items
 
 
 def _verifier_round(items: list[dict[str, Any]]) -> dict[str, Any]:
@@ -175,6 +305,7 @@ def run(ctx) -> dict[str, Any]:
     structured_prd = ctx.inputs["structured_prd"]
     tasks = ctx.inputs["tasks"]
     implement_results = ctx.inputs["implement_results"]
+    browser_acceptance = ctx.inputs.get("browser_acceptance_output") or {}
 
     files = _all_files(workdir)
     languages = language_counts(workdir)
@@ -194,6 +325,20 @@ def run(ctx) -> dict[str, Any]:
     blockers: list[dict[str, str]] = []
     warnings: list[dict[str, str]] = []
     acceptance_items = [_task_acceptance_item(row) for row in coverage]
+    for row in coverage:
+        acceptance_items.extend(_criterion_acceptance_items(row))
+    for idx, result in enumerate(implement_results):
+        commitment_item = _plan_commitment_item(result, idx)
+        if commitment_item is not None:
+            acceptance_items.append(commitment_item)
+    browser_items = _browser_acceptance_items(browser_acceptance)
+    acceptance_items.extend(browser_items)
+    for item in browser_items:
+        if item["status"] == "fail":
+            blockers.append(_issue(item["id"], item.get("message", "")))
+        elif item["status"] == "warn":
+            warnings.append(_issue(item["id"], item.get("message", ""), severity="warning"))
+
     delivery_issues = validate_delivery_profile(workdir, delivery_profile)
     if delivery_issues:
         for issue in delivery_issues:
@@ -268,6 +413,19 @@ def run(ctx) -> dict[str, Any]:
     for row in coverage:
         if row["status"] == "missing-evidence":
             blockers.append(_issue("missing-task-evidence", f"Task {row['id']} has no passing test evidence or changed files."))
+        for item in _criterion_acceptance_items(row):
+            if item["status"] == "fail":
+                blockers.append(_issue(
+                    "missing-criterion-evidence",
+                    f"Criterion {item['id']} has no passing task-level test evidence.",
+                ))
+    for idx, result in enumerate(implement_results):
+        commitment_item = _plan_commitment_item(result, idx)
+        if commitment_item is not None and commitment_item["status"] == "fail":
+            blockers.append(_issue(
+                "plan-commitment-drift",
+                f"Implementation {commitment_item['id']} changed files outside its plan commitment.",
+            ))
     if languages.get("python", 0) and requires_swift:
         message = "Python files are present in a PRD that asks for Swift/macOS; classify this as prototype evidence only."
         warnings.append(_issue(
@@ -294,5 +452,5 @@ def run(ctx) -> dict[str, Any]:
         "verifier_rounds": verifier_rounds,
         "blockers": blockers,
         "warnings": warnings,
-        "evidence": {**evidence, "delivery_profile": delivery_profile},
+        "evidence": {**evidence, "delivery_profile": delivery_profile, "browser_acceptance": browser_acceptance},
     }

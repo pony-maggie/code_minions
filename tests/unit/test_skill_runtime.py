@@ -12,6 +12,7 @@ from code_minions.engine.skill_runtime import (
     SkillRuntime,
     SkillValidationError,
 )
+from code_minions.llm.types import Message, Response, Usage
 
 
 def _write_skill(
@@ -61,6 +62,70 @@ def test_skill_without_entrypoint_or_llm_raises(tmp_path: Path) -> None:
     rt = SkillRuntime()
     with pytest.raises(NoHandlerError, match="no entrypoint-script"):
         rt.invoke(sk, SkillContext(inputs={}, workdir=tmp_path))
+
+
+def test_llm_skill_starts_only_required_mcp_servers(tmp_path: Path) -> None:
+    d = _write_skill(
+        tmp_path,
+        "needs-github",
+        """
+name: needs-github
+required-mcps:
+  - github
+inputs: {}
+outputs:
+  ok: {type: boolean}
+""",
+    )
+    sk = load_skill(d)
+    started: list[list[str]] = []
+
+    class FakeMCPPool:
+        def ensure_started(self, servers):
+            started.append(list(servers))
+
+        def list_tools(self):
+            assert started == [["github"]]
+            return {
+                "github": [{"name": "create_pr", "description": "create PR", "input_schema": {"type": "object"}}],
+                "jira": [{"name": "create_issue", "description": "create issue", "input_schema": {"type": "object"}}],
+            }
+
+    class FakeAssembler:
+        def build_system_prompt(self, **_kwargs):
+            return "system"
+
+    class FakeLLM:
+        name = "fake"
+
+        def __init__(self):
+            self.tool_names: list[str] = []
+
+        def chat(self, messages, tools=None, model=None, temperature=0.2, max_tokens=4096):
+            self.tool_names = [tool.name for tool in tools or []]
+            return Response(
+                message=Message(role="assistant", content='{"ok": true}'),
+                usage=Usage(input_tokens=1, output_tokens=1),
+                model="fake",
+                stop_reason="end_turn",
+            )
+
+    llm = FakeLLM()
+
+    result = SkillRuntime().invoke(
+        sk,
+        SkillContext(
+            inputs={},
+            workdir=tmp_path,
+            llm=llm,
+            mcp_pool=FakeMCPPool(),
+            assembler=FakeAssembler(),
+        ),
+    )
+
+    assert result == {"ok": True}
+    assert started == [["github"]]
+    assert llm.tool_names == ["mcp__github__create_pr"]
 
 
 def test_missing_required_input_raises(tmp_path: Path) -> None:

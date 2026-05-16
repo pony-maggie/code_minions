@@ -37,16 +37,36 @@ steps:
     inputs: {ticket: $ticket}
     depends_on: [tickets]
 
+  - id: browser_acceptance
+    skill: web-ui-acceptance-review
+    inputs:
+      structured_prd: $steps.parse.output
+      tasks: $steps.tickets.output.tickets
+      implement_results: $steps.implement.output.items
+    depends_on: [implement]
+
+  - id: acceptance
+    skill: product-acceptance-review
+    inputs:
+      structured_prd: $steps.parse.output
+      tasks: $steps.tickets.output.tickets
+      implement_results: $steps.implement.output.items
+      browser_acceptance_output: $steps.browser_acceptance.output
+    depends_on: [browser_acceptance]
+
   - id: report
     skill: compile-report
     inputs:
       implement_results: $steps.implement.output.items
+      browser_acceptance_output: $steps.browser_acceptance.output
+      acceptance_output: $steps.acceptance.output
       tickets_output: $steps.tickets.output
       output_path: report.md
-    depends_on: [implement]
+    depends_on: [acceptance]
 
   - id: open_pr
     skill: open-github-pr
+    when: $steps.acceptance.output.accepted
     inputs:
       prd: $inputs.prd
       epic_title: $inputs.epic_title

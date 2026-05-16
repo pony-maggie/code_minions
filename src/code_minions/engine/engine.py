@@ -14,10 +14,12 @@ from typing import TYPE_CHECKING, Any
 from code_minions.engine.context import ContextAssembler
 from code_minions.engine.dag_runner import DAGRunner
 from code_minions.engine.event_bus import Event, EventBus
+from code_minions.engine.failure_classification import classify_failure
 from code_minions.engine.hooks import HookRegistry
+from code_minions.engine.project_memory import update_project_memory
 from code_minions.engine.skill import Skill, SkillLoadError, load_skill
 from code_minions.engine.skill_cache import SkillCache
-from code_minions.engine.skill_runtime import SkillRuntime
+from code_minions.engine.skill_runtime import SkillExecutionError, SkillRuntime
 from code_minions.engine.workflow import Workflow, WorkflowLoadError, load_workflow
 from code_minions.git.worktree import WorktreeManager
 from code_minions.store.run_store import RunStore
@@ -50,6 +52,38 @@ def _llm_display(llm: LLMBackend | None) -> str:
     return getattr(llm, "name", type(llm).__name__)
 
 
+def _outputs_contain_skipped_steps(outputs: dict[str, dict[str, Any]]) -> bool:
+    return any(bool(output.get("__code_minions_skipped__")) for output in outputs.values())
+
+
+def _outputs_contain_rejected_acceptance(outputs: dict[str, dict[str, Any]]) -> bool:
+    return any(output.get("accepted") is False for output in outputs.values())
+
+
+def _final_status_for_outputs(outputs: dict[str, dict[str, Any]]) -> RunStatus:
+    if _outputs_contain_skipped_steps(outputs) or _outputs_contain_rejected_acceptance(outputs):
+        return RunStatus.COMPLETED_WITH_ISSUES
+    return RunStatus.SUCCESS
+
+
+def _run_status_for_exception(exc: Exception) -> RunStatus:
+    if isinstance(exc, SkillExecutionError) and exc.run_status:
+        try:
+            return RunStatus(exc.run_status)
+        except ValueError:
+            return RunStatus.FAILED
+    return RunStatus.FAILED
+
+
+def _classification_payload(error: Exception, run_events: list[dict[str, Any]]) -> dict[str, str]:
+    classification = classify_failure(error=repr(error), run_events=run_events)
+    return {
+        "classification": classification.classification,
+        "message": classification.message,
+        "next_action": classification.next_action,
+    }
+
+
 class Engine:
     def __init__(
         self,
@@ -59,6 +93,7 @@ class Engine:
         runtime: SkillRuntime,
         run_store: RunStore | None = None,
         llm_backend: LLMBackend | None = None,
+        role_llm_backends: dict[str, LLMBackend] | None = None,
         mcp_pool: MCPClientPool | None = None,
         event_bus: EventBus | None = None,
     ):
@@ -73,6 +108,7 @@ class Engine:
         self._skill_cache = SkillCache(devflow_dir / "skill_cache.db")
         self._wt_mgr = WorktreeManager(self._root)
         self._llm = llm_backend
+        self._role_llms = role_llm_backends or {}
         self._mcp = mcp_pool
         self._bus = event_bus
         self._assembler = ContextAssembler(self._root)
@@ -142,6 +178,7 @@ class Engine:
 
         def record_run_event(event_type: str, payload: dict[str, Any]) -> None:
             self._store.append_run_event(run_id, event_type, payload)
+            self._publish(run_id, "run.event", {"event_type": event_type, "payload": payload})
 
         runner = DAGRunner(
             workflow=wf,
@@ -151,6 +188,7 @@ class Engine:
             inputs=inputs,
             observer=observe,
             llm_backend=self._llm,
+            role_llm_backends=self._role_llms,
             mcp_pool=self._mcp,
             assembler=self._assembler,
             hook_registry=self._hook_registry,
@@ -163,13 +201,24 @@ class Engine:
         self._store.set_run_status(run_id, RunStatus.RUNNING)
         self._publish(run_id, "run.started", {"workflow": wf.name})
         try:
-            runner.run()
-        except Exception:
-            self._store.set_run_status(run_id, RunStatus.FAILED)
-            self._publish(run_id, "run.finished", {"status": "failed"})
+            outputs = runner.run()
+        except Exception as e:
+            status = _run_status_for_exception(e)
+            classification = _classification_payload(e, self._store.list_run_events(run_id))
+            self._store.append_run_event(run_id, "workflow_failure_classified", classification)
+            self._store.set_run_status(run_id, status)
+            self._publish(run_id, "run.finished", {"status": status.value, **classification})
             return run_id
-        self._store.set_run_status(run_id, RunStatus.SUCCESS)
-        self._publish(run_id, "run.finished", {"status": "success"})
+        final_status = _final_status_for_outputs(outputs)
+        update_project_memory(
+            self._root,
+            run_id=run_id,
+            workflow=wf.name,
+            status=final_status.value,
+            outputs=outputs,
+        )
+        self._store.set_run_status(run_id, final_status)
+        self._publish(run_id, "run.finished", {"status": final_status.value})
         return run_id
 
     def _create_workspace(self, run_id: str, wf: Workflow) -> Path:
@@ -238,13 +287,15 @@ class Engine:
 
         def record_run_event(event_type: str, payload: dict[str, Any]) -> None:
             self._store.append_run_event(run_id, event_type, payload)
+            self._publish(run_id, "run.event", {"event_type": event_type, "payload": payload})
 
         import json as _json
         inputs = _json.loads(run["input_json"])
         runner = DAGRunner(
             workflow=wf, skills_by_name=skills, runtime=self._runtime,
             workdir=workdir, inputs=inputs, observer=observe,
-            llm_backend=self._llm, mcp_pool=self._mcp, assembler=self._assembler,
+            llm_backend=self._llm, role_llm_backends=self._role_llms,
+            mcp_pool=self._mcp, assembler=self._assembler,
             preloaded_outputs=preloaded, hook_registry=self._hook_registry,
             skill_search_paths=self._skill_paths,
             project_root=self._root,
@@ -255,13 +306,24 @@ class Engine:
         self._store.set_run_status(run_id, RunStatus.RUNNING)
         self._publish(run_id, "run.started", {"workflow": wf.name})
         try:
-            runner.run()
-        except Exception:
-            self._store.set_run_status(run_id, RunStatus.FAILED)
-            self._publish(run_id, "run.finished", {"status": "failed"})
+            outputs = runner.run()
+        except Exception as e:
+            status = _run_status_for_exception(e)
+            classification = _classification_payload(e, self._store.list_run_events(run_id))
+            self._store.append_run_event(run_id, "workflow_failure_classified", classification)
+            self._store.set_run_status(run_id, status)
+            self._publish(run_id, "run.finished", {"status": status.value, **classification})
             return run_id
-        self._store.set_run_status(run_id, RunStatus.SUCCESS)
-        self._publish(run_id, "run.finished", {"status": "success"})
+        final_status = _final_status_for_outputs(outputs)
+        update_project_memory(
+            self._root,
+            run_id=run_id,
+            workflow=wf.name,
+            status=final_status.value,
+            outputs=outputs,
+        )
+        self._store.set_run_status(run_id, final_status)
+        self._publish(run_id, "run.finished", {"status": final_status.value})
         return run_id
 
     def _workspace_for_existing_run(self, run_id: str, wf: Workflow) -> Path:

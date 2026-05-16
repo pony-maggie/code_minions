@@ -34,11 +34,17 @@ service.
 - If the PRD names an app import such as `<package>.app:app`, every task must
   use that package. Tests must import `from <package>.app import app`.
 - Each task must include explicit acceptance criteria.
+- Each task must include `expected_paths` covering the canonical app package,
+  tests, and build/dependency files it owns, for example
+  `["src/<package>/**", "tests/**", "pyproject.toml"]`.
 - Respect dependencies and implementation order.
 - Do NOT invent features not present in `structured_prd`.
-- If `structured_prd.delivery_profile` is present, copy it unchanged into every
-  task as `delivery_profile`.
+- Do not write `delivery_profile` yourself. The runtime injects the
+  authoritative `structured_prd.delivery_profile` into every task after
+  planning.
+- The runtime injects `trace_id` for tasks that omit it. If you provide a
+  `trace_id`, keep it stable and unique within this plan.
 
 ## Outputs
 
-- `tasks` (object[]): `{id, title, description, acceptance_criteria: string[], depends_on: string[], delivery_profile?: object}`
+- `tasks` (object[]): `{id, trace_id?: string, title, description, acceptance_criteria: string[], expected_paths: string[], depends_on: string[], delivery_profile?: object}`

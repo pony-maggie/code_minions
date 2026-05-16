@@ -24,3 +24,15 @@ def test_assemble_without_agents_md(tmp_path: Path):
     system = asm.build_system_prompt(skill_instructions="# s", step_summary="")
     assert "no AGENTS.md found" in system
     assert "# s" in system
+
+
+def test_assemble_includes_project_memory(tmp_path: Path):
+    memory = tmp_path / ".devflow" / "memory.md"
+    memory.parent.mkdir()
+    memory.write_text("# code_minions Project Memory\n\n- Build system: npm\n")
+    asm = ContextAssembler(project_root=tmp_path)
+
+    system = asm.build_system_prompt(skill_instructions="# s", step_summary="")
+
+    assert "Project Memory" in system
+    assert "Build system: npm" in system

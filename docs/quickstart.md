@@ -43,7 +43,8 @@ This creates:
 - `devflow.yaml` — platform config (LLM provider, search paths)
 - `AGENTS.md` — project conventions (fill this in!)
 - `.mcp.json` — MCP server registry
-- `.devflow/` — added to `.gitignore`; holds run state
+- `.devflow/` — added to `.gitignore`; holds run state, caches, and local
+  `memory.md` facts learned from completed runs
 
 In `devflow.yaml`, `workflow.default` is used when you run
 `code-minions run` without a workflow argument. Passing an explicit workflow on
@@ -69,6 +70,9 @@ The examples below prefer coding-oriented models over the cheapest chat models:
 ```yaml
 llm:
   default: anthropic
+  roles:
+    implementer: openai
+    reviewer: anthropic
   providers:
     anthropic:
       model: claude-sonnet-4-6
@@ -85,11 +89,28 @@ llm:
       api_base: https://api.minimaxi.com/v1
 ```
 
+`llm.roles` is optional. When present, LLM skills whose `SKILL.md` declares a
+matching `role` use that provider instead of `llm.default`. The built-in
+implementation loop declares `role: implementer`, and `ai-code-review` declares
+`role: reviewer`, so you can run reviewer calls on a different model/provider
+from implementation calls. Role providers must be configured under
+`llm.providers` and have their API key available.
+
 Model selection notes:
 - Anthropic: `claude-sonnet-4-6` is the balanced daily coding default; use `claude-opus-4-6` for the hardest refactors and planning-heavy work.
 - OpenAI: `gpt-5.5` is the current strong default for complex coding; use `gpt-5.4-mini` when latency and cost matter more than maximum capability.
 - Gemini: `gemini-3.1-pro-preview` is the coding/agentic preview model; use `gemini-2.5-pro` if you want a stable model string for production-style runs.
 - MiniMax: `MiniMax-M2.7` is the current coding-tool default; use `MiniMax-M2.7-highspeed` when you have access and want lower latency. China-region Token Plan keys use `https://api.minimaxi.com/v1`; international keys can switch `api_base` to `https://api.minimax.io/v1`.
+
+Runtime controls:
+
+- `CODE_MINIONS_LLM_TIMEOUT_SECONDS` changes the per-request provider timeout.
+- `CODE_MINIONS_CONTEXT_BUDGET_CHARS` changes when long agent conversations are
+  compacted before another model call.
+
+Each LLM call records started/finished/failed events in `.devflow/runs.db`
+without storing full prompts or API keys. Provider timeout/503/rate-limit
+failures are classified separately from implementation test failures.
 
 ## Configure external integrations
 
@@ -111,6 +132,11 @@ Example `.mcp.json`:
   "mcpServers": {
     "jira": {
       "command": "answerai-jira-mcp",
+      "allowed_arguments": {
+        "create_issue": {
+          "project_key": ["ABC"]
+        }
+      },
       "env": {
         "JIRA_BASE_URL": "https://your-domain.atlassian.net",
         "JIRA_USER_EMAIL": "you@example.com",
@@ -141,6 +167,9 @@ Example `.mcp.json`:
 Notes:
 - The GitHub example uses GitHub's official `github/github-mcp-server` local server configuration and enables the toolsets needed for PR creation.
 - The Jira example uses `answerai-jira-mcp` as one concrete local stdio option. `code_minions` only requires a server named `jira` that can create and query Jira issues.
+- Optional `allowed_arguments` rules constrain MCP tool arguments before the
+  call is sent to the server. Use them for high-risk fields such as Jira
+  `project_key` so an LLM cannot create issues in the wrong project.
 - Atlassian's remote Rovo MCP is a different integration style; `code_minions` currently expects local stdio MCP servers in `.mcp.json`.
 
 ## End-to-end prerequisites for PRD-to-PR
@@ -279,14 +308,18 @@ What happens:
 - `code_minions` creates a local worktree and branch like `code-minions/<run-id>`
 - implements the PRD ticket by ticket
 - writes a final `report.md`
-- pushes the branch to `origin`
-- opens a GitHub pull request automatically
+- pushes the branch to `origin` only after product acceptance passes
+- opens a GitHub pull request automatically only when acceptance passes
 
 Current v1 limits:
 - GitHub only for the final PR step
 - `origin` is assumed to be the target remote
 - no automatic reviewers, labels, or draft state
 - the workflow opens the PR, but does not merge it
+
+If product acceptance fails, the PR step is skipped and the run finishes as
+`completed_with_issues`. Inspect `report.md` and the failed/skipped steps before
+resuming or making manual fixes.
 
 ## PRD-to-commit workflow
 
@@ -336,6 +369,22 @@ stack-specific hygiene checks to warnings while still running the real test
 command; `strict` keeps those checks blocking. The final `report.md` also shows
 the profile, warnings, and any blockers.
 
+Implementation self-heal also runs cheap test-quality sensors. If a repair
+attempt deletes tests, adds `skip`/`xfail`, removes a large share of assertions,
+or adds weak assertions, the ticket fails instead of turning a red test suite
+green by weakening the tests.
+
+The built-in implementation skill also defaults `policies.require_tests: true`.
+When enabled, a green test command is not enough unless the workspace contains
+at least one executable test detected by the runtime.
+
+Planner tasks also carry `expected_paths` when generated by current built-in
+planners. `implement-with-tdd` treats those globs as the task's scope contract
+and rejects writes outside the declared paths. For delivery-profile bootstrap
+tasks, the runtime also allows required scaffold/config files such as
+`package.json`, `index.html`, Vite config, and TypeScript config files when the
+declared stack needs them.
+
 See [PRD template](prd-template.md) for full examples covering Swift macOS apps,
 Go web services, Python CLIs, and React/Vite apps.
 
@@ -358,6 +407,16 @@ That worktree is on a branch named:
 ```text
 code-minions/<run-id>
 ```
+
+The branch is created from the project repository's current `HEAD` at the time
+you start the run. It is not automatically rebased onto, or created from, the
+remote default branch. If you want the run to start from `main`, switch to
+`main` and pull before running the workflow.
+
+`*-prd-to-commit` workflows stop with commits on the run branch and never merge
+those commits back into your checked-out project automatically. `*-prd-to-pr`
+workflows use the same run branch, then push it to `origin` and open a PR after
+product acceptance passes; they do not merge the PR.
 
 Review the result first:
 
@@ -404,6 +463,16 @@ git add report.md
 git commit -m "docs: add implementation report"
 ```
 
+The report step also writes machine-readable evidence under
+`.devflow/evidence/`, including implementation results, acceptance outputs, and
+`traceability.json` / `traceability.md` that connect task rows to commits,
+files, and test status.
+
+For Web UI PRDs, browser acceptance also writes `.devflow/browser-evidence/`
+with screenshots, layout metrics, console/page/request diagnostics, and browser
+scenario verdicts. These artifacts are separate from generated unit tests and
+are included in the final report when available.
+
 After the merge is complete and you no longer need the isolated worktree, clean
 it up:
 
@@ -427,5 +496,8 @@ code-minions cancel <run-id>     # mark a pending/running run cancelled
 
 `status` and `list-runs` show the LLM provider/model recorded when the run was
 created. Older runs created before this field existed display `not recorded`.
+The Web dashboard also streams run-level runtime events for Web-started runs,
+so you can see whether a run is inside an LLM request, a tool call, or a test
+command.
 
 See `docs/workflows.md` for the workflow YAML reference and `docs/skills.md` for writing custom skills.

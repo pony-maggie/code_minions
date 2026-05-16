@@ -36,7 +36,7 @@ def test_prd_to_pr_yaml_loads() -> None:
     assert set(wf.inputs) == {"prd", "delivery_stack_id", "project_key", "epic_title"}
     assert wf.inputs["delivery_stack_id"].required is False
     step_ids = [s.id for s in wf.steps]
-    assert step_ids == ["parse", "plan", "tickets", "implement", "report", "open_pr"]
+    assert step_ids == ["parse", "plan", "tickets", "implement", "browser_acceptance", "acceptance", "report", "open_pr"]
     assert wf.steps[0].inputs["delivery_stack_id"] == "$inputs.delivery_stack_id"
 
 
@@ -49,16 +49,21 @@ def test_prd_to_commit_yaml_loads() -> None:
     assert wf.inputs["prd"].required is True
     assert wf.inputs["delivery_stack_id"].required is False
     step_ids = [s.id for s in wf.steps]
-    assert step_ids == ["parse", "plan", "implement", "acceptance", "report"]
+    assert step_ids == ["parse", "plan", "implement", "browser_acceptance", "acceptance", "report"]
 
     implement = wf.steps[2]
     assert implement.skill == "implement-with-tdd"
     assert implement.for_each == "$steps.plan.output.tasks"
     assert implement.as_ == "ticket"
 
-    acceptance = wf.steps[3]
+    browser_acceptance = wf.steps[3]
+    assert browser_acceptance.skill == "web-ui-acceptance-review"
+    assert browser_acceptance.depends_on == ["implement"]
+
+    acceptance = wf.steps[4]
     assert acceptance.skill == "product-acceptance-review"
-    assert acceptance.depends_on == ["implement"]
+    assert acceptance.depends_on == ["browser_acceptance"]
+    assert acceptance.inputs["browser_acceptance_output"] == "$steps.browser_acceptance.output"
 
 
 def test_all_referenced_skills_are_findable() -> None:
@@ -82,7 +87,8 @@ def test_all_referenced_skills_are_findable() -> None:
         skills = engine._load_skills_for(wf)  # noqa: SLF001
         assert set(skills.keys()) == {
             "parse-prd", "plan-tasks", "create-jira-tickets",
-            "implement-with-tdd", "compile-report", "open-github-pr",
+            "implement-with-tdd", "web-ui-acceptance-review", "product-acceptance-review",
+            "compile-report", "open-github-pr",
         }
 
         commit_wf = load_workflow(_builtin_root() / "workflows" / "prd-to-commit.yaml")
@@ -91,6 +97,7 @@ def test_all_referenced_skills_are_findable() -> None:
             "parse-prd",
             "plan-tasks",
             "implement-with-tdd",
+            "web-ui-acceptance-review",
             "product-acceptance-review",
             "compile-report",
         }

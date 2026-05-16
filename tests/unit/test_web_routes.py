@@ -31,6 +31,49 @@ def test_runs_list_empty(client: TestClient) -> None:
     assert "code-minions" in resp.text
 
 
+def test_web_auth_token_rejects_missing_token(
+    tmp_git_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_git_repo)
+    monkeypatch.setenv("CODE_MINIONS_WEB_AUTH_TOKEN", "secret")
+    from code_minions.web import deps as web_deps
+
+    web_deps._project_root.cache_clear()
+    web_deps.get_engine.cache_clear()
+    web_deps.get_store.cache_clear()
+
+    from code_minions.web.app import create_app
+
+    authed_client = TestClient(create_app())
+
+    resp = authed_client.get("/")
+
+    assert resp.status_code == 401
+
+
+def test_web_auth_token_accepts_bearer_token(
+    tmp_git_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_git_repo)
+    monkeypatch.setenv("CODE_MINIONS_WEB_AUTH_TOKEN", "secret")
+    from code_minions.web import deps as web_deps
+
+    web_deps._project_root.cache_clear()
+    web_deps.get_engine.cache_clear()
+    web_deps.get_store.cache_clear()
+
+    from code_minions.web.app import create_app
+
+    authed_client = TestClient(create_app())
+
+    resp = authed_client.get("/", headers={"Authorization": "Bearer secret"})
+
+    assert resp.status_code == 200
+    assert "code-minions" in resp.text
+
+
 def test_runs_list_shows_existing_runs(client: TestClient, tmp_git_repo: Path) -> None:
     # Seed a run directly into the store
     from code_minions.web.deps import get_store
@@ -64,6 +107,7 @@ def test_run_detail_shows_steps(client: TestClient) -> None:
     assert "success" in resp.text.lower()
     assert "failed" in resp.text.lower()
     assert "boom" in resp.text
+    assert "Runtime Activity" in resp.text
 
 
 def test_run_detail_shows_gate_findings(client: TestClient) -> None:

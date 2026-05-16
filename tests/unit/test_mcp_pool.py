@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from code_minions.mcp.client import MCPClientError
 from code_minions.mcp.config import MCPConfig, MCPServerConfig
 from code_minions.mcp.pool import MCPClientPool
 
@@ -65,3 +66,34 @@ def test_pool_respects_allowed_list(fake_mcp_script: Path) -> None:
         assert pool.list_tools() == {}
     finally:
         pool.stop()
+
+
+def test_pool_rejects_disallowed_tool_arguments(fake_mcp_script: Path) -> None:
+    cfg = MCPConfig(servers={
+        "fake": MCPServerConfig(
+            name="fake",
+            command=sys.executable,
+            args=[str(fake_mcp_script)],
+            allowed_arguments={"ping": {"project_key": ["ABC"]}},
+        ),
+    })
+    with (
+        MCPClientPool(cfg) as pool,
+        pytest.raises(MCPClientError, match="project_key"),
+    ):
+        pool.call_tool("fake", "ping", {"project_key": "WRONG"})
+
+
+def test_pool_allows_configured_tool_arguments(fake_mcp_script: Path) -> None:
+    cfg = MCPConfig(servers={
+        "fake": MCPServerConfig(
+            name="fake",
+            command=sys.executable,
+            args=[str(fake_mcp_script)],
+            allowed_arguments={"ping": {"project_key": ["ABC"]}},
+        ),
+    })
+    with MCPClientPool(cfg) as pool:
+        result = pool.call_tool("fake", "ping", {"project_key": "ABC"})
+
+    assert "ABC" in result

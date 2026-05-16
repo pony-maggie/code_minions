@@ -43,7 +43,7 @@ values, so the preset workflow keeps its stack contract.
 
 `workspace.mode` controls where steps execute:
 
-- `git-worktree` (default): creates `.devflow/runs/<run-id>/worktree` on a branch like `code-minions/<run-id>`. Use this for workflows that edit code, run tests, commit, push, or open PRs. The project must be a git repo with at least one commit.
+- `git-worktree` (default): creates `.devflow/runs/<run-id>/worktree` on a new branch like `code-minions/<run-id>`, based on the project repository's current `HEAD` when the run starts. Use this for workflows that edit code, run tests, commit, push, or open PRs. The project must be a git repo with at least one commit. Commit workflows leave results on the run branch for you to review and merge manually; PR workflows push that same run branch and open a PR, but do not merge it.
 - `project-readonly`: uses the project root as `ctx.workdir`. LLM local `Write`, `Edit`, and `Bash` tool calls are rejected. Use this for read-only file workflows such as `summarize-file`.
 - `none`: creates `.devflow/runs/<run-id>/workspace` without git. Use this for smoke tests and workflows that only produce scratch artifacts.
 
@@ -63,6 +63,129 @@ Literals (strings, numbers, lists, dicts) are passed through unchanged.
 ## Dependencies
 
 Use `depends_on: [step-a, step-b]` to declare explicit ordering. The runner does a topological sort; steps without `depends_on` run in declaration order.
+
+## Conditional Steps
+
+Use `when:` to make a step run only when an upstream output is truthy:
+
+```yaml
+- id: open_pr
+  skill: open-github-pr
+  depends_on: [report]
+  when: $steps.acceptance.output.accepted
+```
+
+When the condition evaluates false, the step is recorded as `skipped` and its
+skill is not invoked. A run with skipped conditional steps finishes as
+`completed_with_issues` rather than `success`. Built-in PR workflows use this
+for the final PR creation step, so failed product acceptance still produces a
+report but does not open a pull request.
+
+PRD planning has one additional built-in gate: if `parse-prd` returns
+clarification questions, `plan-tasks` stops before LLM task generation and the
+run is marked `needs_clarification`.
+
+Implementation failures that preserve useful artifacts and need a human
+decision, such as unresolved review blockers, scope drift, test-quality
+regressions, or a test suite that never turns green, mark the run
+`needs_human` instead of generic `failed`.
+
+Provider and runtime failures are classified separately from product failures.
+LLM timeout, overload, rate-limit, or connection errors are recorded as
+provider availability failures; provider schema/bad-request failures are
+recorded as workflow-systemic failures; build/test failures remain
+implementation-fixable; browser/product mismatches remain acceptance failures.
+The classification is stored as a `workflow_failure_classified` run event and,
+when a report can be compiled, appears in `report.md`.
+
+Task planning also uses `needs_human` when a large PRD appears to hit a
+planner's `policies.max_tasks` ceiling. If the PRD has more features than the
+configured maximum and the planner returns exactly that maximum number of
+tasks, the runtime treats the output as likely compressed instead of silently
+accepting it.
+
+Task planning post-processing also attaches stable `trace_id` values to every
+task that omits one, and injects the authoritative PRD `delivery_profile` into
+planned tasks. Downstream implementation outputs and generated evidence reports
+carry the same `trace_id`, so `.devflow/evidence/traceability.json` can map
+task, commit, changed files, and test status without relying on LLM narrative.
+
+Product acceptance expands each task's `acceptance_criteria` into deterministic
+`criterion:<trace_id>:<index>` acceptance items. A criterion item passes only
+when its task has passing test evidence and at least one changed test file;
+otherwise it blocks acceptance as missing criteria evidence.
+
+`implement-with-tdd` also emits a deterministic `plan_commitment` for each
+ticket before implementation starts. Product acceptance compares actual
+`files_changed` against that commitment's `will_change_paths`; drift creates a
+blocking `commitment:<trace_id>` acceptance item.
+
+PRD workflows that deliver a Web UI run `web-ui-acceptance-review` before
+product acceptance. Supported browser checks produce `.devflow/browser-evidence/`
+artifacts, including screenshots, console/page/request diagnostics, layout
+metrics, and browser scenario verdicts. Browser acceptance output is fed into
+product acceptance as browser-scoped acceptance items, so a unit-test-green but
+visually broken UI can still block delivery.
+
+Successful and `completed_with_issues` runs append deterministic local facts to
+project-level `.devflow/memory.md`. Future LLM prompts and implementation
+context include that memory alongside `AGENTS.md`; the file is local state and
+should stay ignored with the rest of `.devflow/`.
+
+Self-heal prompts receive structured failure playbook matches rather than a
+single free-form hint block. Each match carries `name`, `category`, `severity`,
+`fix_hint`, `auto_fixable`, and `deterministic_fix` fields so known failure
+patterns can evolve toward deterministic fixes without changing the prompt
+contract.
+
+## Runtime Events
+
+Workflow runs store durable runtime observations in `.devflow/runs.db` table
+`run_events`. The main event families are:
+
+- `llm_call_started`, `llm_call_finished`, `llm_call_failed`
+- `tool_call_started`, `tool_call_finished`, `tool_call_failed`
+- `command_started`, `command_finished`, `command_failed`
+- `context_compacted`
+- `workflow_failure_classified`
+
+LLM events include provider/model, skill, role, step id, attempt, timeout,
+message count, tool count, prompt size, duration, usage, stop reason, and
+failure classification. Tool and command events include timeout, duration,
+exit code or error, and compact output metadata. Full prompts, API keys, and
+large raw outputs are intentionally not persisted in event payloads.
+
+Environment knobs:
+
+- `CODE_MINIONS_LLM_TIMEOUT_SECONDS` controls provider request timeout.
+- `CODE_MINIONS_CONTEXT_BUDGET_CHARS` controls when long agent conversations
+  are compacted before the next model call.
+
+## Sensors
+
+Workflow sensors are deterministic checks attached to steps. The first supported
+sensor type is `command`, which runs after the skill returns and before the step
+is recorded as successful:
+
+```yaml
+sensors:
+  typecheck:
+    type: command
+    command: npm run typecheck
+    severity: blocker
+    timeout_seconds: 120
+
+steps:
+  - id: implement
+    skill: implement-with-tdd
+    sensors: [typecheck]
+```
+
+`severity: blocker` and `severity: error` fail the step and write a
+`gate_findings` entry with command output. Lower severities, such as `warning`,
+are recorded in the successful step output without blocking the workflow. Use
+command sensors for project-specific typecheck, secret scan, security audit, and
+regression-suite gates that should be auditable outside LLM narrative.
 
 ## `for_each` fan-out
 
@@ -157,6 +280,10 @@ What it does:
 5. push the branch to `origin`
 6. create a GitHub pull request through the `github` MCP server
 
+The run branch is created from the current local `HEAD` when the workflow
+starts. It is not automatically created from the repository's default branch,
+and the workflow does not merge the PR.
+
 ## `prd-to-commit`
 
 The built-in `prd-to-commit` workflow stops before Jira and GitHub:
@@ -165,6 +292,11 @@ The built-in `prd-to-commit` workflow stops before Jira and GitHub:
 2. plan implementation tasks
 3. implement each task in a run-scoped worktree branch
 4. write `report.md`
+
+The run branch is created from the current local `HEAD` when the workflow
+starts. The workflow does not merge those commits back into your current
+checkout; review and merge `code-minions/<run-id>` manually when the result is
+acceptable.
 
 Run it with:
 

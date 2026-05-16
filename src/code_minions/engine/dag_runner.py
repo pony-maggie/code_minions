@@ -10,14 +10,18 @@ M3 additions:
 """
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from code_minions.engine.hooks import HookContext, HookRegistry
+from code_minions.engine.sensors import BLOCKING_SEVERITIES, run_sensor
 from code_minions.engine.skill import Skill
 from code_minions.engine.skill_runtime import SkillContext, SkillRuntime
-from code_minions.engine.workflow import Workflow, WorkflowStep
+from code_minions.engine.workflow import SensorSpec, Workflow, WorkflowStep
+from code_minions.gates import findings_to_dicts
 
 if TYPE_CHECKING:
     from code_minions.engine.context import ContextAssembler
@@ -32,6 +36,26 @@ class DAGRunnerError(Exception):
 
 StepObserver = Callable[[str, str, dict[str, Any] | None, str | None, str | None], None]
 """(step_id, status, output_or_none, error_or_none, detail_or_none) -> None"""
+
+_FOR_EACH_ITEM_HASH_KEY = "__code_minions_for_each_item_hash"
+_SKIPPED_KEY = "__code_minions_skipped__"
+
+
+def _for_each_item_hash(item: Any) -> str:
+    payload = json.dumps(item, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _strip_for_each_metadata(output: dict[str, Any]) -> dict[str, Any]:
+    if _FOR_EACH_ITEM_HASH_KEY not in output:
+        return output
+    return {k: v for k, v in output.items() if k != _FOR_EACH_ITEM_HASH_KEY}
+
+
+def _with_for_each_metadata(output: dict[str, Any], item_hash: str) -> dict[str, Any]:
+    result = dict(output)
+    result[_FOR_EACH_ITEM_HASH_KEY] = item_hash
+    return result
 
 
 def _item_detail(item: Any) -> str | None:
@@ -73,6 +97,7 @@ class DAGRunner:
         observer: StepObserver | None = None,
         *,
         llm_backend: LLMBackend | None = None,
+        role_llm_backends: dict[str, LLMBackend] | None = None,
         mcp_pool: MCPClientPool | None = None,
         assembler: ContextAssembler | None = None,
         preloaded_outputs: dict[str, dict[str, Any]] | None = None,
@@ -89,6 +114,7 @@ class DAGRunner:
         self._inputs = self._inputs_with_defaults(workflow, inputs)
         self._observer = observer or (lambda *a, **kw: None)
         self._llm = llm_backend
+        self._role_llms = role_llm_backends or {}
         self._mcp = mcp_pool
         self._assembler = assembler
         self._preloaded_outputs = preloaded_outputs
@@ -98,6 +124,7 @@ class DAGRunner:
         self._workspace_mode = workflow.workspace.mode
         self._skill_cache = skill_cache
         self._run_event_recorder = run_event_recorder
+        self._is_resume = preloaded_outputs is not None
         self._active_step_id: str | None = None
         # Cache invoke_skill callable so it's created once per runner instance
         self._invoke_skill_fn: Callable[[str, dict[str, Any]], dict[str, Any]] = self._make_invoke_skill()
@@ -130,6 +157,7 @@ class DAGRunner:
         extras = {
             "project_root": self._project_root,
             "workspace_mode": self._workspace_mode,
+            "is_resume": self._is_resume,
         }
         if step_id is not None:
             extras["current_step_id"] = step_id
@@ -139,6 +167,12 @@ class DAGRunner:
             extras["run_event_recorder"] = self._run_event_recorder
         return extras
 
+    def _llm_for_skill(self, skill: Skill) -> LLMBackend | None:
+        role = skill.meta.role
+        if role and role in self._role_llms:
+            return self._role_llms[role]
+        return self._llm
+
     def run(self) -> dict[str, dict[str, Any]]:
         order = self._topo_order()
         outputs: dict[str, dict[str, Any]] = dict(self._preloaded_outputs or {})
@@ -146,11 +180,27 @@ class DAGRunner:
         for step in order:
             if step.id in outputs:
                 continue  # resume: skip already-succeeded steps
+            if not self._when_allows(step, outputs):
+                output = {_SKIPPED_KEY: True, "reason": "when condition evaluated false"}
+                outputs[step.id] = output
+                self._observe(step.id, "skipped", output, None)
+                continue
             if step.for_each is not None:
                 outputs[step.id] = self._run_for_each(step, outputs)
                 continue
             outputs[step.id] = self._run_single_step(step, step.id, step.inputs, outputs)
         return outputs
+
+    def _when_allows(
+        self,
+        step: WorkflowStep,
+        outputs: dict[str, dict[str, Any]],
+    ) -> bool:
+        if step.when is None:
+            return True
+        if isinstance(step.when, bool):
+            return step.when
+        return bool(self._resolve_value(step.when, outputs))
 
     def _make_invoke_skill(self) -> Callable[[str, dict[str, Any]], dict[str, Any]]:
         def _invoke(skill_name: str, inputs: dict[str, Any]) -> dict[str, Any]:
@@ -159,7 +209,7 @@ class DAGRunner:
                 inputs=inputs,
                 workdir=self._workdir,
                 extras=self._skill_extras(self._active_step_id),
-                llm=self._llm,
+                llm=self._llm_for_skill(skill),
                 mcp_pool=self._mcp,
                 assembler=self._assembler,
                 invoke_skill=_invoke,
@@ -185,6 +235,7 @@ class DAGRunner:
         raw_inputs: dict[str, Any],
         outputs: dict[str, dict[str, Any]],
         detail: str | None = None,
+        output_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         skill = self._skills.get(step.skill)
         if skill is None:
@@ -202,7 +253,7 @@ class DAGRunner:
                     inputs=resolved,
                     workdir=self._workdir,
                     extras=self._skill_extras(observable_step_id),
-                    llm=self._llm,
+                    llm=self._llm_for_skill(skill),
                     mcp_pool=self._mcp,
                     assembler=self._assembler,
                     invoke_skill=self._invoke_skill_fn,
@@ -214,7 +265,10 @@ class DAGRunner:
             raise
         finally:
             self._active_step_id = previous_step_id
-        self._observe(observable_step_id, "success", result, None, detail)
+        observed_result = result
+        if output_metadata:
+            observed_result = dict(result)
+            observed_result.update(output_metadata)
         # Fire post_run hooks declared by the skill
         if self._hook_registry is not None:
             hooks_to_run = skill.meta.hooks.get("post_run", [])
@@ -224,7 +278,51 @@ class DAGRunner:
                     HookContext(workdir=self._workdir, skill_name=skill.name,
                                 step_id=observable_step_id, outputs=result),
                 )
+        sensor_findings = self._run_step_sensors(step)
+        if sensor_findings:
+            observed_result = dict(observed_result)
+            observed_result["gate_findings"] = [
+                *observed_result.get("gate_findings", []),
+                *findings_to_dicts(sensor_findings),
+            ]
+            blocking = [finding for finding in sensor_findings if finding.severity in BLOCKING_SEVERITIES]
+            if blocking:
+                self._observe(
+                    observable_step_id,
+                    "failed",
+                    observed_result,
+                    f"sensor {blocking[0].code.removeprefix('sensor-')} failed",
+                    detail,
+                )
+                raise DAGRunnerError(
+                    f"sensor {blocking[0].code.removeprefix('sensor-')} failed"
+                )
+        self._observe(observable_step_id, "success", observed_result, None, detail)
         return result
+
+    def _run_step_sensors(self, step: WorkflowStep):
+        findings = []
+        for sensor in step.sensors:
+            if isinstance(sensor, str):
+                name = sensor
+                spec = self._wf.sensors[name]
+            else:
+                spec = SensorSpec.model_validate(sensor)
+                name = str(sensor.get("name") or f"{step.id}-{len(findings) + 1}")
+            sensor_run = run_sensor(name=name, spec=spec, workdir=self._workdir)
+            if not sensor_run.passed or sensor_run.finding.severity not in BLOCKING_SEVERITIES:
+                findings.append(sensor_run.finding)
+            if self._run_event_recorder is not None:
+                self._run_event_recorder(
+                    "sensor",
+                    {
+                        "step_id": self._active_step_id,
+                        "sensor": name,
+                        "passed": sensor_run.passed,
+                        "finding": sensor_run.finding.to_dict(),
+                    },
+                )
+        return findings
 
     def _run_for_each(
         self,
@@ -248,14 +346,40 @@ class DAGRunner:
             }
             sub_id = f"{step.id}[{idx}]"
             detail = _item_detail(item)
+            item_hash = _for_each_item_hash(item)
             if sub_id in outputs:
-                result = outputs[sub_id]
+                cached = outputs[sub_id]
+                cached_hash = cached.get(_FOR_EACH_ITEM_HASH_KEY)
+                if cached_hash is None or cached_hash == item_hash:
+                    result = _strip_for_each_metadata(cached)
+                else:
+                    try:
+                        result = self._run_single_step(
+                            step,
+                            sub_id,
+                            per_iter,
+                            outputs,
+                            detail=detail,
+                            output_metadata={_FOR_EACH_ITEM_HASH_KEY: item_hash},
+                        )
+                    except Exception:
+                        self._observe(step.id, "failed", None, f"iteration {idx} failed", detail)
+                        raise
+                    outputs[sub_id] = _with_for_each_metadata(result, item_hash)
             else:
                 try:
-                    result = self._run_single_step(step, sub_id, per_iter, outputs, detail=detail)
+                    result = self._run_single_step(
+                        step,
+                        sub_id,
+                        per_iter,
+                        outputs,
+                        detail=detail,
+                        output_metadata={_FOR_EACH_ITEM_HASH_KEY: item_hash},
+                    )
                 except Exception:
                     self._observe(step.id, "failed", None, f"iteration {idx} failed", detail)
                     raise
+                outputs[sub_id] = _with_for_each_metadata(result, item_hash)
             collected.append(result)
         self._observe(step.id, "success", {"items": collected}, None, summary)
         return {"items": collected}

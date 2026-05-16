@@ -33,7 +33,8 @@ The core product model:
   through `.mcp.json`, letting workflow steps operate across the tools your team
   already uses.
 - **Composable skills:** each workflow step is a skill. Skills use Claude-style
-  `SKILL.md` frontmatter plus optional deterministic `entrypoint-script` code.
+  `SKILL.md` frontmatter, optional local tool capability limits, and optional
+  deterministic `entrypoint-script` code.
 - **Project-aware execution:** `AGENTS.md` is injected into LLM-driven skill
   prompts so implementation follows your repo conventions, stack rules, and
   delivery contract.
@@ -54,6 +55,13 @@ pip install -e .
 
 Requires Python 3.11+.
 
+If you are contributing to `code_minions` itself and need local test/lint
+tools, install the development extras:
+
+```bash
+pip install -e '.[dev]'
+```
+
 ## Two-Minute Smoke Test
 
 ```bash
@@ -66,9 +74,8 @@ code-minions status <run-id>
 
 `hello-world` needs no LLM key, no MCP server, and no git repo. It verifies
 project initialization, run storage, scratch workspace creation, and
-deterministic skill execution. Workflows that modify code, such as
-`prd-to-commit` and `prd-to-pr`, still require a local git repo with at least
-one commit.
+deterministic skill execution. Code-changing PRD workflows still require a
+local git repo with at least one commit.
 
 For PRD workflows, include a `Delivery Contract` / `delivery_profile` in the
 PRD so the run knows the required product shape, language, build system, test
@@ -111,13 +118,27 @@ llm:
 For provider details, Jira/GitHub MCP examples, and full PRD-to-PR
 prerequisites, follow the [quickstart](docs/quickstart.md).
 
+### Runtime Observability
+
+Each run writes structured runtime events to `.devflow/runs.db` in the
+`run_events` table. Long LLM/tool/test operations now record started,
+finished, and failed events with provider/model, role, timeout, attempt,
+duration, compact output sizes, and failure classification. Large prompts and
+raw tool outputs are not stored in the event payload; events keep sizes,
+metadata, classifications, and artifact paths.
+
+Useful environment knobs:
+
+- `CODE_MINIONS_LLM_TIMEOUT_SECONDS` controls the provider request timeout.
+- `CODE_MINIONS_CONTEXT_BUDGET_CHARS` controls when long agent conversations
+  are compacted before the next model call.
+
 ## Built-In Workflows
 
 | Workflow | Use It When | Minimal Command |
 |---|---|---|
 | `hello-world` | You want to verify installation and runtime basics without AI or external services. | `code-minions run hello-world --input name=world` |
 | `summarize-file` | You want a small AI smoke test: deterministic file read, then one LLM call for a summary. | `code-minions run summarize-file --input file=./README.md` |
-| `prd-to-commit` | You want PRD -> planned tasks -> implementation commits -> report, without Jira or GitHub. | `code-minions run prd-to-commit --input prd=./my-prd.md` |
 | `react-vite-prd-to-commit` | You want the same local commit flow, but with React + TypeScript + Vite rules pinned up front. | `code-minions run react-vite-prd-to-commit --input prd=./my-prd.md` |
 | `swift-xcodegen-prd-to-commit` | You want the same local commit flow, but with Swift + SwiftUI + XcodeGen rules pinned up front. | `code-minions run swift-xcodegen-prd-to-commit --input prd=./my-prd.md` |
 | `go-service-prd-to-commit` | You want the same local commit flow, but with Go service rules pinned up front. | `code-minions run go-service-prd-to-commit --input prd=./my-prd.md` |
@@ -126,25 +147,15 @@ prerequisites, follow the [quickstart](docs/quickstart.md).
 | `react-vite-prd-to-pr` | You want the full PR path with React + TypeScript + Vite rules pinned up front. | `code-minions run react-vite-prd-to-pr --input prd=./my-prd.md --input project_key=ABC --input epic_title="Feature"` |
 | `python-cli-prd-to-pr` | You want the full PR path with Python CLI rules pinned up front. | `code-minions run python-cli-prd-to-pr --input prd=./my-prd.md --input project_key=ABC --input epic_title="Feature"` |
 | `python-web-prd-to-pr` | You want the full PR path for Python FastAPI services with canonical app/package gates. | `code-minions run python-web-prd-to-pr --input prd=./my-prd.md --input project_key=ABC --input epic_title="Feature"` |
-| `prd-to-pr` | You want the full PR path for a custom stack or a PRD that already includes a complete delivery contract. | See [quickstart](docs/quickstart.md#run-a-workflow). |
 
-`prd-to-commit` is the generic entry point. It does not default to React/Vite;
-it uses the PRD's `delivery_profile` when present and otherwise relies on stack
-inference. Use a stack-specific workflow, such as `react-vite-prd-to-commit`,
-when the product stack is already known and the harness should enforce that
-stack from the start. `python-web-prd-to-commit` is more than a thin alias: it
-uses a FastAPI-specific planner that keeps small services in one canonical
-`src/<package>/app.py` implementation task. The generic workflow can also be
-pinned explicitly:
-
-```bash
-code-minions run prd-to-commit \
-  --input prd=./my-prd.md \
-  --input delivery_stack_id=react-vite
-```
+For PRD runs, prefer the workflow that names your stack. Stack-specific
+workflows pin delivery rules before parsing and planning, so they are more
+predictable and do not rely on runtime stack inference. `python-web-prd-to-commit`
+is more than a thin alias: it uses a FastAPI-specific planner that keeps small
+services in one canonical `src/<package>/app.py` implementation task.
 
 For PRD-to-PR runs, prefer a stack-specific workflow when one matches the
-project. These use the same Jira/GitHub flow as `prd-to-pr`, but pin the stack
+project. These use the same Jira/GitHub delivery path while pinning the stack
 before parsing and planning:
 
 ```bash
@@ -156,12 +167,12 @@ code-minions run python-cli-prd-to-pr \
 code-minions run react-vite-prd-to-pr \
   --input prd=./my-prd.md \
   --input project_key=ABC \
-  --input epic_title="Gomoku web app"
+  --input epic_title="Kanban web app"
 
 code-minions run python-web-prd-to-pr \
   --input prd=./my-prd.md \
   --input project_key=ABC \
-  --input epic_title="MiniCalc API"
+  --input epic_title="Inventory API"
 ```
 
 After a run:
@@ -172,8 +183,22 @@ ls .devflow/runs/<run-id>/
 code-minions resume <run-id>
 ```
 
-For code-changing runs, implementation commits live on the run branch
-`code-minions/<run-id>` inside `.devflow/runs/<run-id>/worktree`. After
+PRD-to-PR workflows only open the final pull request when product acceptance
+passes. If acceptance fails, the PR step is skipped and the run is marked
+`completed_with_issues`; inspect the run worktree and `report.md` before
+resuming or making manual fixes.
+
+PRD workflows that deliver a Web UI run browser acceptance before product
+acceptance. Supported stacks produce `.devflow/browser-evidence/` artifacts
+such as desktop/mobile screenshots, console diagnostics, layout metrics, and
+scenario results. Generated unit tests and browser/product acceptance remain
+separate quality signals in the final report.
+
+For code-changing runs, the engine creates a new branch named
+`code-minions/<run-id>` from the project repository's current `HEAD`, not
+necessarily from the remote default branch. Implementation commits live on that
+branch inside `.devflow/runs/<run-id>/worktree`. `*-prd-to-commit` workflows do
+not merge the branch back into your checked-out project automatically. After
 reviewing the worktree and `report.md`, merge the branch back into your project
 branch:
 
@@ -183,6 +208,10 @@ git merge --no-ff code-minions/<run-id>
 git worktree remove .devflow/runs/<run-id>/worktree
 git branch -d code-minions/<run-id>
 ```
+
+`*-prd-to-pr` workflows use the same run branch and worktree, then push that
+branch to `origin` and open a PR when product acceptance passes; they do not
+merge the PR.
 
 See [quickstart](docs/quickstart.md#land-worktree-results) for review,
 conflict, and cleanup notes.
@@ -205,7 +234,8 @@ from a form, and receive live SSE updates for Web-started runs.
 
 Current limits:
 
-- localhost-only, no authentication
+- localhost-only by default; remote binds require
+  `code-minions web --host 0.0.0.0 --enable-remote --auth-token <token>`
 - CLI-started runs appear in the Web UI but do not stream live across processes
 - Web `Cancel` is advisory and Web `Resume` is currently synchronous
 
@@ -215,8 +245,8 @@ Current limits:
 2. If `[workflow]` is omitted, `devflow.yaml -> workflow.default` is used; an explicit CLI workflow always overrides it.
 3. The engine creates the workflow's workspace: a scratch directory, the project root in read-only mode, or `.devflow/runs/<run-id>/worktree` on a branch like `code-minions/<run-id>`.
 4. DAGRunner executes each step in dependency order.
-5. Deterministic skills run their declared `entrypoint-script`; LLM skills read `SKILL.md` + `AGENTS.md` and call allowed tools.
-6. Run state is stored in `.devflow/runs.db`, enabling status inspection and resume.
+5. Deterministic skills run their declared `entrypoint-script`; LLM skills read `SKILL.md` + `AGENTS.md` and call allowed tools within any declared `tool-capabilities`.
+6. Run state is stored in `.devflow/runs.db`, enabling status inspection and resume. Successful runs also append deterministic local facts to `.devflow/memory.md`, which future LLM prompts can read alongside `AGENTS.md`.
 
 ## Built-In Skills
 

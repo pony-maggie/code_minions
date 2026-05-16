@@ -1,0 +1,534 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>code_minions E2E and Web Acceptance</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f8fa;
+      --ink: #172033;
+      --muted: #596579;
+      --line: #cbd3df;
+      --panel: #ffffff;
+      --ci: #eef6ff;
+      --web: #eef9f0;
+      --browser: #fff5e8;
+      --accept: #f5f0ff;
+      --manual: #fff0f0;
+      --blue: #2668b2;
+      --green: #267044;
+      --amber: #9a6100;
+      --purple: #6c4bb3;
+      --red: #b33b3b;
+      --shadow: 0 10px 26px rgba(18, 27, 43, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.45;
+    }
+
+    main {
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 28px;
+    }
+
+    header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 18px;
+      align-items: start;
+      margin-bottom: 18px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 30px;
+      line-height: 1.16;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      max-width: 980px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    .legend {
+      display: grid;
+      gap: 7px;
+      min-width: 250px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      font-size: 13px;
+    }
+
+    .legend-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+    }
+
+    .swatch {
+      width: 14px;
+      height: 14px;
+      border-radius: 3px;
+      border: 1px solid rgba(0, 0, 0, 0.1);
+      flex: 0 0 auto;
+    }
+
+    .swatch.ci { background: var(--ci); }
+    .swatch.web { background: var(--web); }
+    .swatch.browser { background: var(--browser); }
+    .swatch.accept { background: var(--accept); }
+    .swatch.manual { background: var(--manual); }
+
+    .section {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      margin-bottom: 18px;
+    }
+
+    .section-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      background: #fbfcfe;
+    }
+
+    .section-title h2 {
+      margin: 0;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+
+    .section-title span {
+      color: var(--muted);
+      font-size: 13px;
+      text-align: right;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(150px, 1fr));
+      gap: 18px;
+      padding: 18px;
+    }
+
+    .node {
+      position: relative;
+      min-height: 138px;
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    .node.ci { background: var(--ci); border-color: #bed7f0; }
+    .node.web { background: var(--web); border-color: #b9ddc4; }
+    .node.browser { background: var(--browser); border-color: #edd0a5; }
+    .node.accept { background: var(--accept); border-color: #d3c6f0; }
+    .node.manual { background: var(--manual); border-color: #efc2c2; }
+
+    .node::after {
+      content: "->";
+      position: absolute;
+      right: -18px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: #7b8494;
+      font-size: 17px;
+      font-weight: 700;
+    }
+
+    .node:last-child::after,
+    .node.no-arrow::after {
+      content: "";
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      margin-bottom: 8px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.72);
+      color: var(--muted);
+      border: 1px solid rgba(0, 0, 0, 0.07);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 0 0 7px;
+      font-size: 16px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    code {
+      padding: 1px 4px;
+      border-radius: 4px;
+      background: rgba(23, 32, 51, 0.07);
+      color: #1c2a44;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.92em;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: 1fr 1.15fr 1fr;
+      gap: 18px;
+      padding: 18px;
+    }
+
+    .stack {
+      display: grid;
+      gap: 12px;
+    }
+
+    .lane-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 34px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: #fbfcfe;
+      color: var(--ink);
+      font-weight: 700;
+      font-size: 14px;
+    }
+
+    .small-card {
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    .small-card h4 {
+      margin: 0 0 6px;
+      font-size: 14px;
+      letter-spacing: 0;
+    }
+
+    .small-card ul {
+      margin: 8px 0 0;
+      padding-left: 18px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .small-card li + li {
+      margin-top: 4px;
+    }
+
+    .arrow-down {
+      display: grid;
+      place-items: center;
+      color: #7b8494;
+      font-weight: 700;
+      min-height: 20px;
+    }
+
+    .matrix {
+      display: grid;
+      grid-template-columns: 1.1fr 1.2fr 1.4fr 1.3fr;
+      border-top: 1px solid var(--line);
+      border-left: 1px solid var(--line);
+      margin: 18px;
+    }
+
+    .cell {
+      min-height: 72px;
+      padding: 10px;
+      border-right: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      background: #fff;
+      font-size: 13px;
+    }
+
+    .cell.head {
+      min-height: auto;
+      background: #fbfcfe;
+      font-weight: 700;
+      color: var(--ink);
+    }
+
+    .cell strong {
+      display: block;
+      margin-bottom: 5px;
+      font-size: 13px;
+      color: var(--ink);
+    }
+
+    .callout {
+      margin: 0 18px 18px;
+      padding: 12px 14px;
+      border: 1px solid #e2c898;
+      border-radius: 8px;
+      background: #fff8e9;
+      color: #5f4215;
+      font-size: 13px;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      margin: 3px 4px 0 0;
+      padding: 2px 7px;
+      border-radius: 999px;
+      border: 1px solid rgba(0, 0, 0, 0.08);
+      background: rgba(255, 255, 255, 0.75);
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .footnote {
+      padding: 0 18px 18px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 1100px) {
+      header,
+      .grid-3 {
+        grid-template-columns: 1fr;
+      }
+
+      .flow {
+        grid-template-columns: 1fr;
+      }
+
+      .node::after {
+        content: "v";
+        right: auto;
+        left: 50%;
+        top: auto;
+        bottom: -18px;
+        transform: translateX(-50%);
+      }
+
+      .matrix {
+        grid-template-columns: 1fr;
+      }
+
+      .cell.head {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>code_minions E2E 与 Web UI 验收机制</h1>
+        <p class="subtitle">
+          当前实现把 e2e 拆成稳定 CI、Web route/SSE、可选真实浏览器 smoke、人工 dashboard 验收和 PRD 产品验收 evidence。真实浏览器覆盖关键路径，通用 PRD 验收主要依赖目标项目测试、delivery gates 和 product acceptance。
+        </p>
+      </div>
+      <div class="legend" aria-label="图例">
+        <div class="legend-row"><span class="swatch ci"></span><span>CI 自动化</span></div>
+        <div class="legend-row"><span class="swatch web"></span><span>Web route / SSE</span></div>
+        <div class="legend-row"><span class="swatch browser"></span><span>真实浏览器 smoke</span></div>
+        <div class="legend-row"><span class="swatch accept"></span><span>PRD 产品验收</span></div>
+        <div class="legend-row"><span class="swatch manual"></span><span>人工浏览器验收</span></div>
+      </div>
+    </header>
+
+    <section class="section" aria-labelledby="layered-flow">
+      <div class="section-title">
+        <h2 id="layered-flow">分层验证总览</h2>
+        <span>越往右越接近真实用户体验，但运行成本和脆弱性也更高。</span>
+      </div>
+      <div class="flow">
+        <article class="node ci">
+          <span class="eyebrow">L0</span>
+          <h3>pytest + ruff</h3>
+          <p>默认 gate。验证 unit、integration、coverage、lint，保持普通开发循环稳定。</p>
+        </article>
+        <article class="node ci">
+          <span class="eyebrow">L1</span>
+          <h3>Engine e2e</h3>
+          <p><code>Engine</code> 直接跑内置 workflow，使用 fake LLM 和真实 store/workspace。</p>
+        </article>
+        <article class="node web">
+          <span class="eyebrow">L2</span>
+          <h3>Web route / SSE</h3>
+          <p><code>TestClient</code> 和 ASGI 流测试覆盖页面、表单、控制按钮、事件流。</p>
+        </article>
+        <article class="node browser">
+          <span class="eyebrow">L3</span>
+          <h3>Playwright smoke</h3>
+          <p>可选真 Chromium：空列表 -> New Run -> hello-world -> detail success。</p>
+        </article>
+        <article class="node manual">
+          <span class="eyebrow">L4</span>
+          <h3>人工验收</h3>
+          <p><code>phase-c-acceptance.md</code> 覆盖 dashboard 的 cancel、resume、orphan scanner 等完整路径。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="dashboard-flow">
+      <div class="section-title">
+        <h2 id="dashboard-flow">Dashboard 交互测试机制</h2>
+        <span>自动化覆盖 HTTP/ASGI 行为，真实浏览器只跑最高价值路径。</span>
+      </div>
+      <div class="grid-3">
+        <div class="stack">
+          <div class="lane-title">FastAPI route tests</div>
+          <div class="small-card">
+            <h4><code>tests/unit/test_web_routes.py</code></h4>
+            <p>列表页、详情页、step 输出、gate findings。</p>
+          </div>
+          <div class="small-card">
+            <h4><code>tests/unit/test_web_start.py</code></h4>
+            <p>新建 run 页面、HTMX inputs fragment、文件 datalist、表单提交。</p>
+          </div>
+          <div class="small-card">
+            <h4><code>tests/unit/test_web_controls.py</code></h4>
+            <p>Cancel / Resume 的 HTTP 行为和 Engine 调用。</p>
+          </div>
+        </div>
+
+        <div class="stack">
+          <div class="lane-title">SSE and background run</div>
+          <div class="small-card">
+            <h4><code>/runs/&lt;id&gt;/events</code></h4>
+            <p>ASGI 级测试直接驱动 <code>scope</code>、<code>receive</code>、<code>send</code>，避免无限 SSE 被 TestClient 缓冲。</p>
+            <ul>
+              <li>验证 <code>text/event-stream</code></li>
+              <li>late subscriber 收到 step snapshot</li>
+              <li>terminal run 收到 <code>run.finished</code></li>
+            </ul>
+          </div>
+          <div class="arrow-down">v</div>
+          <div class="small-card">
+            <h4><code>BackgroundTasks</code></h4>
+            <p>Web 发起 run 后在同一进程 EventBus 推送状态，detail 页通过 SSE 实时刷新。</p>
+          </div>
+        </div>
+
+        <div class="stack">
+          <div class="lane-title">Real browser smoke</div>
+          <div class="small-card">
+            <h4><code>tests/browser/test_web_smoke.py</code></h4>
+            <p>临时 git repo 中启动真实 <code>code-minions web</code>，Playwright Chromium 执行关键路径。</p>
+            <ul>
+              <li>打开 dashboard</li>
+              <li>选择 <code>hello-world</code></li>
+              <li>填写 name 并启动</li>
+              <li>等待 run 和 step success</li>
+            </ul>
+          </div>
+          <div class="small-card">
+            <h4>失败证据</h4>
+            <p>失败时保存 full-page screenshot 到 pytest 临时目录。</p>
+          </div>
+        </div>
+      </div>
+      <div class="callout">
+        CLI 启动的 run 不会把实时事件跨进程推到 Web dashboard。浏览器刷新后能看到最终状态；Web 页面发起的 run 才通过同进程 EventBus 走实时 SSE。
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="prd-flow">
+      <div class="section-title">
+        <h2 id="prd-flow">PRD Web UI 产品验收链路</h2>
+        <span>这里验证交付物和 PRD/delivery profile 对齐，不是通用浏览器点击机器人。</span>
+      </div>
+      <div class="flow">
+        <article class="node accept">
+          <span class="eyebrow">PRD</span>
+          <h3><code>parse-prd</code></h3>
+          <p>解析 goal、features、constraints、delivery profile。</p>
+        </article>
+        <article class="node accept">
+          <span class="eyebrow">planning</span>
+          <h3>任务拆解</h3>
+          <p><code>plan-tasks</code> 或 stack planner 让每个 task 继承产品约束。</p>
+        </article>
+        <article class="node ci">
+          <span class="eyebrow">implementation</span>
+          <h3><code>implement-with-tdd</code></h3>
+          <p>生成目标项目测试并运行 stack test command，例如 Vitest 或 pytest。</p>
+        </article>
+        <article class="node accept">
+          <span class="eyebrow">gates</span>
+          <h3>Delivery gates</h3>
+          <p>检查项目形态、imports、routes、依赖、已知 runtime drift。</p>
+        </article>
+        <article class="node accept">
+          <span class="eyebrow">acceptance</span>
+          <h3>Product acceptance</h3>
+          <p>输出 <code>accepted</code>、<code>acceptance_items</code>、<code>verifier_rounds</code>、报告表格。</p>
+        </article>
+      </div>
+
+      <div class="matrix" role="table" aria-label="PRD UI 验收职责矩阵">
+        <div class="cell head">层级</div>
+        <div class="cell head">覆盖什么</div>
+        <div class="cell head">典型证据</div>
+        <div class="cell head">不覆盖什么</div>
+
+        <div class="cell"><strong>目标项目测试</strong><span class="tag">Vitest</span><span class="tag">Testing Library</span><span class="tag">FastAPI TestClient</span></div>
+        <div class="cell">按钮点击、表单输入、状态文本、路由响应、模板渲染、核心用户路径。</div>
+        <div class="cell">test command 通过；实现结果记录 changed files 和 passing tests。</div>
+        <div class="cell">真实浏览器渲染差异、截图基线、完整视觉验收。</div>
+
+        <div class="cell"><strong>Delivery gates</strong><span class="tag">preflight</span><span class="tag">runtime findings</span></div>
+        <div class="cell">项目结构、必需文件、依赖、imports、routes 与 tests 对齐、已知失败模式。</div>
+        <div class="cell">canonical gate findings，包含 code、severity、repair hint、paths。</div>
+        <div class="cell">用户肉眼体验和未编码进 gate 的产品细节。</div>
+
+        <div class="cell"><strong>Product acceptance</strong><span class="tag">deterministic</span><span class="tag">report</span></div>
+        <div class="cell">PRD/delivery profile、语言、构建系统、任务覆盖、测试证据。</div>
+        <div class="cell"><code>acceptance_items</code> 和 <code>verifier_rounds</code>。</div>
+        <div class="cell">任意 Web UI 的自动点击和视觉回归。</div>
+
+        <div class="cell"><strong>人工或项目内浏览器 E2E</strong><span class="tag">Playwright</span><span class="tag">manual</span></div>
+        <div class="cell">真实浏览器 API、响应式、拖拽、文件上传、Canvas、视觉细节。</div>
+        <div class="cell">目标项目自己的 Playwright spec，或维护者手工验收记录。</div>
+        <div class="cell">默认 CI 不自动为所有 PRD 生成这层。</div>
+      </div>
+      <p class="footnote">
+        判断一次 Web UI PRD 是否验收充分，要同时看目标测试是否覆盖真实用户行为、delivery gates 是否无 blocker、product acceptance 是否 accepted，以及高风险 UI 是否补了浏览器或人工证据。
+      </p>
+    </section>
+  </main>
+</body>
+</html>

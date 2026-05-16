@@ -62,6 +62,29 @@ def _make_llm_backend(root: Path) -> LLMBackend | None:
         return None
 
 
+def _make_role_llm_backends(root: Path) -> dict[str, LLMBackend]:
+    devflow = root / "devflow.yaml"
+    if not devflow.exists():
+        return {}
+    try:
+        from code_minions.llm.config import load_llm_config
+        from code_minions.llm.litellm_backend import LiteLLMBackend
+
+        cfg = load_llm_config(devflow)
+        backends: dict[str, LLMBackend] = {}
+        for role, provider_name in cfg.roles.items():
+            provider = cfg.providers[provider_name]
+            backends[role] = LiteLLMBackend(
+                provider=provider_name,
+                default_model=provider.model,
+                api_key=provider.api_key,
+                api_base=provider.api_base,
+            )
+        return backends
+    except Exception:
+        return {}
+
+
 def _make_mcp_pool(root: Path) -> MCPClientPool | None:
     mcp_json = root / ".mcp.json"
     if not mcp_json.exists():
@@ -71,7 +94,6 @@ def _make_mcp_pool(root: Path) -> MCPClientPool | None:
         from code_minions.mcp.pool import MCPClientPool
 
         pool = MCPClientPool(load_mcp_config(mcp_json))
-        pool.start()
         import atexit
 
         atexit.register(pool.stop)
@@ -107,6 +129,7 @@ def get_engine() -> Engine:
         workflow_search_paths=workflow_search_paths(),
         runtime=SkillRuntime(),
         llm_backend=_make_llm_backend(root),
+        role_llm_backends=_make_role_llm_backends(root),
         mcp_pool=_make_mcp_pool(root),
         event_bus=get_event_bus(),
     )

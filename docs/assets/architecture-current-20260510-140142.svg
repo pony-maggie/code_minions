@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1500" height="980" viewBox="0 0 1500 980" role="img" aria-labelledby="title desc">
   <title id="title">code_minions current architecture, 2026-05-10</title>
-  <desc id="desc">Current code_minions architecture showing project inputs, CLI and web entry points, workflow orchestration, skill execution, deterministic gates, runtime state, external services, and delivery outputs.</desc>
+  <desc id="desc">Current code_minions architecture showing project inputs, CLI and web entry points, workflow orchestration, skill execution, deterministic gates, first-class acceptance evidence, runtime state, external services, and delivery outputs.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#334155"/>
@@ -30,7 +30,7 @@
 
   <rect class="canvas" width="1500" height="980"/>
   <text x="48" y="52" class="titleText">code_minions Current Architecture</text>
-  <text x="48" y="78" class="subtitle">Generated 2026-05-10 14:01:42 local time. Focus: PRD-to-commit/PR delivery, stack-aware presets, deterministic gates, review surface, and resumable local state.</text>
+  <text x="48" y="78" class="subtitle">Generated 2026-05-10 14:01:42 local time. Focus: PRD-to-commit/PR delivery, stack-aware presets, deterministic gates, structured acceptance evidence, review surface, and resumable local state.</text>
 
   <rect x="38" y="112" width="1424" height="118" rx="12" class="band"/>
   <text x="60" y="142" class="bandTitle">1. Project Inputs and Contracts</text>
@@ -94,7 +94,7 @@
   <text x="1144" y="516" class="body">prd-to-commit for local audited commits</text>
   <text x="1144" y="534" class="body">prd-to-pr for Jira + GitHub PR flow</text>
   <rect x="70" y="565" width="1316" height="20" rx="5" class="panel"/>
-  <text x="88" y="579" class="small">Representative built-ins: parse-prd, plan-tasks, create-jira-tickets, implement-with-tdd, ai-code-review, product-acceptance, open-github-pr, compile-report, summarize-file.</text>
+  <text x="88" y="579" class="small">Representative built-ins: parse-prd, plan-tasks, create-jira-tickets, implement-with-tdd, ai-code-review, product-acceptance evidence, open-github-pr, compile-report, summarize-file.</text>
 
   <rect x="38" y="634" width="1424" height="134" rx="12" class="band"/>
   <text x="60" y="664" class="bandTitle">4. Execution Loop, Deterministic Gates, and Review Surface</text>
@@ -108,8 +108,8 @@
   <text x="594" y="711" class="label">Delivery Gates</text>
   <text x="594" y="729" class="small">stack contracts, files, routes, deps, syntax</text>
   <rect x="834" y="688" width="220" height="52" rx="8" class="gate"/>
-  <text x="852" y="711" class="label">Test + Acceptance</text>
-  <text x="852" y="729" class="small">pytest, Vitest, product verifier rounds</text>
+  <text x="852" y="711" class="label">Acceptance Evidence</text>
+  <text x="852" y="729" class="small">items, verifier rounds, tests</text>
   <rect x="1084" y="688" width="302" height="52" rx="8" class="gate"/>
   <text x="1102" y="711" class="label">Gate Findings Review Surface</text>
   <text x="1102" y="729" class="small">canonical findings, repair hints, CLI and Web display</text>
@@ -126,8 +126,8 @@
   <text x="571" y="874" class="label">MCP Pool</text>
   <text x="571" y="892" class="small">Jira, GitHub, custom stdio tools</text>
   <rect x="788" y="852" width="205" height="48" rx="8" class="output"/>
-  <text x="806" y="874" class="label">Local Commits</text>
-  <text x="806" y="892" class="small">task commits and reports</text>
+  <text x="806" y="874" class="label">Evidence Reports</text>
+  <text x="806" y="892" class="small">task commits plus verifier tables</text>
   <rect x="1023" y="852" width="188" height="48" rx="8" class="output"/>
   <text x="1041" y="874" class="label">Jira Tickets</text>
   <text x="1041" y="892" class="small">epic and story structure</text>

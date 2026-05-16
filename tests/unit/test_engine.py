@@ -72,6 +72,26 @@ def test_start_run_success(tmp_git_repo: Path) -> None:
     assert wt.exists()
 
 
+def test_successful_run_updates_project_memory(tmp_git_repo: Path) -> None:
+    skills_root = tmp_git_repo / "skills"
+    workflows_root = tmp_git_repo / "workflows"
+    _write_hello_skill(skills_root)
+    _write_workflow(workflows_root)
+
+    engine = Engine(
+        project_root=tmp_git_repo,
+        skill_search_paths=[skills_root],
+        workflow_search_paths=[workflows_root],
+        runtime=SkillRuntime(),
+    )
+    run_id = engine.start_run(workflow="hello", inputs={"who": "world"})
+
+    memory = (tmp_git_repo / ".devflow" / "memory.md").read_text()
+    assert "code_minions Project Memory" in memory
+    assert f"Run `{run_id}`" in memory
+    assert "workflow `hello`" in memory
+
+
 def test_start_run_unknown_workflow_fails(tmp_git_repo: Path) -> None:
     engine = Engine(
         project_root=tmp_git_repo,
@@ -109,6 +129,147 @@ def test_start_run_marks_failed_on_skill_error(tmp_git_repo: Path) -> None:
     state = engine.get_run_state(run_id)
     assert state["status"] == "failed"
     assert "boom" in state["steps"][0]["error"]
+    events = engine._store.list_run_events(run_id)  # noqa: SLF001 - test durable run diagnostics
+    classified = [event for event in events if event["event_type"] == "workflow_failure_classified"]
+    assert classified
+    assert classified[-1]["payload"]["classification"] == "workflow_systemic"
+
+
+def test_start_run_marks_completed_with_issues_when_step_is_skipped_by_gate(
+    tmp_git_repo: Path,
+) -> None:
+    skills_root = tmp_git_repo / "skills"
+    for name, body in {
+        "accept": "def run(ctx):\n    return {'accepted': False}\n",
+        "publish": "def run(ctx):\n    raise AssertionError('must not publish')\n",
+    }.items():
+        d = skills_root / name
+        (d / "scripts").mkdir(parents=True)
+        (d / "SKILL.md").write_text(
+            f"---\nname: {name}\nentrypoint-script: scripts/run.py\ninputs: {{}}\noutputs: {{}}\n---\n\n# {name}\n"
+        )
+        (d / "scripts" / "run.py").write_text(body)
+
+    workflows_root = tmp_git_repo / "workflows"
+    workflows_root.mkdir()
+    (workflows_root / "gated.yaml").write_text(
+        """
+name: gated
+steps:
+  - id: accept
+    skill: accept
+  - id: publish
+    skill: publish
+    depends_on: [accept]
+    when: $steps.accept.output.accepted
+"""
+    )
+    engine = Engine(
+        project_root=tmp_git_repo,
+        skill_search_paths=[skills_root],
+        workflow_search_paths=[workflows_root],
+        runtime=SkillRuntime(),
+    )
+
+    run_id = engine.start_run(workflow="gated", inputs={})
+    state = engine.get_run_state(run_id)
+
+    assert state["status"] == "completed_with_issues"
+    statuses = {step["step_id"]: step["status"] for step in state["steps"]}
+    assert statuses == {"accept": "success", "publish": "skipped"}
+
+
+def test_start_run_marks_completed_with_issues_when_acceptance_rejects_without_skips(
+    tmp_git_repo: Path,
+) -> None:
+    skills_root = tmp_git_repo / "skills"
+    for name, body in {
+        "accept": "def run(ctx):\n    return {'accepted': False, 'blockers': [{'code': 'browser'}]}\n",
+        "report": "def run(ctx):\n    return {'report_path': 'report.md'}\n",
+    }.items():
+        d = skills_root / name
+        (d / "scripts").mkdir(parents=True)
+        (d / "SKILL.md").write_text(
+            f"---\nname: {name}\nentrypoint-script: scripts/run.py\ninputs: {{}}\noutputs: {{}}\n---\n\n# {name}\n"
+        )
+        (d / "scripts" / "run.py").write_text(body)
+
+    workflows_root = tmp_git_repo / "workflows"
+    workflows_root.mkdir()
+    (workflows_root / "reported.yaml").write_text(
+        """
+name: reported
+steps:
+  - id: accept
+    skill: accept
+  - id: report
+    skill: report
+    depends_on: [accept]
+"""
+    )
+    engine = Engine(
+        project_root=tmp_git_repo,
+        skill_search_paths=[skills_root],
+        workflow_search_paths=[workflows_root],
+        runtime=SkillRuntime(),
+    )
+
+    run_id = engine.start_run(workflow="reported", inputs={})
+    state = engine.get_run_state(run_id)
+
+    assert state["status"] == "completed_with_issues"
+    statuses = {step["step_id"]: step["status"] for step in state["steps"]}
+    assert statuses == {"accept": "success", "report": "success"}
+
+
+def test_start_run_marks_needs_clarification_when_prd_has_questions(
+    tmp_git_repo: Path,
+) -> None:
+    skills_root = tmp_git_repo / "skills"
+    parse_dir = skills_root / "parse"
+    (parse_dir / "scripts").mkdir(parents=True)
+    (parse_dir / "SKILL.md").write_text(
+        "---\nname: parse\nentrypoint-script: scripts/run.py\ninputs: {}\noutputs: {}\n---\n\n# parse\n"
+    )
+    (parse_dir / "scripts" / "run.py").write_text(
+        "def run(ctx):\n"
+        "    return {'questions': ['Which platform?'], 'delivery_profile': {}}\n"
+    )
+    plan_dir = skills_root / "plan-tasks"
+    plan_dir.mkdir()
+    (plan_dir / "SKILL.md").write_text(
+        "---\nname: plan-tasks\ninputs: {structured_prd: {type: object, required: true}}\noutputs: {tasks: {type: array}}\n---\n\n# plan\n"
+    )
+
+    workflows_root = tmp_git_repo / "workflows"
+    workflows_root.mkdir()
+    (workflows_root / "clarify.yaml").write_text(
+        """
+name: clarify
+steps:
+  - id: parse
+    skill: parse
+  - id: plan
+    skill: plan-tasks
+    inputs:
+      structured_prd: $steps.parse.output
+    depends_on: [parse]
+"""
+    )
+    engine = Engine(
+        project_root=tmp_git_repo,
+        skill_search_paths=[skills_root],
+        workflow_search_paths=[workflows_root],
+        runtime=SkillRuntime(),
+    )
+
+    run_id = engine.start_run(workflow="clarify", inputs={})
+    state = engine.get_run_state(run_id)
+
+    assert state["status"] == "needs_clarification"
+    plan_step = next(step for step in state["steps"] if step["step_id"] == "plan")
+    assert plan_step["status"] == "failed"
+    assert "Which platform?" in plan_step["output_json"]
 
 
 def test_start_run_failed_step_preserves_partial_output(tmp_git_repo: Path) -> None:
@@ -142,6 +303,36 @@ def test_start_run_failed_step_preserves_partial_output(tmp_git_repo: Path) -> N
     assert state["steps"][0]["status"] == "failed"
     assert state["steps"][0]["output_json"] == '{"pushed": true, "pr_url": ""}'
     assert "publish failed" in state["steps"][0]["error"]
+
+
+def test_start_run_marks_needs_human_from_skill_execution_error(tmp_git_repo: Path) -> None:
+    skills_root = tmp_git_repo / "skills"
+    d = skills_root / "implement"
+    (d / "scripts").mkdir(parents=True)
+    (d / "SKILL.md").write_text(
+        "---\nname: implement\nentrypoint-script: scripts/run.py\ninputs: {}\noutputs: {}\n---\n\n# implement\n"
+    )
+    (d / "scripts" / "run.py").write_text(
+        "from code_minions.engine.skill_runtime import SkillExecutionError\n"
+        "def run(ctx):\n"
+        "    raise SkillExecutionError('needs human', {'commit_sha': ''}, run_status='needs_human')\n"
+    )
+    workflows_root = tmp_git_repo / "workflows"
+    workflows_root.mkdir()
+    (workflows_root / "w.yaml").write_text("name: w\nsteps:\n  - id: implement\n    skill: implement\n")
+    engine = Engine(
+        project_root=tmp_git_repo,
+        skill_search_paths=[skills_root],
+        workflow_search_paths=[workflows_root],
+        runtime=SkillRuntime(),
+    )
+
+    run_id = engine.start_run(workflow="w", inputs={})
+    state = engine.get_run_state(run_id)
+
+    assert state["status"] == "needs_human"
+    assert state["steps"][0]["status"] == "failed"
+    assert state["steps"][0]["output_json"] == '{"commit_sha": ""}'
 
 
 def test_start_run_marks_failed_on_worktree_error(tmp_git_repo: Path) -> None:

@@ -134,6 +134,32 @@ def test_runtime_findings_classify_react_hook_missing_imports() -> None:
     assert "import { useCallback, useState } from 'react'" in findings[0].repair_hint
 
 
+def test_runtime_findings_classify_user_event_timer_method_misuse() -> None:
+    findings = runtime_findings_for_output(
+        "src/App.test.tsx(31,10): error TS2339: Property 'advanceTimersByTime' does not exist on type 'UserEvent'.",
+        source="react-vite",
+    )
+
+    finding = next(item for item in findings if item.code == "testing-library-user-event-timer-method")
+    assert "vi.advanceTimersByTime" in finding.repair_hint
+
+
+def test_runtime_findings_classify_optional_or_criteria_overassertion() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL src/App.test.tsx > start prompt > renders start button or enter hint",
+            "expect(element).toHaveTextContent()",
+            "received value must be a Node.",
+            "document.querySelector('.enter-hint')",
+        ]),
+        source="react-vite",
+    )
+
+    finding = next(item for item in findings if item.code == "react-optional-or-criteria-overasserted")
+    assert "OR acceptance criteria" in finding.repair_hint
+    assert "at least one supported" in finding.repair_hint
+
+
 def test_runtime_findings_classify_missing_local_symbol() -> None:
     findings = runtime_findings_for_output(
         "src/hooks/useGame.ts(60,10): error TS2304: Cannot find name 'isWinningCell'.",
@@ -191,68 +217,6 @@ def test_runtime_findings_classify_implicit_any_diagnostics() -> None:
     assert "Annotate callback parameters" in findings[0].repair_hint
 
 
-def test_runtime_findings_classify_missing_winning_element_assertion() -> None:
-    findings = runtime_findings_for_output(
-        "\n".join([
-            "FAIL  tests/GameState.test.tsx > 胜负判定与获胜棋子高亮 > 黑方横向五连",
-            "Error: expect(received).toBeInTheDocument()",
-            "received value must be an HTMLElement or an SVGElement.",
-            " ❯ tests/GameState.test.tsx:57:60",
-            "     57|         expect(cell.querySelector('.stone.black.winning')).toBeInTheDocument()",
-        ]),
-        source="react-vite",
-    )
-
-    assert [finding.code for finding in findings] == [
-        "react-testing-library-null-element-assertion"
-    ]
-    assert findings[0].paths == ["tests/GameState.test.tsx"]
-    assert "winningCells" in findings[0].repair_hint
-
-
-def test_runtime_findings_classify_turn_based_board_game_accidental_early_win() -> None:
-    findings = runtime_findings_for_output(
-        "\n".join([
-            "FAIL  tests/GameState.test.tsx > 胜负判定与获胜棋子高亮 > 白方纵向五连",
-            "Error: expect(element).toHaveTextContent()",
-            "Expected element to have text content:",
-            "  /白方/",
-            "Received:",
-            "  胜者: 黑方",
-            " ❯ tests/GameState.test.tsx:94:26",
-        ]),
-        source="react-vite",
-    )
-
-    assert [finding.code for finding in findings] == [
-        "turn-based-board-game-accidental-early-win"
-    ]
-    assert findings[0].paths == ["tests/GameState.test.tsx"]
-    assert "filler moves" in findings[0].repair_hint
-
-
-def test_runtime_findings_classify_board_cell_class_contract_regression() -> None:
-    findings = runtime_findings_for_output(
-        "\n".join([
-            "FAIL  tests/GameInteraction.test.tsx > Given 空棋盘，When 黑方点击一个空交叉点",
-            "Error: expect(element).toHaveClass(\"black\")",
-            "Expected the element to have class:",
-            "  black",
-            "Received:",
-            "",
-            "❯ tests/GameInteraction.test.tsx:15:16",
-        ]),
-        source="react-vite",
-    )
-
-    assert [finding.code for finding in findings] == [
-        "react-board-cell-class-contract-regression"
-    ]
-    assert findings[0].paths == ["tests/GameInteraction.test.tsx"]
-    assert "Preserve" in findings[0].repair_hint
-    assert "black" in findings[0].repair_hint
-
-
 def test_runtime_findings_classify_react_missing_named_export_function() -> None:
     findings = runtime_findings_for_output(
         "\n".join([
@@ -272,6 +236,30 @@ def test_runtime_findings_classify_react_missing_named_export_function() -> None
     assert findings[0].paths == ["src/App.tsx"]
     assert "export" in findings[0].repair_hint
     assert "findWinningCells" in findings[0].repair_hint
+
+
+def test_runtime_findings_classify_hook_test_private_state_mutator() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "TypeError: result.current._setState is not a function",
+            " ❯ tests/useGame.test.ts:42:35",
+            "     40|       act(() => {",
+            "     41|         // @ts-ignore - accessing internal for test setup",
+            "     42|         result.current['_setState']({",
+        ]),
+        source="react-vite",
+    )
+
+    assert "react-hook-test-private-state-mutator" in [
+        finding.code for finding in findings
+    ]
+    finding = next(
+        item for item in findings
+        if item.code == "react-hook-test-private-state-mutator"
+    )
+    assert finding.paths == ["tests/useGame.test.ts"]
+    assert "public hook API" in finding.repair_hint
+    assert "_setState" in finding.repair_hint
 
 
 def test_runtime_findings_classify_board_root_class_contract_mismatch() -> None:
@@ -338,46 +326,6 @@ def test_runtime_findings_classify_board_cell_literal_text_vs_symbol_mismatch() 
     assert "accessible name" in findings[0].repair_hint
 
 
-def test_runtime_findings_classify_early_gomoku_game_over_status_test() -> None:
-    findings = runtime_findings_for_output(
-        "\n".join([
-            "FAIL  tests/GameInteraction.test.tsx > 核心落子交互与回合管理 > Given 已经出现胜者，When 用户继续点击棋盘，Then 不再新增棋子",
-            "Error: expect(element).toHaveTextContent()",
-            "Expected element to have text content:",
-            "  黑方获胜",
-            "Received:",
-            "  当前回合: 黑子",
-            "❯ tests/GameInteraction.test.tsx:74:20",
-        ]),
-        source="react-vite",
-    )
-
-    assert [finding.code for finding in findings] == [
-        "turn-based-board-game-current-turn-status-contract-drift"
-    ]
-    assert findings[0].paths == ["tests/GameInteraction.test.tsx"]
-    assert "defer tests" in findings[0].repair_hint
-
-
-def test_runtime_findings_classify_board_testid_contract_mismatch() -> None:
-    findings = runtime_findings_for_output(
-        "\n".join([
-            "FAIL  src/App.test.tsx > App > renders the board centered on desktop",
-            "TestingLibraryElementError: Unable to find an element by: [data-testid=\"gomoku-board\"]",
-            '  <svg class="board-svg" data-testid="board-svg" viewBox="0 0 480 480">',
-            " ❯ src/App.test.tsx:12:28",
-        ]),
-        source="react-vite",
-    )
-
-    assert [finding.code for finding in findings] == [
-        "react-board-testid-contract-mismatch"
-    ]
-    assert findings[0].paths == ["src/App.test.tsx"]
-    assert "gomoku-board" in findings[0].repair_hint
-    assert "board-svg" in findings[0].repair_hint
-
-
 def test_runtime_findings_classify_broad_empty_cell_role_query() -> None:
     findings = runtime_findings_for_output(
         "\n".join([
@@ -416,49 +364,6 @@ def test_runtime_findings_classify_zero_based_coordinate_accessible_name() -> No
     assert "state suffix" in findings[0].repair_hint
 
 
-def test_runtime_findings_classify_board_cell_data_stone_not_updated() -> None:
-    findings = runtime_findings_for_output(
-        "\n".join([
-            "FAIL  src/App.test.tsx > Gomoku core interaction > should place black stone on first click and switch to white",
-            "Error: expect(element).toHaveAttribute(\"data-stone\", \"black\")",
-            "Expected the element to have attribute:",
-            "  data-stone=\"black\"",
-            "Received:",
-            "  null",
-            "❯ src/App.test.tsx:22:18",
-        ]),
-        source="react-vite",
-    )
-
-    assert [finding.code for finding in findings] == [
-        "react-board-cell-data-stone-not-updated"
-    ]
-    assert findings[0].paths == ["src/App.test.tsx"]
-    assert "cell.stone" in findings[0].repair_hint
-    assert "data-stone" in findings[0].repair_hint
-
-
-def test_runtime_findings_classify_board_cell_accessible_state_not_updated() -> None:
-    findings = runtime_findings_for_output(
-        "\n".join([
-            "FAIL  tests/App.test.tsx > 胜负判定与获胜棋子高亮 > 黑方横向五子获胜并高亮",
-            "TestingLibraryElementError: Unable to find an accessible element with the role \"button\" and name `行1列1, 黑子`",
-            '  <button aria-label="行1列1, 空" data-stone="empty" />',
-            '  <button aria-label="行1列2, 空" data-stone="empty" />',
-            " ❯ getCellWithStone tests/App.test.tsx:12:17",
-            "     12|   return screen.getByRole('button', { name: `行${row + 1}列${col + 1}, ${stone}` })",
-        ]),
-        source="react-vite",
-    )
-
-    assert [finding.code for finding in findings] == [
-        "react-board-cell-accessible-state-not-updated"
-    ]
-    assert findings[0].paths == ["tests/App.test.tsx"]
-    assert "aria-label" in findings[0].repair_hint
-    assert "data-stone" in findings[0].repair_hint
-
-
 def test_runtime_findings_classify_presentational_board_occupied_click_contract() -> None:
     findings = runtime_findings_for_output(
         "\n".join([
@@ -481,50 +386,6 @@ def test_runtime_findings_classify_presentational_board_occupied_click_contract(
     assert findings[0].paths == ["src/__tests__/Board.test.tsx"]
     assert "App" in findings[0].repair_hint
     assert "presentational" in findings[0].repair_hint
-
-
-def test_runtime_findings_classify_hook_batched_turn_actions() -> None:
-    findings = runtime_findings_for_output(
-        "\n".join([
-            "FAIL  src/__tests__/useGameState.test.ts > useGameState > 白方落子 > 白方点击空位置显示白子",
-            "AssertionError: expected 'black' to be 'white' // Object.is equality",
-            "Expected: \"white\"",
-            "Received: \"black\"",
-            " ❯ src/__tests__/useGameState.test.ts:63:42",
-            "     61|         result.current.handleCellClick(6, 6); // 白方",
-            "     62|       });",
-            "     63|       expect(result.current.board[6][6]).toBe('white');",
-        ]),
-        source="react-vite",
-    )
-
-    assert [finding.code for finding in findings] == [
-        "react-hook-batched-turn-actions-use-stale-state"
-    ]
-    assert findings[0].paths == ["src/__tests__/useGameState.test.ts"]
-    assert "separate `act`" in findings[0].repair_hint
-    assert "latest `result.current.handleCellClick`" in findings[0].repair_hint
-
-
-def test_runtime_findings_classify_turn_based_winner_status_mismatch() -> None:
-    findings = runtime_findings_for_output(
-        "\n".join([
-            "FAIL  tests/game.test.tsx > Game Win Detection > 白方纵向连续五子",
-            "Error: expect(element).toHaveTextContent()",
-            "Expected element to have text content:",
-            "  白棋胜",
-            "Received:",
-            "  黑棋胜",
-            "❯ tests/game.test.tsx:53:44",
-        ]),
-        source="react-vite",
-    )
-
-    assert [finding.code for finding in findings] == [
-        "turn-based-board-game-winner-status-mismatch"
-    ]
-    assert findings[0].paths == ["tests/game.test.tsx"]
-    assert "move sequence" in findings[0].repair_hint
 
 
 def test_runtime_findings_classify_missing_reset_button_contract() -> None:
@@ -562,70 +423,6 @@ def test_runtime_findings_classify_last_move_reset_null_contract() -> None:
     assert "`lastMove`" in findings[0].repair_hint
 
 
-def test_runtime_findings_classify_impossible_public_win_sequence() -> None:
-    findings = runtime_findings_for_output(
-        "\n".join([
-            "FAIL  tests/GameResult.test.tsx > 五子棋胜负判定 > 横向五子 > Given 黑方横向连续五子",
-            "Error: expect(element).toHaveTextContent()",
-            "Expected element to have text content:",
-            "  黑方胜利",
-            "Received:",
-            "  白方回合",
-            "❯ tests/GameResult.test.tsx:34:52",
-        ]),
-        source="react-vite",
-    )
-
-    assert "turn-based-board-game-impossible-public-win-sequence" in [
-        finding.code for finding in findings
-    ]
-    finding = next(
-        f for f in findings if f.code == "turn-based-board-game-impossible-public-win-sequence"
-    )
-    assert finding.paths == ["tests/GameResult.test.tsx"]
-    assert "9-click" in finding.repair_hint
-    assert "pure helper" in finding.repair_hint
-
-
-def test_runtime_findings_classify_white_win_sequence_that_gives_black_early_win() -> None:
-    findings = runtime_findings_for_output(
-        "\n".join([
-            "FAIL  tests/winDetection.test.ts > makeMove with win/draw detection > sets winner when white makes 5-in-a-row vertically",
-            "AssertionError: expected 'black' to be 'white' // Object.is equality",
-            "Expected: \"white\"",
-            "Received: \"black\"",
-            "❯ tests/winDetection.test.ts:152:26",
-        ]),
-        source="react-vite",
-    )
-
-    assert [finding.code for finding in findings] == [
-        "turn-based-board-game-invalid-white-win-sequence"
-    ]
-    assert findings[0].paths == ["tests/winDetection.test.ts"]
-    assert "do not share one row" in findings[0].repair_hint
-
-
-def test_runtime_findings_classify_hook_white_win_sequence_that_gives_black_early_win() -> None:
-    findings = runtime_findings_for_output(
-        "\n".join([
-            "FAIL  src/__tests__/useGameState.test.ts > useGameState > win detection > detects diagonal win for white",
-            "AssertionError: expected 'black' to be 'white' // Object.is equality",
-            "Expected: \"white\"",
-            "Received: \"black\"",
-            "❯ src/__tests__/useGameState.test.ts:198:37",
-            "  198|       expect(result.current.winner).toBe('white');",
-        ]),
-        source="react-vite",
-    )
-
-    assert [finding.code for finding in findings] == [
-        "turn-based-board-game-invalid-white-win-sequence"
-    ]
-    assert findings[0].paths == ["src/__tests__/useGameState.test.ts"]
-    assert "White wins through the public move/click API" in findings[0].repair_hint
-
-
 def test_runtime_findings_classify_nullable_win_result_without_guard() -> None:
     findings = runtime_findings_for_output(
         "\n".join([
@@ -660,250 +457,6 @@ def test_runtime_findings_classify_stale_hook_test_end_game_api() -> None:
     assert "Do not leave tests calling `endGame`" in findings[0].repair_hint
 
 
-def test_runtime_findings_classify_draw_test_created_accidental_win() -> None:
-    findings = runtime_findings_for_output(
-        "\n".join([
-            "FAIL  tests/GameResult.test.tsx > 五子棋胜负判定 > 平局判定 > Given 棋盘已满且无人五连",
-            "AssertionError: expected <div data-testid=\"winner-display\"></div> to be null",
-            "Received:",
-            "<div",
-            "  data-testid=\"winner-display\"",
-            ">",
-            "  黑方",
-            "</div>",
-            "❯ tests/GameResult.test.tsx:201:29",
-        ]),
-        source="react-vite",
-    )
-
-    assert "turn-board-game-draw-test-created-accidental-win" in [
-        finding.code for finding in findings
-    ]
-    finding = next(
-        f for f in findings if f.code == "turn-board-game-draw-test-created-accidental-win"
-    )
-    assert finding.paths == ["tests/GameResult.test.tsx"]
-    assert "sequentially filling" in finding.repair_hint
-    assert "draw helper" in finding.repair_hint
-
-
-def test_runtime_findings_classify_draw_helper_board_with_accidental_win() -> None:
-    findings = runtime_findings_for_output(
-        "\n".join([
-            "FAIL  tests/game-logic.test.ts > getGameStatus > 棋盘已满且无人五连",
-            "AssertionError: expected 'white-wins' to be 'draw' // Object.is equality",
-            "Expected: \"draw\"",
-            "Received: \"white-wins\"",
-            "❯ tests/game-logic.test.ts:113:22",
-        ]),
-        source="react-vite",
-    )
-
-    assert [finding.code for finding in findings] == [
-        "turn-board-game-draw-test-created-accidental-win"
-    ]
-    assert findings[0].paths == ["tests/game-logic.test.ts"]
-    assert "proven no-five board" in findings[0].repair_hint
-
-
-def test_runtime_findings_classify_draw_helper_expected_null_but_received_winner() -> None:
-    findings = runtime_findings_for_output(
-        "\n".join([
-            "FAIL  tests/checkWinner.test.ts > checkDraw > should detect draw when board is full with no 5-in-a-row",
-            "AssertionError: expected { Object (winner, positions) } to be null",
-            "Received:",
-            "Object {",
-            "  \"winner\": \"black\",",
-            "}",
-            "❯ tests/checkWinner.test.ts:215:20",
-            "  213|     // No winner should exist with this pattern",
-            "  214|     const winner = checkWinner(board);",
-            "  215|     expect(winner).toBeNull();",
-        ]),
-        source="react-vite",
-    )
-
-    assert [finding.code for finding in findings] == [
-        "turn-board-game-draw-test-created-accidental-win"
-    ]
-    assert findings[0].paths == ["tests/checkWinner.test.ts"]
-    assert "proven no-five board" in findings[0].repair_hint
-
-
-def test_runtime_findings_classify_missing_white_win_from_invalid_sequence() -> None:
-    findings = runtime_findings_for_output(
-        "\n".join([
-            "FAIL  tests/App.test.tsx > 胜负判定与获胜棋子高亮 > 白方纵向五子获胜",
-            "TestingLibraryElementError: Unable to find an element with the text: /白.*胜|白方.*赢/i.",
-            "❯ tests/App.test.tsx:62:21",
-        ]),
-        source="react-vite",
-    )
-
-    assert "turn-based-board-game-invalid-white-win-sequence" in [
-        finding.code for finding in findings
-    ]
-    finding = next(
-        f for f in findings if f.code == "turn-based-board-game-invalid-white-win-sequence"
-    )
-    assert finding.paths == ["tests/App.test.tsx"]
-    assert "five white target cells" in finding.repair_hint
-    assert "turns 2/4/6/8/10" in finding.repair_hint
-
-
-def test_runtime_findings_classify_missing_winner_display_from_invalid_sequence() -> None:
-    findings = runtime_findings_for_output(
-        "\n".join([
-            "FAIL  tests/App.game.test.tsx > App 组件 - 胜负判定 > 白方获胜 - 纵向五子",
-            'TestingLibraryElementError: Unable to find an element by: [data-testid="winner-display"]',
-            "❯ tests/App.game.test.tsx:94:36",
-            "     94|       const winnerDisplay = screen.getByTestId('winner-display');",
-            "     95|       expect(winnerDisplay).toHaveTextContent('white');",
-        ]),
-        source="react-vite",
-    )
-
-    assert "turn-based-board-game-invalid-white-win-sequence" in [
-        finding.code for finding in findings
-    ]
-    finding = next(
-        f for f in findings if f.code == "turn-based-board-game-invalid-white-win-sequence"
-    )
-    assert finding.paths == ["tests/App.game.test.tsx"]
-    assert "turns 2/4/6/8/10" in finding.repair_hint
-
-
-def test_runtime_findings_classify_draw_text_missing_after_public_board_fill() -> None:
-    findings = runtime_findings_for_output(
-        "\n".join([
-            "FAIL  tests/App.test.tsx > 胜负判定与获胜棋子高亮 > 平局判定",
-            "TestingLibraryElementError: Unable to find an element with the text: /平.*局|平手/i.",
-            "          class=\"cell occupied winning\"",
-            "❯ tests/App.test.tsx:246:21",
-        ]),
-        source="react-vite",
-    )
-
-    assert "turn-board-game-draw-test-created-accidental-win" in [
-        finding.code for finding in findings
-    ]
-    finding = next(
-        f for f in findings if f.code == "turn-board-game-draw-test-created-accidental-win"
-    )
-    assert finding.paths == ["tests/App.test.tsx"]
-    assert "draw helper" in finding.repair_hint
-
-
-def test_runtime_findings_classify_truncated_draw_text_missing_after_public_board_fill() -> None:
-    findings = runtime_findings_for_output(
-        "\n".join([
-            "FAIL  tests/WinDetection.test.tsx > 胜负判定 > 棋盘已满且无人五连则显示平局",
-            '          data-testid="cell-0-0"',
-            '          data-winning="true"',
-            "❯ tests/WinDetection.test.tsx:215:21",
-            "    215|       expect(screen.getByText('平局')).toBeInTheDocument();",
-        ]),
-        source="react-vite",
-    )
-
-    assert "turn-board-game-draw-test-created-accidental-win" in [
-        finding.code for finding in findings
-    ]
-    finding = next(
-        f for f in findings if f.code == "turn-board-game-draw-test-created-accidental-win"
-    )
-    assert finding.paths == ["tests/WinDetection.test.tsx"]
-    assert "omit" in finding.repair_hint.lower()
-
-
-def test_runtime_findings_classify_draw_display_missing_after_accidental_win() -> None:
-    findings = runtime_findings_for_output(
-        "\n".join([
-            "FAIL  tests/App.game.test.tsx > App 组件 - 胜负判定 > 平局判定",
-            'TestingLibraryElementError: Unable to find an element by: [data-testid="draw-display"]',
-            '          data-testid="winner-display"',
-            "        winner: black",
-            "❯ tests/App.game.test.tsx:217:34",
-            "    217|       const drawDisplay = screen.getByTestId('draw-display');",
-        ]),
-        source="react-vite",
-    )
-
-    assert "turn-board-game-draw-test-created-accidental-win" in [
-        finding.code for finding in findings
-    ]
-    finding = next(
-        f for f in findings if f.code == "turn-board-game-draw-test-created-accidental-win"
-    )
-    assert finding.paths == ["tests/App.game.test.tsx"]
-    assert "draw helper" in finding.repair_hint
-
-
-def test_runtime_findings_classify_winner_state_not_updated() -> None:
-    findings = runtime_findings_for_output(
-        "\n".join([
-            "FAIL  tests/UndoRedo.test.tsx > Undo and Restart functionality > AC3: 游戏已经结束，用户点击悔棋",
-            "Error: expect(element).toHaveTextContent()",
-            "Expected element to have text content:",
-            "  游戏结束，黑方获胜",
-            "Received:",
-            "  当前回合: 白方",
-            "❯ tests/UndoRedo.test.tsx:76:45",
-        ]),
-        source="react-vite",
-    )
-
-    assert [finding.code for finding in findings] == [
-        "turn-based-board-game-winner-state-not-updated"
-    ]
-    assert findings[0].paths == ["tests/UndoRedo.test.tsx"]
-    assert "setWinner" in findings[0].repair_hint
-    assert "placeStone" in findings[0].repair_hint
-
-
-def test_runtime_findings_classify_current_turn_status_contract_drift() -> None:
-    findings = runtime_findings_for_output(
-        "\n".join([
-            "FAIL  tests/interaction.test.tsx > 核心落子交互与回合管理 > 点击已有棋子的位置不改变棋盘状态",
-            '          data-testid="game-status"',
-            "❯ tests/interaction.test.tsx:71:21",
-            "     71|       expect(screen.getByText('当前回合: 白子')).toBeInTheDocument();",
-        ]),
-        source="react-vite",
-    )
-
-    assert "turn-based-board-game-current-turn-status-contract-drift" in [
-        finding.code for finding in findings
-    ]
-    finding = next(
-        f for f in findings
-        if f.code == "turn-based-board-game-current-turn-status-contract-drift"
-    )
-    assert finding.paths == ["tests/interaction.test.tsx"]
-    assert "当前回合" in finding.repair_hint
-
-
-def test_runtime_findings_classify_regex_current_turn_after_early_game_over_sequence() -> None:
-    findings = runtime_findings_for_output(
-        "\n".join([
-            "FAIL  tests/App.test.tsx > App - 落子交互与回合管理 > Given 已存在游戏结束状态",
-            "❯ tests/App.test.tsx:61:19",
-            "     61|     expect(screen.getByText(/当前回合: 黑子/)).toBeInTheDocument();",
-        ]),
-        source="react-vite",
-    )
-
-    assert "turn-based-board-game-current-turn-status-contract-drift" in [
-        finding.code for finding in findings
-    ]
-    finding = next(
-        f for f in findings
-        if f.code == "turn-based-board-game-current-turn-status-contract-drift"
-    )
-    assert finding.paths == ["tests/App.test.tsx"]
-    assert "defer" in finding.repair_hint.lower()
-
-
 def test_runtime_findings_classify_hook_winner_state_not_updated() -> None:
     findings = runtime_findings_for_output(
         "\n".join([
@@ -926,66 +479,183 @@ def test_runtime_findings_classify_hook_winner_state_not_updated() -> None:
     assert "win detection" in finding.repair_hint
 
 
-def test_runtime_findings_classify_presentational_board_test_expects_game_state() -> None:
+def test_runtime_findings_classify_vitest_user_event_fake_timer_timeout() -> None:
     findings = runtime_findings_for_output(
         "\n".join([
-            "FAIL  src/components/Board.test.tsx > Board > Black horizontal win > declares winner",
-            "TestingLibraryElementError: Unable to find an element with the text: /黑方获胜/i.",
-            " ❯ src/components/Board.test.tsx:37:33",
-            "     35|       render(<Board board={board} onCellClick={() => {}} />)",
-            "     36|",
-            "     37|       const winnerText = screen.getByText(/黑方获胜/i)",
+            "FAIL  tests/movement.test.tsx > Keyboard controls - Arrow keys > arrow up changes direction to up",
+            "Error: Test timed out in 5000ms.",
+            "If this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".",
+            "❯ tests/movement.test.tsx:58:3",
         ]),
         source="react-vite",
     )
 
-    assert [finding.code for finding in findings] == [
-        "react-presentational-board-test-expects-game-state"
-    ]
-    assert findings[0].paths == ["src/components/Board.test.tsx"]
-    assert "App" in findings[0].repair_hint
-    assert "winningCells" in findings[0].repair_hint
-
-
-def test_runtime_findings_classify_duplicate_rendered_board_cells() -> None:
-    findings = runtime_findings_for_output(
-        "\n".join([
-            "FAIL  tests/App.game.test.tsx > App 组件 - 胜负判定 > 黑方获胜",
-            'TestingLibraryElementError: Found multiple elements by: [data-testid="cell-7-3"]',
-            "     28|       render(<App />);",
-            "     35|       render(<App />);",
-            "❯ tests/App.game.test.tsx:39:25",
-        ]),
-        source="react-vite",
-    )
-
-    assert "react-testing-library-duplicate-render-without-cleanup" in [
+    assert "react-vite-user-event-fake-timer-timeout" in [
         finding.code for finding in findings
     ]
     finding = next(
-        f for f in findings if f.code == "react-testing-library-duplicate-render-without-cleanup"
+        item for item in findings
+        if item.code == "react-vite-user-event-fake-timer-timeout"
     )
-    assert finding.paths == ["tests/App.game.test.tsx"]
-    assert "unmount" in finding.repair_hint
+    assert finding.paths == ["tests/movement.test.tsx"]
+    assert "advanceTimers" in finding.repair_hint
+    assert "act" in finding.repair_hint
 
 
-def test_runtime_findings_classify_board_fill_timeout() -> None:
+def test_runtime_findings_classify_react_component_default_import_mismatch() -> None:
     findings = runtime_findings_for_output(
         "\n".join([
-            "FAIL  tests/App.test.tsx > 五子棋游戏 - 胜负判定 > 棋盘已满且无人五连，显示平局",
-            "Error: Test timed out in 5000ms.",
-            "If this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".",
-            "❯ tests/App.test.tsx:133:44",
+            "Error: Element type is invalid: expected a string (for built-in components)",
+            "but got: undefined. You likely forgot to export your component from the file it's defined in,",
+            "or you might have mixed up default and named imports.",
+            "❯ tests/DirectionControl.integration.test.tsx:22:13",
         ]),
         source="react-vite",
     )
 
-    assert [finding.code for finding in findings] == [
-        "turn-board-game-board-fill-test-timeout"
+    assert "react-component-import-export-mismatch" in [
+        finding.code for finding in findings
     ]
-    assert findings[0].paths == ["tests/App.test.tsx"]
-    assert "omit" in findings[0].repair_hint.lower()
-    assert "full-board draw UI test" in findings[0].repair_hint
+    finding = next(
+        item for item in findings
+        if item.code == "react-component-import-export-mismatch"
+    )
+    assert finding.paths == ["tests/DirectionControl.integration.test.tsx"]
+    assert "default import" in finding.repair_hint
+    assert "export default" in finding.repair_hint
+
+
+def test_runtime_findings_classify_testing_library_left_from_right_opposite_direction() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  src/hooks/useGameController.test.tsx > useGameController > keyboard controls > responds to ArrowLeft key",
+            "Error: expect(element).toHaveTextContent()",
+            "",
+            "Expected element to have text content:",
+            "  left",
+            "Received:",
+            "  right",
+            "❯ src/hooks/useGameController.test.tsx:162:47",
+            "FAIL  src/hooks/useGameController.test.tsx > useGameController > 180-degree reversal prevention > rejects direction change from left to right",
+        ]),
+        source="react-vite",
+    )
+
+    finding = next(
+        item for item in findings
+        if item.code == "react-grid-invalid-opposite-direction-test"
+    )
+    assert finding.paths == ["src/hooks/useGameController.test.tsx"]
+    assert "pressing left should be rejected" in finding.repair_hint
+
+
+def test_runtime_findings_classify_generated_test_ambiguous_text_query() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  tests/App.test.tsx > App > initial state > shows initial score of 0",
+            "TestingLibraryElementError: Found multiple elements with the text: /分数: 0/",
+            "❯ tests/App.test.tsx:28:21",
+        ]),
+        source="react-vite",
+    )
+
+    finding = next(
+        item for item in findings
+        if item.code == "react-generated-test-ambiguous-text-query"
+    )
+    assert finding.stage == "generated-test-contract"
+    assert finding.paths == ["tests/App.test.tsx"]
+    assert "Anchor" in finding.repair_hint
+
+
+def test_runtime_findings_classify_generated_test_brittle_long_timer_state() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "FAIL  tests/App.test.tsx > App > game over > shows game over UI when game ends",
+            "TestingLibraryElementError: Unable to find an element by: [data-testid=\"game-over\"]",
+            "vi.advanceTimersByTime(TICK_INTERVAL * 11 + 50)",
+            "❯ tests/App.test.tsx:165:21",
+        ]),
+        source="react-vite",
+    )
+
+    finding = next(
+        item for item in findings
+        if item.code == "react-generated-test-brittle-long-timer-state"
+    )
+    assert finding.stage == "generated-test-contract"
+    assert finding.paths == ["tests/App.test.tsx"]
+    assert "one timer tick per act" in finding.repair_hint
+
+
+def test_runtime_findings_classify_testing_library_split_text_query() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            "TestingLibraryElementError: Unable to find an element with the text: /当前分数:\\s*0/.",
+            "This could be because the text is broken up by multiple elements.",
+            "❯ tests/App.test.tsx:12:19",
+        ]),
+        source="react-vite",
+    )
+
+    assert "react-testing-library-split-text-query" in [
+        finding.code for finding in findings
+    ]
+    finding = next(
+        item for item in findings
+        if item.code == "react-testing-library-split-text-query"
+    )
+    assert finding.paths == ["tests/App.test.tsx"]
+    assert "accessible" in finding.repair_hint
+    assert "textContent" in finding.repair_hint
+
+
+def test_runtime_findings_classify_missing_stable_start_control() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            'TestingLibraryElementError: Unable to find an element by: [data-testid="start-button"]',
+            "<main>",
+            "  Ready",
+            "</main>",
+            "❯ tests/DirectionControl.integration.test.tsx:152:31",
+        ]),
+        source="react-vite",
+    )
+
+    assert "react-vite-missing-stable-control-testid" in [
+        finding.code for finding in findings
+    ]
+    finding = next(
+        item for item in findings
+        if item.code == "react-vite-missing-stable-control-testid"
+    )
+    assert finding.paths == ["tests/DirectionControl.integration.test.tsx"]
+    assert "start-button" in finding.repair_hint
+    assert "placeholder" in finding.repair_hint.lower()
+
+
+def test_runtime_findings_classify_missing_stable_non_control_testid() -> None:
+    findings = runtime_findings_for_output(
+        "\n".join([
+            'TestingLibraryElementError: Unable to find an element by: [data-testid="game-title"]',
+            "<main>",
+            "  <div data-testid=\"game-board\" />",
+            "</main>",
+            "❯ tests/DirectionControl.integration.test.tsx:114:21",
+        ]),
+        source="react-vite",
+    )
+
+    assert "react-vite-missing-stable-testid" in [
+        finding.code for finding in findings
+    ]
+    finding = next(
+        item for item in findings
+        if item.code == "react-vite-missing-stable-testid"
+    )
+    assert finding.paths == ["tests/DirectionControl.integration.test.tsx"]
+    assert "game-title" in finding.repair_hint
+    assert "stable DOM contract" in finding.repair_hint
 
 
 def test_runtime_findings_classify_user_event_import_mismatch() -> None:
@@ -1050,42 +720,6 @@ def test_runtime_findings_classify_missing_assertive_live_region() -> None:
     finding = next(item for item in findings if item.code == "react-a11y-live-region-missing")
     assert finding.paths == ["tests/StatusPanel.test.tsx"]
     assert "aria-live=\"assertive\"" in finding.repair_hint
-
-
-def test_runtime_findings_classify_status_panel_label_mismatch() -> None:
-    findings = runtime_findings_for_output(
-        "\n".join([
-            "FAIL  tests/StatusPanel.test.tsx > StatusPanel > 无障碍支持 > 游戏结束时播报胜者或平局",
-            "AssertionError: expected '结果：黑方获胜' to contain '黑子获胜'",
-            "Expected: \"黑子获胜\"",
-            "Received: \"结果：黑方获胜\"",
-            "❯ tests/StatusPanel.test.tsx:194:39",
-        ]),
-        source="react-vite",
-    )
-
-    assert [finding.code for finding in findings] == [
-        "react-status-panel-label-contract-mismatch"
-    ]
-    assert findings[0].paths == ["tests/StatusPanel.test.tsx"]
-    assert "same player terminology" in findings[0].repair_hint
-
-
-def test_runtime_findings_classify_missing_status_history_section() -> None:
-    findings = runtime_findings_for_output(
-        "\n".join([
-            "FAIL  tests/StatusPanel.test.tsx > StatusPanel > 落子历史显示 > 显示最近5步落子历史",
-            "expect(screen.getByText(/落子历史/)).toBeInTheDocument();",
-            "❯ tests/StatusPanel.test.tsx:151:21",
-        ]),
-        source="react-vite",
-    )
-
-    assert [finding.code for finding in findings] == [
-        "react-status-panel-history-section-missing"
-    ]
-    assert findings[0].paths == ["tests/StatusPanel.test.tsx"]
-    assert "落子历史" in findings[0].repair_hint
 
 
 def test_runtime_findings_classify_jsx_inside_ts_test_file() -> None:

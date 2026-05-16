@@ -17,3 +17,9 @@ def tmp_git_repo(tmp_path: Path) -> Path:
     subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=tmp_path, check=True)
     return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def clear_web_auth_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep local web tests independent from a developer shell auth token."""
+    monkeypatch.delenv("CODE_MINIONS_WEB_AUTH_TOKEN", raising=False)

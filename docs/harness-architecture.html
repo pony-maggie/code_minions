@@ -646,7 +646,7 @@
             <span class="eyebrow">Key Point</span>
             <h3><code>tests never green</code> is a wrapper, not a root cause</h3>
             <p>
-              Recent Gomoku runs all ended with the same outer error, but the inner failures moved from missing test runner,
+              Recent React/Vite runs all ended with the same outer error, but the inner failures moved from missing test runner,
               to jsdom, to cleanup, to relative imports, to Vitest mocks, to TypeScript interface drift. The harness hardening
               strategy is to promote each discovered class into an earlier deterministic gate or a sharper self-heal hint.
             </p>

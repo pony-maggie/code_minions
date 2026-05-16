@@ -132,6 +132,19 @@ def _typescript_runtime_findings(output: str, *, source: str) -> list[GateFindin
                 f"Define or import `{missing_name}` before using it, or remove the stale export/use site. "
                 "Do not leave orphan symbols after splitting implementation across files."
             )
+        elif ts_code == "6133" and "is declared but its value is never read" in lowered:
+            code = "typescript-unused-local"
+            repair_hint = (
+                "Remove the unused local, import, or destructured value. For React `useState`, if only the "
+                "state value is read, destructure just `[value] = useState(...)`; keep the setter only when "
+                "real UI or game logic calls it."
+            )
+        elif ts_code == "2588" and "cannot assign to" in lowered and "because it is a constant" in lowered:
+            code = "typescript-reassigned-const"
+            repair_hint = (
+                "A variable declared with `const` is reassigned later. Change that local binding to `let`, "
+                "or refactor the reassignment into a new value if immutability is intended."
+            )
         elif ts_code == "2459" or (
             "declares" in lowered and "locally" in lowered and "not exported" in lowered
         ):
@@ -152,6 +165,17 @@ def _typescript_runtime_findings(output: str, *, source: str) -> list[GateFindin
                 "Use `import userEvent from '@testing-library/user-event'` or "
                 "`const user = (await import('@testing-library/user-event')).default`; do not "
                 "destructure a non-existent `user` property."
+            )
+        elif (
+            ts_code == "2339"
+            and "property 'advancetimersbytime' does not exist" in lowered
+            and "userevent" in lowered
+        ):
+            code = "testing-library-user-event-timer-method"
+            repair_hint = (
+                "`advanceTimersByTime` is a Vitest timer API, not a `userEvent` instance method. "
+                "Call `vi.advanceTimersByTime(...)`, usually inside `act(...)`, and remove unused "
+                "`userEvent.setup()` variables if the test only fires keyboard/click events directly."
             )
         elif (
             ts_code == "2339"
@@ -317,11 +341,12 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
     findings: list[GateFinding] = []
     path = _first_vitest_frame_path(output)
     paths = [path] if path else []
-    if (
-        "Unable to find an element by:" in output
-        and "reset-button" in output
-        and ("getByTestId('reset-button')" in output or 'data-testid="reset-button"' in output)
-    ):
+    missing_control_match = re.search(
+        r"""Unable to find an element by:\s+\[data-testid=["'](?P<testid>[^"']+-button)["']\]""",
+        output,
+    )
+    if missing_control_match:
+        testid = missing_control_match.group("testid")
         reset_path = _vitest_frame_path_containing(output, "App") or path
         findings.append(GateFinding(
             code="react-vite-missing-stable-control-testid",
@@ -329,13 +354,36 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
             stage="runtime",
             message="A React test expected a stable control test id that is missing from the rendered app.",
             repair_hint=(
-                "Preserve existing public test contracts when adding features. Render the reset/restart "
-                "control with `data-testid=\"reset-button\"` (`reset-button`) if tests already use it, or update all tests "
-                "and UI together to a single stable selector. Do not remove earlier task controls while "
-                "implementing win/draw logic."
+                f"Preserve existing public test contracts when adding features. Render the control with "
+                f"`data-testid=\"{testid}\"` (`{testid}`) if tests already use it, or update all tests and UI together "
+                "to a single stable selector. Do not replace an existing interactive app with a placeholder "
+                "shell such as `<main>Ready</main>` while implementing later behavior."
             ),
             source=source,
             paths=[reset_path] if reset_path else paths,
+        ))
+
+    missing_testid_match = re.search(
+        r"""Unable to find an element by:\s+\[data-testid=["'](?P<testid>[^"']+)["']\]""",
+        output,
+    )
+    if (
+        missing_testid_match
+        and not missing_testid_match.group("testid").endswith("-button")
+    ):
+        testid = missing_testid_match.group("testid")
+        findings.append(GateFinding(
+            code="react-vite-missing-stable-testid",
+            severity="error",
+            stage="runtime",
+            message="A React test expected a stable test id that is missing from the rendered app.",
+            repair_hint=(
+                f"Preserve the stable DOM contract used by tests and prior tasks. Render an element with "
+                f"`data-testid=\"{testid}\"` (`{testid}`) when that semantic UI element still exists, "
+                "or update tests and implementation together to use a single stable selector."
+            ),
+            source=source,
+            paths=paths,
         ))
 
     if (
@@ -377,6 +425,52 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
             source=source,
             paths=[test_path],
         ))
+
+    if "result.current._setState is not a function" in output or "result.current['_setState']" in output:
+        state_path = _first_vitest_frame_path(output)
+        findings.append(GateFinding(
+            code="react-hook-test-private-state-mutator",
+            severity="error",
+            stage="runtime",
+            message="A React hook test tried to call a private or non-existent state mutator.",
+            repair_hint=(
+                "Do not access private or imagined hook internals such as `result.current['_setState']`. "
+                "Drive state through the public hook API, factor deterministic pure helpers for game-rule "
+                "logic, or intentionally expose a real testable setter/initializer and update the hook "
+                "contract and tests together."
+            ),
+            source=source,
+            paths=[state_path] if state_path else paths,
+        ))
+        return findings
+
+    spy_missing_match = re.search(
+        r"""(?:Error:\s+)?(?P<name>[A-Za-z_$][\w$]*) does not exist[\s\S]{0,300}vi\.spyOn""",
+        output,
+    )
+    if not spy_missing_match:
+        spy_missing_match = re.search(
+            r"""vi\.spyOn[\s\S]{0,300}(?:Error:\s+)?(?P<name>[A-Za-z_$][\w$]*) does not exist""",
+            output,
+        )
+    if spy_missing_match:
+        name = spy_missing_match.group("name")
+        spy_path = _first_vitest_frame_path(output)
+        findings.append(GateFinding(
+            code="react-vitest-spy-on-non-exported-helper",
+            severity="error",
+            stage="runtime",
+            message=f"A Vitest spy targeted `{name}`, but that module export does not exist.",
+            repair_hint=(
+                "`vi.spyOn(module, 'name')` can only mock a real exported module property. Do not spy "
+                "on non-exported implementation helpers; either export the helper deliberately, move it "
+                "to a pure helper module, or test through the public UI/hook behavior without that spy."
+            ),
+            source=source,
+            paths=[spy_path] if spy_path else paths,
+        ))
+        return findings
+
     missing_function_match = re.search(
         r"(?:__vite_ssr_import_\d+__\.)?(?P<name>[A-Za-z_$][\w$]*) is not a function",
         output,
@@ -473,25 +567,6 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
                 "`board` on the actual grid element, and use a separate parent wrapper with "
                 "`board-container` when needed for centering/responsive layout. Do not put the board test id "
                 "only on the container if tests assert the grid has class `board`."
-            ),
-            source=source,
-            paths=paths,
-        ))
-
-    if (
-        "gomoku-board" in output
-        and "board-svg" in output
-    ):
-        findings.append(GateFinding(
-            code="react-board-testid-contract-mismatch",
-            severity="error",
-            stage="runtime",
-            message="A board test expected a different stable test id than the rendered board uses.",
-            repair_hint=(
-                "Align the board test id contract. Either render `data-testid=\"gomoku-board\"` on the "
-                "interactive board/root element that tests expect, or update tests to use the existing "
-                "`board-svg`/cell test ids consistently. Keep one stable id for the board root across App "
-                "and Board tests."
             ),
             source=source,
             paths=paths,
@@ -679,297 +754,6 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
             paths=paths,
         ))
 
-    if "落子历史" in output and "getByText" in output:
-        findings.append(GateFinding(
-            code="react-status-panel-history-section-missing",
-            severity="error",
-            stage="runtime",
-            message="Status panel tests expected a move-history section, but the rendered text was missing.",
-            repair_hint=(
-                "Render a stable `落子历史` section when the status panel feature requires recent move "
-                "history, or update the test only if the accepted DOM contract intentionally uses a different "
-                "visible label."
-            ),
-            source=source,
-            paths=paths,
-        ))
-
-    if (
-        "AssertionError: expected" in output
-        and "to contain" in output
-        and any(term in output for term in ("黑子", "白子"))
-        and any(term in output for term in ("黑方", "白方"))
-    ):
-        findings.append(GateFinding(
-            code="react-status-panel-label-contract-mismatch",
-            severity="error",
-            stage="runtime",
-            message="Status panel rendered player/result text with terminology that does not match its tests.",
-            repair_hint=(
-                "Use the same player terminology across visible status text, live-region announcements, "
-                "and tests. For this Gomoku UI, do not mix `黑方/白方` with `黑子/白子` unless tests and "
-                "product copy are updated together."
-            ),
-            source=source,
-            paths=paths,
-        ))
-
-    if (
-        (
-            any(pattern in output for pattern in (
-                "getByText('当前回合:",
-                'getByText("当前回合:',
-                "getByText(/当前回合:",
-            ))
-            or (
-                "expect(element).toHaveTextContent()" in output
-                and "Expected element to have text content:" in output
-                and any(term in output for term in ("黑方获胜", "白方获胜", "黑棋胜", "白棋胜"))
-                and "Received:" in output
-                and "当前回合" in output
-                and any(term in output for term in (
-                    "核心落子交互",
-                    "已存在游戏结束状态",
-                    "游戏结束后禁止继续落子",
-                    "已经出现胜者，When 用户继续点击棋盘",
-                ))
-            )
-        )
-        and any(term in output for term in ("data-testid=\"game-status\"", "当前回合", "核心落子交互", "已存在游戏结束状态"))
-    ):
-        findings.append(GateFinding(
-            code="turn-based-board-game-current-turn-status-contract-drift",
-            severity="error",
-            stage="runtime",
-            message="Turn-based board game current-turn status text drifted from an earlier test contract.",
-            repair_hint=(
-                "Preserve the existing visible current-turn contract across tasks. If earlier tests assert "
-                "`当前回合: 黑子` or `当前回合: 白子`, keep rendering that text for in-progress turns and add "
-                "winner/draw text only for ended games, or update the UI and all existing tests consistently "
-                "in the same task. In core move/turn tasks, defer tests that construct a five-in-row game-over "
-                "sequence; remove them and leave win/game-over coverage to the win-detection task."
-            ),
-            source=source,
-            paths=paths,
-        ))
-
-    if (
-        "expect(element).toHaveTextContent()" in output
-        and "Expected element to have text content:" in output
-        and "Received:" in output
-        and any(term in output for term in ("黑方胜利", "白方胜利"))
-        and any(term in output for term in ("黑方回合", "白方回合"))
-    ):
-        findings.append(GateFinding(
-            code="turn-based-board-game-impossible-public-win-sequence",
-            severity="error",
-            stage="runtime",
-            message="A public UI test expected a win from an impossible same-player move sequence.",
-            repair_hint=(
-                "Public board clicks alternate players. Do not test a Gomoku win by clicking the target "
-                "player's five cells consecutively through the UI. Use a valid 9-click black-win sequence "
-                "such as black target cells `(0,0)..(0,4)` on turns 1/3/5/7/9 with white filler moves far "
-                "away, or use a pure helper/state setup when testing same-player board geometry directly."
-            ),
-            source=source,
-            paths=paths,
-        ))
-
-    if (
-        "Unable to find an element with the text:" in output
-        and any(pattern in output for pattern in ("/白.*胜|白方.*赢/i", "白方胜利", "白方获胜"))
-        and any(term in output for term in ("五子棋", "Gomoku", "胜负判定", "棋子"))
-    ):
-        findings.append(GateFinding(
-            code="turn-based-board-game-invalid-white-win-sequence",
-            severity="error",
-            stage="runtime",
-            message="A Gomoku test expected a white win, but the public move sequence did not produce one.",
-            repair_hint=(
-                "White wins through the public click API require five white target cells, all played on "
-                "turns 2/4/6/8/10. Do not count black's first move as part of the white target line, and "
-                "do not stop after only four white stones. Use black filler moves that do not share one row, "
-                "one column, or one diagonal, for example black `(10,10)`, `(11,12)`, `(12,14)`, `(13,11)`, "
-                "`(14,13)` and white target `(0,5)..(4,5)` for a vertical win."
-            ),
-            source=source,
-            paths=paths,
-        ))
-
-    if (
-        "expected 'black' to be 'white'" in output
-        and (
-            "white makes 5-in-a-row" in output
-            or "White player wins" in output
-            or "win for white" in output
-            or "winner).toBe('white')" in output
-            or "白方" in output
-        )
-        and any(term in output for term in ("winner", "获胜", "win/draw", "Gomoku", "五子棋"))
-    ):
-        findings.append(GateFinding(
-            code="turn-based-board-game-invalid-white-win-sequence",
-            severity="error",
-            stage="runtime",
-            message="A Gomoku white-win test accidentally produced an earlier black win.",
-            repair_hint=(
-                "White wins through the public move/click API require five white target cells on turns "
-                "2/4/6/8/10. Black filler moves must not share one row, one column, or one diagonal; do not share one row/column/diagonal, otherwise "
-                "black can win on turn 9 before white's fifth move. Use fillers like `(10,10)`, `(11,12)`, "
-                "`(12,14)`, `(13,11)`, `(14,13)` with white target `(0,5)..(4,5)`, or test same-color "
-                "geometry through a pure board helper instead of the turn-advancing API."
-            ),
-            source=source,
-            paths=paths,
-        ))
-
-    if (
-        "to be null" in output
-        and "data-testid=\"winner-display\"" in output
-        and any(term in output for term in ("棋盘已满", "平局", "draw"))
-        and any(term in output for term in ("黑方", "白方", "black", "white"))
-    ):
-        findings.append(GateFinding(
-            code="turn-board-game-draw-test-created-accidental-win",
-            severity="error",
-            stage="runtime",
-            message="A full-board draw test produced a winner before the board was filled.",
-            repair_hint=(
-                "Avoid sequentially filling a Gomoku board through the public click API for draw tests; "
-                "naive row-major or alternating patterns usually create five-in-a-row before the board is "
-                "full. Test draw detection with a pure draw helper/state setup or a proven no-five board "
-                "pattern, and assert the product's visible `平局` contract rather than assuming the "
-                "`winner-display` element must be absent."
-            ),
-            source=source,
-            paths=paths,
-        ))
-
-    if (
-        "Unable to find an element with the text:" in output
-        and any(pattern in output for pattern in ("/平.*局|平手/i", "平局"))
-        and ("cell occupied winning" in output or "棋盘已满" in output or "draw" in output)
-    ):
-        findings.append(GateFinding(
-            code="turn-board-game-draw-test-created-accidental-win",
-            severity="error",
-            stage="runtime",
-            message="A full-board draw test could not find draw text after public board filling.",
-            repair_hint=(
-                "Avoid sequentially filling a Gomoku board through the public click API for draw tests; "
-                "naive row-major or alternating patterns usually create five-in-a-row before the board is "
-                "full. Test draw detection with a pure draw helper/state setup or a proven no-five board "
-                "pattern, and assert the product's visible `平局` contract after that deterministic setup."
-            ),
-            source=source,
-            paths=paths,
-        ))
-
-    if (
-        any(pattern in output for pattern in ("getByText('平局')", 'getByText("平局")'))
-        and 'data-winning="true"' in output
-        and any(term in output for term in ("棋盘已满", "平局", "draw"))
-    ):
-        findings.append(GateFinding(
-            code="turn-board-game-draw-test-created-accidental-win",
-            severity="error",
-            stage="runtime",
-            message="A full-board draw UI test rendered a winning board before finding draw text.",
-            repair_hint=(
-                "Do not let a full-board Gomoku draw UI test block the MVP. Omit automated draw tests "
-                "for this workflow unless the implementation already exposes a simple pure helper or "
-                "deterministic no-five board state; keep win detection coverage to one lightweight "
-                "acceptance-level smoke test."
-            ),
-            source=source,
-            paths=paths,
-        ))
-
-    if (
-        "expected 'white-wins' to be 'draw'" in output
-        or "expected 'black-wins' to be 'draw'" in output
-        or "expected 'white' to be 'draw'" in output
-        or "expected 'black' to be 'draw'" in output
-    ) and any(term in output for term in ("棋盘已满", "draw", "getGameStatus", "isBoardFull")):
-        findings.append(GateFinding(
-            code="turn-board-game-draw-test-created-accidental-win",
-            severity="error",
-            stage="runtime",
-            message="A draw helper test used a full board pattern that still contains five-in-a-row.",
-            repair_hint=(
-                "A full Gomoku board is not automatically a draw. Use a proven no-five board fixture, "
-                "or test draw by setting a full board state known not to contain five contiguous stones "
-                "in any row, column, or diagonal before asserting `draw`. Avoid simple checkerboard, "
-                "row-major, or repeated stripe patterns unless you have verified the win detector returns no winner."
-            ),
-            source=source,
-            paths=paths,
-        ))
-
-    if (
-        "expected { Object (winner, positions) } to be null" in output
-        and any(term in output for term in ("board is full", "full with no 5-in-a-row", "No winner"))
-        and any(term in output for term in ('"winner": "black"', '"winner": "white"'))
-    ):
-        findings.append(GateFinding(
-            code="turn-board-game-draw-test-created-accidental-win",
-            severity="error",
-            stage="runtime",
-            message="A draw helper test expected no winner, but the full-board fixture contains five-in-row.",
-            repair_hint=(
-                "A full Gomoku board is not automatically a draw. Use a proven no-five board fixture, "
-                "or test draw by setting a full board state known not to contain five contiguous stones "
-                "in any row, column, or diagonal before asserting `null`/draw. Avoid simple checkerboard, "
-                "row-major, or repeated stripe patterns unless you have verified the win detector returns no winner."
-            ),
-            source=source,
-            paths=paths,
-        ))
-
-    if (
-        "expect(element).toHaveTextContent()" in output
-        and "Expected element to have text content:" in output
-        and "Received:" in output
-        and any(term in output for term in ("黑棋胜", "白棋胜", "黑方获胜", "白方获胜", "平局"))
-        and "当前回合" not in output
-    ):
-        findings.append(GateFinding(
-            code="turn-based-board-game-winner-status-mismatch",
-            severity="error",
-            stage="runtime",
-            message="Turn-based board game status text does not match the expected winner or draw state.",
-            repair_hint=(
-                "Re-check the move sequence and win/draw state update path. Preserve alternating turns, "
-                "ensure the fifth stone triggers the intended winner, pass winner/highlight state through "
-                "to the board, and avoid test filler moves that create an earlier opponent win."
-            ),
-            source=source,
-            paths=paths,
-        ))
-
-    if (
-        "expect(element).toHaveTextContent()" in output
-        and "Expected element to have text content:" in output
-        and "Received:" in output
-        and "游戏结束" in output
-        and "获胜" in output
-        and "当前回合" in output
-    ):
-        findings.append(GateFinding(
-            code="turn-based-board-game-winner-state-not-updated",
-            severity="error",
-            stage="runtime",
-            message="Turn-based board game UI still shows the current turn after a winning move sequence.",
-            repair_hint=(
-                "Wire win detection into the same state path that handles normal moves. In `placeStone` "
-                "or the click handler, evaluate the board after adding the latest stone, call `setWinner(...)` "
-                "when five-in-a-row is found, and stop toggling to the next player after a win. Undo should "
-                "clear `winner` and restore `currentPlayer` to the undone stone's player."
-            ),
-            source=source,
-            paths=paths,
-        ))
-
     if (
         "Found multiple elements by:" in output
         and "data-testid=\"cell-" in output
@@ -991,117 +775,245 @@ def _react_runtime_findings(output: str, *, source: str) -> list[GateFinding]:
         ))
 
     if (
-        path.endswith("Board.test.tsx")
-        and any(
-            token in output
-            for token in (
-                "screen.getByText(/黑方获胜",
-                "screen.getByText(/白方获胜",
-                "screen.getByText(/平局",
-                "Unable to find an element with the text: /黑方获胜",
-                "Unable to find an element with the text: /白方获胜",
-                "Unable to find an element with the text: /平局",
-            )
-        )
-        and ("<Board" in output or "Board >" in output or "data-testid=\"cell-" in output)
-    ):
-        findings.append(GateFinding(
-            code="react-presentational-board-test-expects-game-state",
-            severity="error",
-            stage="runtime",
-            message="A Board component test expected winner or draw game status from a controlled board render.",
-            repair_hint=(
-                "Keep component tests at the right level. If `Board` is a presentational/controlled component, "
-                "do not render `<Board board={board} onCellClick={() => {}} />` and expect clicks to mutate "
-                "state or display `黑方获胜`/`白方获胜`/`平局`. Test win/draw integration through `App` or "
-                "`useGameState`, or pass explicit `winner`/`winningCells`/draw props to Board and assert only "
-                "the Board display contract."
-            ),
-            source=source,
-            paths=paths,
-        ))
-
-    if (
-        "Unable to find an element by: [data-testid=\"winner-display\"]" in output
-        and "winnerDisplay" in output
-        and "white" in output
-        and any(term in output for term in ("白方", "white", "胜负判定", "Gomoku", "五子棋"))
-    ):
-        findings.append(GateFinding(
-            code="turn-based-board-game-invalid-white-win-sequence",
-            severity="error",
-            stage="runtime",
-            message="A Gomoku test expected a white winner display, but the public move sequence did not produce one.",
-            repair_hint=(
-                "White wins through the public click API require five white target cells, all played on "
-                "turns 2/4/6/8/10. Do not count black's first move as part of the white target line, and "
-                "do not stop after only four white stones. Use black filler moves that do not share one row, "
-                "one column, or one diagonal, for example black `(10,10)`, `(11,12)`, `(12,14)`, `(13,11)`, "
-                "`(14,13)` and white target `(0,5)..(4,5)` for a vertical win."
-            ),
-            source=source,
-            paths=paths,
-        ))
-
-    if (
-        "Unable to find an element by: [data-testid=\"draw-display\"]" in output
-        and "winner-display" in output
-        and any(term in output for term in ("winner: black", "winner: white", "黑方", "白方", "black", "white"))
-    ):
-        findings.append(GateFinding(
-            code="turn-board-game-draw-test-created-accidental-win",
-            severity="error",
-            stage="runtime",
-            message="A full-board draw test expected draw display but rendered a winner instead.",
-            repair_hint=(
-                "Avoid sequentially filling a Gomoku board through the public click API for draw tests; "
-                "naive row-major, snake, or alternating patterns usually create five-in-a-row before the board "
-                "is full. Test draw detection with a pure draw helper/state setup or a proven no-five board "
-                "pattern, and assert the product's visible `平局`/draw contract after that deterministic setup."
-            ),
-            source=source,
-            paths=paths,
-        ))
-
-    if (
         "Test timed out in 5000ms" in output
-        and any(term in output for term in ("棋盘已满", "平局", "draw"))
+        and not any(term in output for term in ("棋盘已满", "平局", "draw"))
     ):
+        timeout_path = _first_vitest_frame_path(output)
         findings.append(GateFinding(
-            code="turn-board-game-board-fill-test-timeout",
+            code="react-vite-user-event-fake-timer-timeout",
             severity="error",
             stage="runtime",
-            message="A board-fill draw test timed out before completing the full board setup.",
+            message="A React/Vite interaction test timed out under Vitest.",
             repair_hint=(
-                "For the Gomoku MVP workflow, omit or delete the full-board draw UI test instead of "
-                "clicking 225 cells or raising timeouts. Keep the automated UI coverage lightweight: one "
-                "black horizontal win smoke test plus core interaction tests is enough; draw can be covered "
-                "only if there is already a simple deterministic helper/state setup."
+                "If this test uses `vi.useFakeTimers()` with Testing Library `userEvent`, create the user "
+                "with `userEvent.setup({ advanceTimers: vi.advanceTimersByTime })`, or keep the user "
+                "interaction test on real timers. For timer-driven UI assertions, advance fake timers "
+                "inside `act(...)` before checking DOM movement or status changes."
             ),
             source=source,
-            paths=paths,
+            paths=[timeout_path] if timeout_path else paths,
         ))
 
     if (
-        "expect(element).toHaveTextContent()" in output
-        and "Expected element to have text content:" in output
-        and "Received:" in output
-        and "胜者:" in output
+        "Element type is invalid" in output
+        and "got: undefined" in output
+        and "mixed up default and named imports" in output
     ):
+        mismatch_path = _first_vitest_frame_path(output)
         findings.append(GateFinding(
-            code="turn-based-board-game-accidental-early-win",
+            code="react-component-import-export-mismatch",
             severity="error",
             stage="runtime",
-            message=(
-                "Turn-based board game test expected one winner but the rendered winner is the other player."
-            ),
+            message="A React component rendered as undefined, likely due to an import/export mismatch.",
             repair_hint=(
-                "Re-check the move sequence. For alternating-turn games, use opponent filler moves that do "
-                "not block the target line and do not create an earlier win for the opponent. Then verify "
-                "the game logic only declares the winner after the intended fifth stone."
+                "Align React component imports with the module exports. If tests or callers use a "
+                "default import from a module that currently has only a named component export, either "
+                "change all callers to named imports or add `export default ComponentName` while keeping "
+                "the named export for existing callers."
             ),
             source=source,
-            paths=paths,
+            paths=[mismatch_path] if mismatch_path else paths,
+        ))
+
+    if (
+        "Unable to find an element with the text:" in output
+        and "text is broken up by multiple elements" in output
+    ):
+        text_query_path = _first_vitest_frame_path(output)
+        findings.append(GateFinding(
+            code="react-testing-library-split-text-query",
+            severity="error",
+            stage="runtime",
+            message="A Testing Library text query failed because the visible text is split across child elements.",
+            repair_hint=(
+                "Avoid brittle `getByText` regex assertions for labels whose value is rendered in a child "
+                "element. Query the accessible container label, use a stable test id with "
+                "`toHaveTextContent`, or use a function matcher that checks `element.textContent`."
+            ),
+            source=source,
+            paths=[text_query_path] if text_query_path else paths,
+        ))
+
+    if (
+        "received value must be a node" in output.lower()
+        and ".enter-hint" in output
+        and re.search(r"""(?i)(enter|start|开始|button|按钮)""", output)
+    ):
+        optional_path = _first_vitest_frame_path(output)
+        findings.append(GateFinding(
+            code="react-optional-or-criteria-overasserted",
+            severity="error",
+            stage="runtime",
+            message="A React test appears to require an optional OR acceptance affordance as mandatory DOM.",
+            repair_hint=(
+                "Do not turn OR acceptance criteria into AND tests. If the product requirement says a user "
+                "can start with a button or an Enter hint, the test should assert that at least one supported "
+                "start affordance works, or the implementation should deliberately expose both if that is the "
+                "chosen UI contract. Avoid querying a single optional selector and passing null into "
+                "jest-dom matchers."
+            ),
+            source=source,
+            paths=[optional_path] if optional_path else paths,
+        ))
+
+    if (
+        (
+            "180度反向" in output
+            or "180-degree" in output
+            or "opposite direction" in output
+            or ("headAfterUp" in output and re.search(r"""(?i)(arrowdown|向下|s键|btn-down)""", output))
+        )
+        and "expected" in output.lower()
+        and re.search(r"""(?i)(arrowleft|arrowdown|向左|向下|for left|leftbutton)""", output)
+    ):
+        direction_path = _first_vitest_frame_path(output)
+        findings.append(GateFinding(
+            code="react-grid-invalid-opposite-direction-test",
+            severity="error",
+            stage="runtime",
+            message="A grid movement test appears to expect an illegal opposite-direction turn.",
+            repair_hint=(
+                "Movement tests for grid apps must respect the initial direction and 180-degree "
+                "reversal rule. Do not assert an immediate opposite turn from the current direction. "
+                "For example, from an initial right direction, pressing left should be rejected; to test "
+                "left movement, first put the entity in a vertical direction through a legal turn sequence "
+                "or expose a deterministic initial state helper."
+            ),
+            source=source,
+            paths=[direction_path] if direction_path else paths,
+        ))
+
+    if (
+        "expected" in output.lower()
+        and re.search(r"""(?i)(head|grid|row|col|列|行)""", output)
+        and (
+            re.search(r"""(?i)expected\s+['"].*(?:row|col|列|行).*['"]\s+to\s+(?:match|contain|be)""", output)
+            or re.search(r"""(?i)to\s+(?:match|contain).*['"].*(?:row|col|列|行).*['"]""", output)
+            or re.search(r"""(?i)expected.*(?:row|col|列|行).*received""", output)
+        )
+    ):
+        coordinate_path = _first_vitest_frame_path(output)
+        findings.append(GateFinding(
+            code="react-grid-brittle-absolute-coordinate-test",
+            severity="error",
+            stage="runtime",
+            message="A grid movement test appears to assert brittle absolute head coordinates.",
+            repair_hint=(
+                "Prefer relative movement assertions for grid games: capture the head cell before the tick, "
+                "perform one legal direction change and timer advance, then assert the row/column delta. "
+                "Only assert exact coordinates when the test passes a deterministic initial state through a "
+                "public initializer that the component actually consumes; keep 0-based/1-based labels explicit."
+            ),
+            source=source,
+            paths=[coordinate_path] if coordinate_path else paths,
+        ))
+
+    if (
+        "expected" in output
+        and re.search(r"""(?i)(current score|score|分数|high score|最高分|length|count)""", output)
+        and re.search(r"""(?i)(localStorage|setItem|当前分数|最高分|stored|persist)""", output)
+        and re.search(r"""(?i)(received:?\s*['"]?.*0|to contain ['"].*10|to be called with arguments)""", output)
+    ):
+        fixture_path = _first_vitest_frame_path(output)
+        findings.append(GateFinding(
+            code="react-deterministic-state-fixture-not-applied",
+            severity="error",
+            stage="runtime",
+            message="A React state-transition test appears to expect fixture-driven state that was not applied.",
+            repair_hint=(
+                "When a React/Vitest test needs deterministic state, do not create an unused fixture. "
+                "Pass the fixture through an explicit component prop or hook initializer, and make the "
+                "implementation consume that public contract. If no deterministic initializer exists, "
+                "drive the real UI through enough valid timer ticks/interactions before asserting score, "
+                "storage, or entity-growth state."
+            ),
+            source=source,
+            paths=[fixture_path] if fixture_path else paths,
+        ))
+
+    if "Found multiple elements with the text:" in output:
+        ambiguous_path = _first_vitest_frame_path(output)
+        findings.append(GateFinding(
+            code="react-generated-test-ambiguous-text-query",
+            severity="error",
+            stage="generated-test-contract",
+            message="A generated React test uses a text query broad enough to match multiple elements.",
+            repair_hint=(
+                "Anchor broad text regexes, scope the query with `within(...)`, or use a semantic test id/role. "
+                "For score panels, prefer exact patterns such as `/^分数:\\s*0$/` over `/分数: 0/`, which can "
+                "also match high-score text."
+            ),
+            source=source,
+            paths=[ambiguous_path] if ambiguous_path else paths,
+        ))
+
+    if (
+        re.search(r"""Unable to find an element (?:by|with).*?(?:game-over|游戏结束)""", output, re.DOTALL)
+        and "advanceTimersByTime" in output
+        and re.search(r"""(?i)(TICK_INTERVAL|\*\s*\d+|game over|撞墙|wall)""", output)
+    ):
+        timer_path = _first_vitest_frame_path(output)
+        findings.append(GateFinding(
+            code="react-generated-test-brittle-long-timer-state",
+            severity="error",
+            stage="generated-test-contract",
+            message="A generated React game-state test advances many fake-timer ticks at once and expects complex UI state.",
+            repair_hint=(
+                "Do not prove multi-tick game-over behavior by one large `vi.advanceTimersByTime(...)` against "
+                "component state. Either test the pure collision helper directly, expose a deterministic initial "
+                "state near the boundary, or advance one timer tick per act so React effects and refs settle "
+                "between ticks."
+            ),
+            source=source,
+            paths=[timer_path] if timer_path else paths,
+        ))
+
+    if (
+        "TS2322" in output
+        and (
+            "initialState" in output
+            or "initialDirection" in output
+        )
+        and ("Props" in output or "IntrinsicAttributes" in output)
+        and "not assignable to type" in output
+    ):
+        prop_path = _first_vitest_frame_path(output)
+        findings.append(GateFinding(
+            code="react-test-fixture-prop-contract-mismatch",
+            severity="error",
+            stage="runtime",
+            message="A React test fixture prop does not match the component's declared props.",
+            repair_hint=(
+                "Keep deterministic test fixtures aligned with the component's public prop contract. "
+                "Either add an `initialState` prop to the props interface and consume it when initializing "
+                "state, or add and consume supported granular initializer props consistently in both the "
+                "component and hook. Type inline fixtures "
+                "with the existing domain type or `satisfies` it so literal unions such as direction/status "
+                "do not widen to plain `string`."
+            ),
+            source=source,
+            paths=[prop_path] if prop_path else paths,
+        ))
+
+    generic_marker_match = re.search(
+        r"""toHaveAttribute\(["'](?P<attr>data-[^"']+)["'],\s*["']true["']\)""",
+        output,
+    )
+    if generic_marker_match and re.search(r"(?m)^\s*null\s*$", output):
+        marker_attr = generic_marker_match.group("attr")
+        marker_path = _first_vitest_frame_path(output)
+        findings.append(GateFinding(
+            code="react-grid-entity-marker-missing",
+            severity="error",
+            stage="runtime",
+            message="A grid/entity test expected a stable data marker, but the rendered cell did not expose it.",
+            repair_hint=(
+                f"Preserve stable grid-cell DOM markers used by tests and accessibility checks. Derive "
+                f"`{marker_attr}=\"true\"` from the same state that renders the visual entity, and keep "
+                "the marker synchronized when the entity moves or is regenerated."
+            ),
+            source=source,
+            paths=[marker_path] if marker_path else paths,
         ))
 
     return findings

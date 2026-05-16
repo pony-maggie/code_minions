@@ -16,7 +16,7 @@ class AgentProfile:
     temperature: float = 0.2
     max_tokens: int = 16000
     self_heal_max_rounds: int = 3
-    reviewer_max_rounds: int = 0
+    reviewer_max_rounds: int = 2
     gate_strictness: str = "balanced"
     guidance: tuple[str, ...] = ()
     warnings: list[str] = field(default_factory=list)
@@ -51,7 +51,24 @@ def _react_vite_profile(role: str, strictness: str) -> AgentProfile:
         gate_strictness=strictness,
         guidance=(
             "React/Vite implementers must preserve root project layout, Vitest jsdom setup, "
-            "consistent TypeScript contracts, and stable Testing Library selectors.",
+            "consistent TypeScript contracts, and stable Testing Library selectors. When using "
+            "`vi.useFakeTimers()` with Testing Library `userEvent`, create the user with "
+            "`userEvent.setup({ advanceTimers: vi.advanceTimersByTime })` and advance timer-driven "
+            "state changes inside `act(...)` before asserting DOM movement. For grid movement apps, "
+            "keep stable semantic markers synchronized from the same state used for visuals and behavior "
+            "across later tasks. Hook tests must drive behavior through the public "
+            "hook API or pure helpers; do not access imagined internals such as "
+            "`result.current['_setState']`. Vitest `vi.spyOn` can only mock exported module properties, "
+            "so do not spy on non-exported implementation helpers. When a test creates deterministic "
+            "initial state, pass that fixture through a public component prop or hook initializer and make "
+            "the implementation consume it; do not leave unused setup objects in tests. Movement tests for grid apps "
+            "must respect the current direction and 180-degree reversal rule; use legal turn sequences "
+            "or deterministic initial state helpers before asserting each direction.",
+            "Treat acceptance criteria phrased with `or` as alternatives, not a mandatory checklist. Tests "
+            "should prove at least one acceptable path works unless the UI contract intentionally promises "
+            "both. For movement/grid tests, prefer before/after relative row/column deltas over exact "
+            "coordinates unless a public deterministic initializer fixes the initial state and coordinate "
+            "base explicitly.",
         ),
     )
 

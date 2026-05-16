@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from code_minions.engine.dag_runner import DAGRunner
+from code_minions.engine.dag_runner import DAGRunner, _for_each_item_hash
 from code_minions.engine.skill import Skill, load_skill
 from code_minions.engine.skill_runtime import SkillRuntime
 from code_minions.engine.workflow import Workflow, WorkflowStep
@@ -199,3 +199,45 @@ def test_for_each_resume_skips_successful_iteration_outputs(tmp_path: Path):
 
     assert outputs["each"]["items"] == [{"echo": "a"}, {"echo": "b"}]
     assert [c["item"] for c in rt.seen] == ["b"]
+
+
+def test_for_each_resume_reruns_iteration_when_item_hash_changed(tmp_path: Path):
+    wf = Workflow(name="w", steps=[
+        WorkflowStep(id="up", skill="up"),
+        WorkflowStep(
+            id="each", skill="each",
+            for_each="$steps.up.output.items",
+            **{"as": "item"},
+            inputs={"item": "$item"},
+            depends_on=["up"],
+        ),
+    ])
+    up = _stub(tmp_path, "up")
+    each = _stub(tmp_path, "each")
+
+    class R(CaptureRuntime):
+        def invoke(self, skill, ctx):
+            if skill.name == "up":
+                raise AssertionError("upstream step should be preloaded")
+            return super().invoke(skill, ctx)
+
+    rt = R()
+    runner = DAGRunner(
+        workflow=wf,
+        skills_by_name={"up": up, "each": each},
+        runtime=rt,
+        workdir=tmp_path,
+        inputs={},
+        preloaded_outputs={
+            "up": {"items": ["changed", "b"]},
+            "each[0]": {
+                "echo": "a",
+                "__code_minions_for_each_item_hash": _for_each_item_hash("a"),
+            },
+        },
+    )
+
+    outputs = runner.run()
+
+    assert outputs["each"]["items"] == [{"echo": "changed"}, {"echo": "b"}]
+    assert [c["item"] for c in rt.seen] == ["changed", "b"]

@@ -54,6 +54,33 @@ steps:
     assert wf.steps[1].depends_on == ["a"]
 
 
+def test_load_workflow_with_command_sensor_reference(tmp_path: Path) -> None:
+    yaml_file = _write(
+        tmp_path / "wf.yaml",
+        """
+name: sensor-workflow
+sensors:
+  typecheck:
+    type: command
+    command: python -m compileall src
+    severity: blocker
+    timeout_seconds: 20
+steps:
+  - id: build
+    skill: build
+    sensors: [typecheck]
+""",
+    )
+
+    wf = load_workflow(yaml_file)
+
+    assert wf.sensors["typecheck"].type == "command"
+    assert wf.sensors["typecheck"].command == "python -m compileall src"
+    assert wf.sensors["typecheck"].severity == "blocker"
+    assert wf.sensors["typecheck"].timeout_seconds == 20
+    assert wf.steps[0].sensors == ["typecheck"]
+
+
 def test_load_workflow_extends_parent_with_preset_inputs(tmp_path: Path) -> None:
     _write(
         tmp_path / "base.yaml",
@@ -110,7 +137,9 @@ def test_builtin_stack_prd_to_commit_aliases_extend_generic_workflow(workflow_na
 
     assert wf.name == workflow_name
     assert wf.preset_inputs == {"delivery_stack_id": stack_id}
-    assert [step.id for step in wf.steps] == ["parse", "plan", "implement", "acceptance", "report"]
+    assert [step.id for step in wf.steps] == [
+        "parse", "plan", "implement", "browser_acceptance", "acceptance", "report"
+    ]
     assert wf.steps[0].inputs["delivery_stack_id"] == "$inputs.delivery_stack_id"
 
 
@@ -128,7 +157,9 @@ def test_builtin_stack_prd_to_pr_aliases_extend_generic_workflow(workflow_name: 
 
     assert wf.name == workflow_name
     assert wf.preset_inputs == {"delivery_stack_id": stack_id}
-    assert [step.id for step in wf.steps] == ["parse", "plan", "tickets", "implement", "report", "open_pr"]
+    assert [step.id for step in wf.steps] == [
+        "parse", "plan", "tickets", "implement", "browser_acceptance", "acceptance", "report", "open_pr"
+    ]
     assert wf.steps[0].inputs["delivery_stack_id"] == "$inputs.delivery_stack_id"
     assert wf.steps[3].for_each == "$steps.tickets.output.tickets"
 
@@ -138,7 +169,9 @@ def test_python_web_prd_to_commit_uses_python_web_planner() -> None:
 
     assert wf.name == "python-web-prd-to-commit"
     assert wf.preset_inputs == {"delivery_stack_id": "python-web"}
-    assert [step.id for step in wf.steps] == ["parse", "plan", "implement", "acceptance", "report"]
+    assert [step.id for step in wf.steps] == [
+        "parse", "plan", "implement", "browser_acceptance", "acceptance", "report"
+    ]
     assert wf.steps[1].skill == "python-web-plan-tasks"
     assert wf.steps[0].inputs["delivery_stack_id"] == "$inputs.delivery_stack_id"
 
@@ -148,7 +181,9 @@ def test_python_web_prd_to_pr_uses_python_web_planner() -> None:
 
     assert wf.name == "python-web-prd-to-pr"
     assert wf.preset_inputs == {"delivery_stack_id": "python-web"}
-    assert [step.id for step in wf.steps] == ["parse", "plan", "tickets", "implement", "report", "open_pr"]
+    assert [step.id for step in wf.steps] == [
+        "parse", "plan", "tickets", "implement", "browser_acceptance", "acceptance", "report", "open_pr"
+    ]
     assert wf.steps[1].skill == "python-web-plan-tasks"
     assert wf.steps[3].for_each == "$steps.tickets.output.tickets"
     assert wf.steps[0].inputs["delivery_stack_id"] == "$inputs.delivery_stack_id"

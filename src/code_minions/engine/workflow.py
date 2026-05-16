@@ -26,8 +26,17 @@ class WorkflowStep(BaseModel):
     for_each: str | None = None   # M1 accepted but not executed; enforced in DAG Runner
     as_: str | None = Field(default=None, alias="as")
     max_parallel: int = 1
+    when: str | bool | None = None
+    sensors: list[str | dict[str, Any]] = Field(default_factory=list)
 
     model_config = {"populate_by_name": True}
+
+
+class SensorSpec(BaseModel):
+    type: str
+    command: str | list[str] | None = None
+    severity: str = "blocker"
+    timeout_seconds: int = 300
 
 
 class WorkspaceSpec(BaseModel):
@@ -41,6 +50,7 @@ class Workflow(BaseModel):
     workspace: WorkspaceSpec = Field(default_factory=WorkspaceSpec)
     inputs: dict[str, InputSpec] = Field(default_factory=dict)
     preset_inputs: dict[str, Any] = Field(default_factory=dict)
+    sensors: dict[str, SensorSpec] = Field(default_factory=dict)
     steps: list[WorkflowStep]
 
 
@@ -93,7 +103,7 @@ def _merge_workflow_data(parent: dict[str, Any], child: dict[str, Any]) -> dict[
     for key, value in child.items():
         if key == "extends":
             continue
-        if key in {"inputs", "preset_inputs"} and isinstance(value, dict):
+        if key in {"inputs", "preset_inputs", "sensors"} and isinstance(value, dict):
             base = merged.get(key)
             merged[key] = {**base, **value} if isinstance(base, dict) else dict(value)
             continue
@@ -113,3 +123,6 @@ def _validate_graph(wf: Workflow) -> None:
                 raise WorkflowLoadError(f"step {step.id} depends on unknown step {dep}")
         if step.for_each is not None and not step.as_:
             raise WorkflowLoadError(f"step {step.id}: for_each requires 'as' field")
+        for sensor in step.sensors:
+            if isinstance(sensor, str) and sensor not in wf.sensors:
+                raise WorkflowLoadError(f"step {step.id} references unknown sensor {sensor}")

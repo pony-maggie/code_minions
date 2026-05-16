@@ -1,6 +1,7 @@
 ---
 name: ai-code-review
 description: Structured review of a diff against a ticket's acceptance criteria.
+role: reviewer
 allowed-tools:
   - Read
 required-mcps: []

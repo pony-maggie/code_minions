@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from code_minions.failure_playbook import failure_findings_for_output, failure_hints_for_output
+from code_minions.failure_playbook import (
+    failure_findings_for_output,
+    failure_hints_for_output,
+    failure_matches_for_output,
+)
 
 
 def test_playbook_hints_for_missing_vitest_binary() -> None:
@@ -8,6 +12,21 @@ def test_playbook_hints_for_missing_vitest_binary() -> None:
 
     assert hints == [
         "Node test runner `vitest` is missing at runtime. Ensure npm dependencies are installed before tests run, and keep `vitest` in devDependencies if package.json uses it.",
+    ]
+
+
+def test_playbook_matches_are_structured_for_self_heal() -> None:
+    matches = failure_matches_for_output("sh: vitest: command not found")
+
+    assert matches == [
+        {
+            "name": "vitest-command-not-found",
+            "category": "functional",
+            "severity": "major",
+            "fix_hint": "Node test runner `vitest` is missing at runtime. Ensure npm dependencies are installed before tests run, and keep `vitest` in devDependencies if package.json uses it.",
+            "auto_fixable": False,
+            "deterministic_fix": None,
+        }
     ]
 
 
@@ -192,6 +211,91 @@ def test_playbook_hints_for_jsdom_computed_style_layout_assertions() -> None:
     ]
 
 
+def test_playbook_hints_for_vitest_user_event_fake_timer_timeout() -> None:
+    hints = failure_hints_for_output(
+        "FAIL  tests/movement.test.tsx > Keyboard controls > arrow up changes direction\n"
+        "Error: Test timed out in 5000ms.\n"
+        "If this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\"."
+    )
+
+    assert hints == [
+        "Vitest interaction tests timed out. If the test uses `vi.useFakeTimers()` with `@testing-library/user-event`, create the user with `userEvent.setup({ advanceTimers: vi.advanceTimersByTime })`, or switch that interaction test back to real timers. When asserting timer-driven UI movement, explicitly advance the fake clock inside `act(...)` before checking DOM state.",
+    ]
+
+
+def test_playbook_hints_for_unapplied_react_state_fixture() -> None:
+    hints = failure_hints_for_output(
+        "AssertionError: expected '当前分数: 0' to contain '当前分数: 10'\n"
+        "Expected: \"当前分数: 10\"\n"
+        "Received: \"当前分数: 0\""
+    )
+
+    assert hints == [
+        "A state-transition test expected score changes, but the rendered component stayed at the default state. If the test creates an initial-state fixture, pass it into the component or hook and ensure the implementation consumes that public initializer; otherwise drive enough real timer ticks and interactions to reach the asserted state.",
+    ]
+
+
+def test_playbook_does_not_match_npm_status_and_generic_expected_output_as_coordinates() -> None:
+    hints = failure_hints_for_output(
+        "up to date in 221ms\n"
+        "Expected element to have text content:\n"
+        "  Ready\n"
+        "Received:\n"
+        "  Loading\n"
+        "row header rendered\n"
+        "color: red\n"
+    )
+
+    assert hints == []
+
+
+def test_playbook_hints_for_react_component_import_export_mismatch() -> None:
+    hints = failure_hints_for_output(
+        "Element type is invalid: expected a string (for built-in components) or a class/function "
+        "(for composite components) but got: undefined. You likely forgot to export your component "
+        "from the file it's defined in, or you might have mixed up default and named imports."
+    )
+
+    assert hints == [
+        "A React component rendered as `undefined`, usually because tests or callers default-import a module that only has a named export, or vice versa. Keep the import/export contract consistent; for `src/App.tsx`, exporting both `export function App(...)` and `export default App` is acceptable when existing callers use both forms.",
+    ]
+
+
+def test_playbook_hints_for_hook_test_private_state_mutator() -> None:
+    hints = failure_hints_for_output(
+        "TypeError: result.current._setState is not a function\n"
+        " ❯ tests/useGame.test.ts:42:35\n"
+        "result.current['_setState']({"
+    )
+
+    assert hints == [
+        "React hook tests should not access private or imagined hook internals such as `result.current['_setState']`. Drive state through the public hook API, factor deterministic pure helpers, or intentionally expose a real testable setter/initializer and update the hook contract and tests together.",
+    ]
+
+
+def test_playbook_hints_for_spy_on_non_exported_helper() -> None:
+    hints = failure_hints_for_output(
+        "Error: generateFood does not exist\n"
+        " ❯ tests/App.test.tsx:28:35\n"
+        "const mockGenerateFood = vi.spyOn(gameModule, 'generateFood')"
+    )
+
+    assert hints == [
+        "`vi.spyOn(module, 'name')` can only mock a real exported module property. Do not spy on non-exported implementation helpers; either export the helper deliberately, move it to a pure helper module, or test through the public UI/hook behavior without that spy.",
+    ]
+
+
+def test_playbook_hints_for_testing_library_split_text_query() -> None:
+    hints = failure_hints_for_output(
+        "Unable to find an element with the text: /Score:\\s*0/. "
+        "This could be because the text is broken up by multiple elements."
+    )
+
+    assert hints == [
+        "Testing Library text queries can fail when label and value are split across child elements such as `<span>Score:</span><strong>0</strong>`. Prefer an accessible label/query, a stable test id plus `toHaveTextContent`, or a function matcher that checks `element.textContent`.",
+    ]
+
+
 def test_playbook_hints_for_typescript_state_enum_literal_mismatch() -> None:
     hints = failure_hints_for_output(
         "src/App.tsx(37,22): error TS2345: Argument of type '\"black\"' "
@@ -216,7 +320,7 @@ def test_playbook_hints_for_xcodegen_missing_infoplist_generation() -> None:
 def test_playbook_hints_for_fastapi_dict_response_model() -> None:
     hints = failure_hints_for_output(
         "AttributeError: 'dict' object has no attribute '__module__'\n"
-        "@app.post('/calculate/add', response_model={'result': float})"
+        "@app.post('/items', response_model={'result': float})"
     )
 
     assert hints

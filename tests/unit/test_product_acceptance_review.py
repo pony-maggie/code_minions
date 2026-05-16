@@ -228,6 +228,201 @@ def test_acceptance_review_outputs_acceptance_items_and_verifier_rounds(tmp_git_
     ]
 
 
+def test_acceptance_review_maps_each_criterion_to_test_evidence(tmp_git_repo: Path) -> None:
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "calculator.py").write_text("def add(a, b): return a + b\n")
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "tests" / "test_calculator.py").write_text(
+        "from src.calculator import add\n\n"
+        "def test_adds_numbers():\n"
+        "    assert add(1, 2) == 3\n"
+    )
+    (tmp_git_repo / "pyproject.toml").write_text("[project]\nname = 'calc'\n")
+
+    ctx = type("Ctx", (), {})()
+    ctx.workdir = tmp_git_repo
+    ctx.inputs = {
+        "structured_prd": {"goal": "Build a calculator"},
+        "tasks": [{
+            "id": "T1",
+            "trace_id": "cm_task_1",
+            "title": "Addition",
+            "acceptance_criteria": [
+                "Given two numbers, when the user adds them, then the sum is returned.",
+                "Invalid input is rejected.",
+            ],
+        }],
+        "implement_results": [{
+            "trace_id": "cm_task_1",
+            "files_changed": ["src/calculator.py", "tests/test_calculator.py"],
+            "test_result": {"passed": True, "output": "1 passed"},
+        }],
+    }
+
+    out = entrypoint.run(ctx)
+
+    criteria_items = [item for item in out["acceptance_items"] if item["kind"] == "criterion"]
+    assert [item["id"] for item in criteria_items] == [
+        "criterion:cm_task_1:1",
+        "criterion:cm_task_1:2",
+    ]
+    assert all(item["status"] == "pass" for item in criteria_items)
+    assert criteria_items[0]["evidence"]["test_files"] == ["tests/test_calculator.py"]
+    assert criteria_items[0]["evidence"]["trace_id"] == "cm_task_1"
+
+
+def test_acceptance_review_blocks_criterion_without_test_evidence(tmp_git_repo: Path) -> None:
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "calculator.py").write_text("def add(a, b): return a + b\n")
+
+    ctx = type("Ctx", (), {})()
+    ctx.workdir = tmp_git_repo
+    ctx.inputs = {
+        "structured_prd": {"goal": "Build a calculator"},
+        "tasks": [{
+            "id": "T1",
+            "trace_id": "cm_task_1",
+            "title": "Addition",
+            "acceptance_criteria": ["Addition returns the sum."],
+        }],
+        "implement_results": [{
+            "trace_id": "cm_task_1",
+            "files_changed": ["src/calculator.py"],
+            "test_result": {"passed": True, "output": "1 passed"},
+        }],
+    }
+
+    out = entrypoint.run(ctx)
+
+    criterion_item = next(item for item in out["acceptance_items"] if item["kind"] == "criterion")
+    assert out["accepted"] is False
+    assert criterion_item["status"] == "fail"
+    assert criterion_item["evidence"]["test_files"] == []
+    assert any(issue["code"] == "missing-criterion-evidence" for issue in out["blockers"])
+
+
+def test_acceptance_review_blocks_plan_commitment_drift(tmp_git_repo: Path) -> None:
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "app.py").write_text("print('ok')\n")
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "tests" / "test_app.py").write_text("def test_ok(): assert True\n")
+
+    ctx = type("Ctx", (), {})()
+    ctx.workdir = tmp_git_repo
+    ctx.inputs = {
+        "structured_prd": {"goal": "Build an app"},
+        "tasks": [{"id": "T1", "trace_id": "cm_task_1", "title": "App"}],
+        "implement_results": [{
+            "trace_id": "cm_task_1",
+            "plan_commitment": {
+                "trace_id": "cm_task_1",
+                "task_id": "T1",
+                "will_change_paths": ["src/**", "tests/**"],
+            },
+            "files_changed": ["src/app.py", "tests/test_app.py", "README.md"],
+            "test_result": {"passed": True, "output": "1 passed"},
+        }],
+    }
+
+    out = entrypoint.run(ctx)
+
+    item = next(item for item in out["acceptance_items"] if item["id"] == "commitment:cm_task_1")
+    assert out["accepted"] is False
+    assert item["status"] == "fail"
+    assert item["evidence"]["unexpected_files"] == ["README.md"]
+    assert any(issue["code"] == "plan-commitment-drift" for issue in out["blockers"])
+
+
+def test_browser_acceptance_failures_block_product_acceptance(tmp_git_repo: Path) -> None:
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "App.tsx").write_text("export default function App() { return <button>Start</button> }\n")
+    (tmp_git_repo / "src" / "App.test.tsx").write_text("test('smoke', () => {})\n")
+    (tmp_git_repo / "package.json").write_text('{"scripts":{"test":"vitest run"}}\n')
+    (tmp_git_repo / "index.html").write_text('<div id="root"></div>\n')
+
+    ctx = type("Ctx", (), {})()
+    ctx.workdir = tmp_git_repo
+    ctx.inputs = {
+        "structured_prd": {
+            "goal": "Build a React Vite web app",
+            "delivery_profile": {"stack_id": "react-vite", "gate_strictness": "relaxed"},
+        },
+        "tasks": [{"id": "T1", "title": "React app scaffold"}],
+        "implement_results": [{
+            "files_changed": ["src/App.tsx", "src/App.test.tsx", "package.json", "index.html"],
+            "test_result": {"passed": True, "output": "1 passed"},
+        }],
+        "browser_acceptance_output": {
+            "accepted": False,
+            "supported": True,
+            "stack_id": "react-vite",
+            "artifacts": {"mobile_screenshot": ".devflow/browser-evidence/mobile.png"},
+            "scenarios": [{
+                "id": "browser:control-proximity",
+                "title": "Primary controls are near the play surface",
+                "status": "fail",
+                "message": "Primary controls are visually detached from the main surface.",
+            }],
+        },
+    }
+
+    out = entrypoint.run(ctx)
+
+    assert out["accepted"] is False
+    assert any(issue["code"] == "browser:control-proximity" for issue in out["blockers"])
+    browser_item = next(item for item in out["acceptance_items"] if item["id"] == "browser:control-proximity")
+    assert browser_item["kind"] == "browser"
+    assert browser_item["status"] == "fail"
+    assert browser_item["evidence"]["artifacts"]["mobile_screenshot"].endswith("mobile.png")
+
+
+def test_browser_acceptance_rejected_output_blocks_even_without_failed_scenario_status(tmp_git_repo: Path) -> None:
+    entrypoint = _load_entrypoint()
+    (tmp_git_repo / "src").mkdir()
+    (tmp_git_repo / "src" / "App.tsx").write_text("export default function App() { return <button>Start</button> }\n")
+    (tmp_git_repo / "tests").mkdir()
+    (tmp_git_repo / "tests" / "App.test.tsx").write_text("test('smoke', () => {})\n")
+    (tmp_git_repo / "package.json").write_text('{"scripts":{"test":"vitest run"}}\n')
+    (tmp_git_repo / "index.html").write_text('<div id="root"></div>\n')
+
+    ctx = type("Ctx", (), {})()
+    ctx.workdir = tmp_git_repo
+    ctx.inputs = {
+        "structured_prd": {
+            "goal": "Build a React Vite web app",
+            "delivery_profile": {"stack_id": "react-vite", "gate_strictness": "relaxed"},
+        },
+        "tasks": [{"id": "T1", "title": "React app scaffold"}],
+        "implement_results": [{
+            "files_changed": ["src/App.tsx", "tests/App.test.tsx", "package.json", "index.html"],
+            "test_result": {"passed": True, "output": "1 passed"},
+        }],
+        "browser_acceptance_output": {
+            "accepted": False,
+            "supported": True,
+            "stack_id": "react-vite",
+            "artifacts": {},
+            "scenarios": [{
+                "id": "s4",
+                "name": "Undo and restart",
+                "result": "warn",
+                "notes": "Browser acceptance did not accept the UI.",
+            }],
+        },
+    }
+
+    out = entrypoint.run(ctx)
+
+    assert out["accepted"] is False
+    assert any(issue["code"] == "browser:accepted" for issue in out["blockers"])
+    rejected_item = next(item for item in out["acceptance_items"] if item["id"] == "browser:accepted")
+    assert rejected_item["status"] == "fail"
+
+
 def test_acceptance_review_verifier_round_fails_on_blocking_items(tmp_git_repo: Path) -> None:
     entrypoint = _load_entrypoint()
     (tmp_git_repo / "src").mkdir()

@@ -33,6 +33,11 @@ def test_update_run_status(tmp_path: Path) -> None:
     assert run["status"] == RunStatus.SUCCESS.value
     assert run["ended_at"] is not None
 
+    store.set_run_status(run_id, RunStatus.RUNNING)
+    run = store.get_run(run_id)
+    assert run["status"] == RunStatus.RUNNING.value
+    assert run["ended_at"] is None
+
 
 def test_create_and_update_step(tmp_path: Path) -> None:
     store = RunStore(tmp_path / "runs.db")
@@ -49,6 +54,23 @@ def test_create_and_update_step(tmp_path: Path) -> None:
     steps = store.list_steps(run_id)
     assert steps[0]["status"] == StepStatus.SUCCESS.value
     assert json.loads(steps[0]["output_json"]) == {"ok": True}
+
+
+def test_running_step_update_clears_prior_terminal_fields(tmp_path: Path) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    run_id = store.create_run(workflow="w", inputs={})
+
+    store.upsert_step(run_id, "s1", StepStatus.FAILED, error="old failure")
+    failed = store.list_steps(run_id)[0]
+    assert failed["ended_at"] is not None
+    assert failed["error"] == "old failure"
+
+    store.upsert_step(run_id, "s1", StepStatus.RUNNING)
+
+    running = store.list_steps(run_id)[0]
+    assert running["status"] == StepStatus.RUNNING.value
+    assert running["ended_at"] is None
+    assert running["error"] is None
 
 
 def test_step_detail_is_persisted(tmp_path: Path) -> None:

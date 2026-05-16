@@ -76,6 +76,8 @@ class RunStore:
         values: dict[str, Any] = {"status": status.value}
         if status in TERMINAL_RUN_STATUSES:
             values["ended_at"] = _now()
+        else:
+            values["ended_at"] = None
         with self._engine.begin() as conn:
             conn.execute(update(runs).where(runs.c.id == run_id).values(**values))
 
@@ -111,6 +113,8 @@ class RunStore:
             else:
                 if status in TERMINAL_STEP_STATUSES:
                     values["ended_at"] = _now()
+                else:
+                    values["ended_at"] = None
                 conn.execute(
                     update(steps)
                     .where(steps.c.run_id == run_id, steps.c.step_id == step_id)

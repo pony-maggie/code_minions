@@ -897,6 +897,55 @@ def test_validate_rejects_computed_style_layout_assertions_in_jsdom_tests(tmp_pa
     )
 
 
+def test_validate_rejects_computed_style_variable_truthy_layout_assertions(tmp_path) -> None:
+    (tmp_path / "package.json").write_text('{"scripts":{"test":"vitest run"}}\n')
+    (tmp_path / "vite.config.ts").write_text(
+        "import { defineConfig } from 'vitest/config'\n"
+        "export default defineConfig({ test: { environment: 'jsdom' } })\n"
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "Grid.test.tsx").write_text(
+        "test('fits mobile viewport', () => {\n"
+        "  const grid = container.querySelector('.game-grid')\n"
+        "  expect(grid).toBeInTheDocument()\n"
+        "  const style = window.getComputedStyle(grid!)\n"
+        "  expect(style.width).toBeTruthy()\n"
+        "})\n"
+    )
+    profile = {"stack_id": "react-vite", "gate_strictness": "relaxed"}
+
+    issues = validate_delivery_profile(tmp_path, profile)
+
+    assert any(
+        issue["code"] == "jsdom-computed-style-layout-test" and issue["severity"] == "error"
+        for issue in issues
+    )
+
+
+def test_validate_rejects_computed_style_numeric_layout_assertions(tmp_path) -> None:
+    (tmp_path / "package.json").write_text('{"scripts":{"test":"vitest run"}}\n')
+    (tmp_path / "vite.config.ts").write_text(
+        "import { defineConfig } from 'vitest/config'\n"
+        "export default defineConfig({ test: { environment: 'jsdom' } })\n"
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "Grid.test.tsx").write_text(
+        "test('fits mobile viewport', () => {\n"
+        "  const grid = container.querySelector('.game-grid')\n"
+        "  const style = window.getComputedStyle(grid!)\n"
+        "  expect(parseFloat(style.width)).toBeLessThanOrEqual(375)\n"
+        "})\n"
+    )
+    profile = {"stack_id": "react-vite", "gate_strictness": "relaxed"}
+
+    issues = validate_delivery_profile(tmp_path, profile)
+
+    assert any(
+        issue["code"] == "jsdom-computed-style-layout-test" and issue["severity"] == "error"
+        for issue in issues
+    )
+
+
 def test_validate_accepts_react_vite_test_importing_existing_relative_module(tmp_path) -> None:
     (tmp_path / "package.json").write_text('{"scripts":{"test":"vitest run"}}\n')
     (tmp_path / "vitest.config.ts").write_text(

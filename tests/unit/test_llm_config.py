@@ -77,6 +77,46 @@ llm:
     assert cfg.providers["anthropic"].api_key == ""
 
 
+def test_load_role_provider_mapping(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-test")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-test")
+    f = _write(tmp_path / "devflow.yaml", """
+llm:
+  default: openai
+  roles:
+    implementer: openai
+    reviewer: anthropic
+  providers:
+    openai:
+      model: gpt-5.5
+      api_key_env: OPENAI_API_KEY
+    anthropic:
+      model: claude-sonnet-4-6
+      api_key_env: ANTHROPIC_API_KEY
+""")
+
+    cfg = load_llm_config(f)
+
+    assert cfg.roles == {"implementer": "openai", "reviewer": "anthropic"}
+
+
+def test_role_mapping_to_unknown_provider_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-test")
+    f = _write(tmp_path / "devflow.yaml", """
+llm:
+  default: openai
+  roles:
+    reviewer: anthropic
+  providers:
+    openai:
+      model: gpt-5.5
+      api_key_env: OPENAI_API_KEY
+""")
+
+    with pytest.raises(LLMConfigError, match="llm.roles.reviewer"):
+        load_llm_config(f)
+
+
 def test_default_points_to_missing_provider_fails(tmp_path: Path) -> None:
     f = _write(tmp_path / "devflow.yaml", """
 llm:

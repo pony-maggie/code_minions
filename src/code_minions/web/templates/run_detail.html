@@ -38,6 +38,11 @@
   </div>
 </div>
 
+<div class="bg-white rounded-lg shadow border border-gray-200 p-4 mb-6">
+  <h2 class="text-sm font-semibold text-gray-700 mb-2">Runtime Activity</h2>
+  <div id="runtime-activity" class="text-xs text-gray-600 font-mono">No active runtime event yet.</div>
+</div>
+
 <h2 class="text-lg font-semibold mb-3">Steps</h2>
 
 <div class="bg-white rounded-lg shadow border border-gray-200 overflow-hidden">
@@ -91,6 +96,17 @@
           body.insertAdjacentHTML('beforeend', rowHtml);
         }
       } catch (e) { console.error('sse parse', e); }
+    });
+    events.addEventListener('run.event', (ev) => {
+      try {
+        const payload = JSON.parse(ev.data);
+        const target = document.getElementById('runtime-activity');
+        if (!target) return;
+        const detail = payload.payload || {};
+        const subject = detail.tool || detail.skill || detail.command_key || detail.classification || '';
+        const status = detail.classification || detail.stop_reason || detail.exit_code || '';
+        target.textContent = `${payload.event_type}${subject ? ' · ' + subject : ''}${status ? ' · ' + status : ''}`;
+      } catch (e) { console.error('runtime event parse', e); }
     });
     events.addEventListener('run.finished', () => {
       events.close();

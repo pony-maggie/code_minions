@@ -4,6 +4,7 @@ LiteLLM handles provider routing, retries, and rate limits internally.
 """
 from __future__ import annotations
 
+import copy
 import http.client
 import json
 import os
@@ -52,6 +53,8 @@ TRANSIENT_ERROR_MARKERS = (
     "EOF occurred in violation of protocol",
     "RemoteDisconnected",
     "Remote end closed connection",
+    "ConnectionResetError",
+    "Connection reset by peer",
     "SSL",
 )
 
@@ -119,6 +122,11 @@ def _urlopen_with_retries(
             if attempt == max_attempts or not _is_transient_llm_error(e):
                 raise
             time.sleep(0.5 * attempt)
+        except ConnectionResetError as e:
+            last_exc = e
+            if attempt == max_attempts or not _is_transient_llm_error(e):
+                raise
+            time.sleep(0.5 * attempt)
     if last_exc is not None:
         raise last_exc
     raise RuntimeError("MiniMax request failed before any attempt")
@@ -164,8 +172,8 @@ def _read_urlopen_response_with_wall_clock_retries(
                 seconds=timeout,
                 label="MiniMax request",
             )
-        except RuntimeError as e:
-            if "timed out" not in str(e):
+        except Exception as e:
+            if "timed out" not in str(e) and not _is_transient_llm_error(e):
                 raise
             last_exc = e
             if attempt == max_attempts:
@@ -198,6 +206,49 @@ def _finish_reason(choice: Any, tool_calls: list[ToolCall]) -> str:
     if raw_reason == "length":
         return "max_tokens"
     return raw_reason or "end_turn"
+
+
+def _tool_parameters_for_provider(schema: dict[str, Any], provider: str) -> dict[str, Any]:
+    params = copy.deepcopy(schema)
+    if provider == "gemini":
+        _strip_composition_keywords(params)
+    return params
+
+
+def _strip_composition_keywords(schema: Any) -> None:
+    if not isinstance(schema, dict):
+        return
+    derived_required = _first_composition_required(schema)
+    for key in ("anyOf", "oneOf", "allOf", "any_of", "one_of", "all_of"):
+        schema.pop(key, None)
+    if derived_required:
+        existing = list(schema.get("required") or [])
+        properties = schema.get("properties") or {}
+        for field in derived_required:
+            if field in properties and field not in existing:
+                existing.append(field)
+        if existing:
+            schema["required"] = existing
+    for value in schema.values():
+        if isinstance(value, dict):
+            _strip_composition_keywords(value)
+        elif isinstance(value, list):
+            for item in value:
+                _strip_composition_keywords(item)
+
+
+def _first_composition_required(schema: dict[str, Any]) -> list[str]:
+    for key in ("anyOf", "oneOf", "allOf", "any_of", "one_of", "all_of"):
+        value = schema.get(key)
+        if not isinstance(value, list):
+            continue
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            required = item.get("required")
+            if isinstance(required, list):
+                return [str(field) for field in required]
+    return []
 
 
 class LiteLLMBackend:
@@ -279,7 +330,7 @@ class LiteLLMBackend:
                     "function": {
                         "name": t.name,
                         "description": t.description,
-                        "parameters": t.input_schema,
+                        "parameters": _tool_parameters_for_provider(t.input_schema, self._provider),
                     },
                 }
                 for t in tools
@@ -310,7 +361,7 @@ class LiteLLMBackend:
                     "function": {
                         "name": t.name,
                         "description": t.description,
-                        "parameters": t.input_schema,
+                        "parameters": _tool_parameters_for_provider(t.input_schema, self._provider),
                     },
                 }
                 for t in tools

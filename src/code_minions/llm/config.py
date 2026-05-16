@@ -25,6 +25,7 @@ class ProviderConfig:
 class LLMConfig:
     default: str
     providers: dict[str, ProviderConfig]
+    roles: dict[str, str]
 
 
 def load_llm_config(devflow_yaml_path: Path) -> LLMConfig:
@@ -34,8 +35,11 @@ def load_llm_config(devflow_yaml_path: Path) -> LLMConfig:
     llm = data.get("llm") or {}
     default = llm.get("default")
     providers_raw = llm.get("providers") or {}
+    roles_raw = llm.get("roles") or {}
     if not default or default not in providers_raw:
         raise LLMConfigError("devflow.yaml: llm.default must reference a configured provider")
+    if not isinstance(roles_raw, dict):
+        raise LLMConfigError("devflow.yaml: llm.roles must be a mapping when present")
 
     providers: dict[str, ProviderConfig] = {}
     for name, p in providers_raw.items():
@@ -58,4 +62,18 @@ def load_llm_config(devflow_yaml_path: Path) -> LLMConfig:
             api_base=api_base.strip() if api_base else None,
         )
 
-    return LLMConfig(default=default, providers=providers)
+    roles: dict[str, str] = {}
+    for role, provider_name in roles_raw.items():
+        role_name = str(role).strip()
+        provider_key = str(provider_name).strip()
+        if provider_key not in providers:
+            raise LLMConfigError(
+                f"devflow.yaml: llm.roles.{role_name} references unknown provider {provider_key!r}"
+            )
+        if not providers[provider_key].api_key:
+            raise LLMConfigError(
+                f"env var for llm.roles.{role_name} provider {provider_key!r} is empty or unset"
+            )
+        roles[role_name] = provider_key
+
+    return LLMConfig(default=default, providers=providers, roles=roles)

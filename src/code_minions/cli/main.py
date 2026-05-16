@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 from datetime import UTC, datetime, tzinfo
 from pathlib import Path
 from typing import Any
@@ -120,15 +121,26 @@ def _make_engine(project_root: Path, event_bus: EventBus | None = None) -> Engin
                 api_key=pc.api_key,
                 api_base=pc.api_base,
             )
+            role_llms = {}
+            for role, provider_name in cfg.roles.items():
+                provider = cfg.providers[provider_name]
+                role_llms[role] = LiteLLMBackend(
+                    provider=provider_name,
+                    default_model=provider.model,
+                    api_key=provider.api_key,
+                    api_base=provider.api_base,
+                )
         except Exception as e:
             console.print(f"[yellow]warning:[/yellow] LLM not configured: {e}")
+            role_llms = {}
+    else:
+        role_llms = {}
 
     mcp_json = project_root / ".mcp.json"
     if mcp_json.exists():
         try:
             mcp_cfg = load_mcp_config(mcp_json)
             mcp = MCPClientPool(mcp_cfg)
-            mcp.start()
             import atexit
             atexit.register(mcp.stop)
         except Exception as e:
@@ -140,6 +152,7 @@ def _make_engine(project_root: Path, event_bus: EventBus | None = None) -> Engin
         workflow_search_paths=_workflow_search_paths(project_root),
         runtime=SkillRuntime(),
         llm_backend=llm,
+        role_llm_backends=role_llms,
         mcp_pool=mcp,
         event_bus=event_bus,
     )
@@ -398,13 +411,22 @@ def web(
     host: str = typer.Option("127.0.0.1", "--host", help="Bind host. Keep on 127.0.0.1 for security (no auth)."),  # noqa: B008
     port: int = typer.Option(8080, "--port"),  # noqa: B008
     reload: bool = typer.Option(False, "--reload", help="Auto-reload on code changes (dev)."),  # noqa: B008
+    enable_remote: bool = typer.Option(False, "--enable-remote", help="Allow non-loopback binds; requires --auth-token."),  # noqa: B008
+    auth_token: str | None = typer.Option(None, "--auth-token", help="Bearer token required for web dashboard access."),  # noqa: B008
 ) -> None:
     """Start the local dashboard (FastAPI + HTMX)."""
-    if host != "127.0.0.1":
+    loopback_hosts = {"127.0.0.1", "localhost", "::1"}
+    if host not in loopback_hosts and not enable_remote:
         console.print(
-            f"[red]WARNING:[/red] binding to {host}. This dashboard has NO authentication; "
-            "do not expose it to untrusted networks."
+            f"[red]error:[/red] binding to {host} requires --enable-remote "
+            "and --auth-token."
         )
+        raise typer.Exit(code=1)
+    if enable_remote and not auth_token:
+        console.print("[red]error:[/red] --enable-remote requires --auth-token.")
+        raise typer.Exit(code=1)
+    if auth_token:
+        os.environ["CODE_MINIONS_WEB_AUTH_TOKEN"] = auth_token
     import uvicorn
     uvicorn.run(
         "code_minions.web.app:app",

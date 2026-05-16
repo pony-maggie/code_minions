@@ -1,0 +1,858 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>code_minions Agent Runtime Architecture - 2026-05-15</title>
+  <style>
+    :root {
+      --ink: #1b1f23;
+      --muted: #667085;
+      --line: #d0d7de;
+      --soft: #f6f8fa;
+      --panel: #ffffff;
+      --navy: #23395d;
+      --teal: #0f766e;
+      --green: #2f855a;
+      --orange: #b45309;
+      --red: #b42318;
+      --violet: #5b4b8a;
+      --blue-soft: #eaf2ff;
+      --teal-soft: #e6fffb;
+      --green-soft: #ecfdf3;
+      --orange-soft: #fff7ed;
+      --red-soft: #fef3f2;
+      --violet-soft: #f4f3ff;
+      --shadow: 0 14px 34px rgba(16, 24, 40, 0.08);
+      --radius: 8px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: #f3f4f6;
+      font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    main {
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 32px 24px 56px;
+    }
+
+    header {
+      margin-bottom: 24px;
+      padding: 28px 32px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    h1, h2, h3 {
+      margin: 0;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      font-size: 32px;
+      line-height: 1.18;
+      color: #111827;
+    }
+
+    h2 {
+      font-size: 22px;
+      line-height: 1.25;
+      margin-bottom: 12px;
+      color: #111827;
+    }
+
+    h3 {
+      font-size: 16px;
+      margin-bottom: 8px;
+    }
+
+    p {
+      margin: 0;
+    }
+
+    code {
+      padding: 1px 5px;
+      border: 1px solid #d8dee4;
+      border-radius: 5px;
+      background: #f6f8fa;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92em;
+    }
+
+    .lead {
+      margin-top: 14px;
+      max-width: 1020px;
+      color: #344054;
+      font-size: 17px;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 18px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 4px 9px;
+      border: 1px solid #cbd5e1;
+      border-radius: 999px;
+      background: #f8fafc;
+      color: #344054;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    section {
+      margin-top: 24px;
+      padding: 24px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .section-note {
+      max-width: 1040px;
+      margin-bottom: 18px;
+      color: var(--muted);
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 14px 0 0;
+    }
+
+    .legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: #475467;
+      font-size: 13px;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+      background: var(--navy);
+    }
+
+    .dot.teal { background: var(--teal); }
+    .dot.green { background: var(--green); }
+    .dot.orange { background: var(--orange); }
+    .dot.red { background: var(--red); }
+    .dot.violet { background: var(--violet); }
+
+    .grid {
+      display: grid;
+      gap: 14px;
+    }
+
+    .grid.cols-2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .grid.cols-3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .grid.cols-4 {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .box {
+      position: relative;
+      min-height: 84px;
+      padding: 14px 14px 13px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+    }
+
+    .box strong {
+      display: block;
+      margin-bottom: 6px;
+      color: #101828;
+      font-size: 15px;
+    }
+
+    .box p, .box li {
+      color: #475467;
+      font-size: 13px;
+    }
+
+    .box ul {
+      margin: 8px 0 0;
+      padding-left: 18px;
+    }
+
+    .blue { border-color: #9ec5fe; background: var(--blue-soft); }
+    .teal { border-color: #99f6e4; background: var(--teal-soft); }
+    .green { border-color: #abefc6; background: var(--green-soft); }
+    .orange { border-color: #fed7aa; background: var(--orange-soft); }
+    .red { border-color: #fecdca; background: var(--red-soft); }
+    .violet { border-color: #d9d6fe; background: var(--violet-soft); }
+    .gray { background: #f8fafc; }
+
+    .layer-stack {
+      display: grid;
+      gap: 12px;
+    }
+
+    .layer {
+      display: grid;
+      grid-template-columns: 170px 1fr;
+      gap: 14px;
+      align-items: stretch;
+    }
+
+    .layer-label {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 88px;
+      padding: 12px;
+      color: #fff;
+      border-radius: var(--radius);
+      background: var(--navy);
+      text-align: center;
+      font-weight: 700;
+    }
+
+    .layer:nth-child(2) .layer-label { background: var(--teal); }
+    .layer:nth-child(3) .layer-label { background: var(--violet); }
+    .layer:nth-child(4) .layer-label { background: var(--orange); }
+    .layer:nth-child(5) .layer-label { background: var(--green); }
+
+    .layer-cells {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .arrow-row {
+      height: 24px;
+      display: flex;
+      justify-content: center;
+      color: #98a2b3;
+      font-weight: 700;
+    }
+
+    .sequence {
+      position: relative;
+      overflow-x: auto;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fbfcfe;
+    }
+
+    .sequence-grid {
+      min-width: 1080px;
+      display: grid;
+      grid-template-columns: 180px repeat(7, 1fr);
+      gap: 10px;
+      align-items: stretch;
+    }
+
+    .actor {
+      min-height: 54px;
+      padding: 10px;
+      border-radius: var(--radius);
+      background: #1f2937;
+      color: #fff;
+      text-align: center;
+      font-weight: 700;
+      font-size: 13px;
+    }
+
+    .step {
+      min-height: 74px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      color: #344054;
+      font-size: 13px;
+    }
+
+    .step .num {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      margin-right: 4px;
+      border-radius: 50%;
+      background: #1f2937;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .lane {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: 180px repeat(7, 1fr);
+      gap: 10px;
+      align-items: stretch;
+    }
+
+    .lane-title {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 68px;
+      border-radius: var(--radius);
+      background: #eef2f7;
+      color: #344054;
+      font-weight: 700;
+      text-align: center;
+      font-size: 13px;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 10px;
+      align-items: stretch;
+    }
+
+    .flow .box {
+      min-height: 124px;
+    }
+
+    .connector {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #98a2b3;
+      font-weight: 800;
+      font-size: 22px;
+    }
+
+    .matrix {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      font-size: 13px;
+    }
+
+    .matrix th,
+    .matrix td {
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+      text-align: left;
+    }
+
+    .matrix th {
+      background: #f2f4f7;
+      color: #344054;
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+
+    .matrix tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .matrix td:first-child {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: #101828;
+      white-space: nowrap;
+    }
+
+    .callout {
+      padding: 14px 16px;
+      border-left: 4px solid var(--teal);
+      background: #f0fdfa;
+      color: #344054;
+      border-radius: 0 var(--radius) var(--radius) 0;
+    }
+
+    .svg-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+    }
+
+    svg text {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0;
+    }
+
+    .source-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .source-list .box {
+      min-height: auto;
+    }
+
+    @media (max-width: 980px) {
+      main {
+        padding: 18px 12px 40px;
+      }
+
+      header,
+      section {
+        padding: 18px;
+      }
+
+      .grid.cols-2,
+      .grid.cols-3,
+      .grid.cols-4,
+      .layer,
+      .layer-cells,
+      .flow,
+      .source-list {
+        grid-template-columns: 1fr;
+      }
+
+      .layer-label {
+        min-height: 52px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>code_minions Agent Runtime 架构图</h1>
+      <p class="lead">
+        这份图解释 2026-05-15 agent runtime hardening 后的实现机制：engine 仍然自己掌控 workflow、agent loop、tool loop、事件记录、上下文压缩和失败分类；LLM provider 被压缩在 <code>LLMBackend.chat</code> 适配边界之后，所以上层 agent runtime 不绑定 OpenAI、Anthropic、Gemini、MiniMax 或其他具体厂商。
+      </p>
+      <div class="meta">
+        <span class="pill">source: <code>src/code_minions/engine/agent_loop.py</code></span>
+        <span class="pill">source: <code>src/code_minions/engine/llm_transport.py</code></span>
+        <span class="pill">source: <code>src/code_minions/engine/tool_runtime.py</code></span>
+        <span class="pill">source: <code>src/code_minions/llm/litellm_backend.py</code></span>
+        <span class="pill">updated: 2026-05-15</span>
+      </div>
+    </header>
+
+    <section>
+      <h2>1. 总览: 原生 Runtime 控制面</h2>
+      <p class="section-note">
+        code_minions 没有把 agent orchestration 交给某个 provider SDK。CLI/Web 进入 Engine 后，workflow DAG、skill runtime、agent loop、tool execution、quality gates、run events 和 failure classification 都在本地 Python runtime 中执行。LLM 只是一个可替换的 <code>chat(messages, tools, ...)</code> 能力。
+      </p>
+
+      <div class="layer-stack">
+        <div class="layer">
+          <div class="layer-label">Entry Points</div>
+          <div class="layer-cells">
+            <div class="box blue"><strong>CLI</strong><p><code>code-minions run</code>, <code>resume</code>, <code>status</code>, <code>list-runs</code> 直接驱动 Engine。</p></div>
+            <div class="box blue"><strong>Web Dashboard</strong><p>FastAPI + HTMX 创建 run，SSE 订阅 <code>/runs/{id}/events</code>。</p></div>
+            <div class="box blue"><strong>Project Inputs</strong><p>PRD、<code>devflow.yaml</code>、用户 <code>AGENTS.md</code>、hooks、MCP 配置。</p></div>
+            <div class="box blue"><strong>Resume Inputs</strong><p>从 <code>.devflow/runs.db</code> 恢复成功 step 输出和 workspace。</p></div>
+          </div>
+        </div>
+        <div class="arrow-row">↓</div>
+        <div class="layer">
+          <div class="layer-label">Workflow Orchestration</div>
+          <div class="layer-cells">
+            <div class="box teal"><strong>Engine</strong><p>创建 run、workspace/worktree、EventBus、RunStore recorder。</p></div>
+            <div class="box teal"><strong>DAGRunner</strong><p>解析依赖、<code>for_each</code>、<code>when</code>、resume skip、step sensors。</p></div>
+            <div class="box teal"><strong>SkillRuntime</strong><p>分流 deterministic entrypoint 与 LLM agent path。</p></div>
+            <div class="box teal"><strong>ContextAssembler</strong><p>把技能说明、输入摘要、项目约定和 <code>AGENTS.md</code> 装入系统 prompt。</p></div>
+          </div>
+        </div>
+        <div class="arrow-row">↓</div>
+        <div class="layer">
+          <div class="layer-label">Shared Agent Runtime</div>
+          <div class="layer-cells">
+            <div class="box violet"><strong>AgentLoop</strong><p><code>messages → model → tool calls → tool results → final parser</code>。</p></div>
+            <div class="box violet"><strong>LLMCallController</strong><p>统一 timeout metadata、retry budget、provider error classification。</p></div>
+            <div class="box violet"><strong>ToolRuntime</strong><p>只并发显式 read-only/concurrency-safe 工具，写工具串行。</p></div>
+            <div class="box violet"><strong>ContextCompaction</strong><p>超过预算时保留 system + 最近 tail，插入 compacted summary。</p></div>
+          </div>
+        </div>
+        <div class="arrow-row">↓</div>
+        <div class="layer">
+          <div class="layer-label">Provider + Tool Adapters</div>
+          <div class="layer-cells">
+            <div class="box orange"><strong>LLMBackend.chat</strong><p>AgentLoop 唯一依赖的模型接口，返回内部 <code>Response</code>。</p></div>
+            <div class="box orange"><strong>LiteLLMBackend</strong><p>把内部 <code>Message/Tool</code> 转成 OpenAI-style SDK payload。</p></div>
+            <div class="box orange"><strong>MiniMax HTTP Path</strong><p>MiniMax 走直接 HTTP + wall-clock timeout + response normalization。</p></div>
+            <div class="box orange"><strong>ToolExecutor</strong><p>本地 Read/Write/Edit/Delete/Bash 和 MCP tool 的统一执行边界。</p></div>
+          </div>
+        </div>
+        <div class="arrow-row">↓</div>
+        <div class="layer">
+          <div class="layer-label">Durable State + Outputs</div>
+          <div class="layer-cells">
+            <div class="box green"><strong>RunStore</strong><p><code>runs</code>, <code>steps</code>, <code>run_events</code> 是 durable truth。</p></div>
+            <div class="box green"><strong>Web Activity</strong><p>Run detail 页面显示最新 LLM/tool/command/failure event。</p></div>
+            <div class="box green"><strong>Reports</strong><p>compile-report 输出 evidence、failure classification、acceptance artifacts。</p></div>
+            <div class="box green"><strong>Git Delivery</strong><p>worktree 分支、commit、GitHub PR/GitLab MR 或人工 merge handoff。</p></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>2. AgentLoop 时序: 模型调用不等于 Agent 控制权</h2>
+      <p class="section-note">
+        AgentLoop 是本地状态机。模型只负责下一条 assistant message 或 tool call；是否继续、能否调用工具、是否超过轮次、如何解析最终 JSON、如何重试 parser error，都由 code_minions runtime 决定。
+      </p>
+
+      <div class="sequence">
+        <div class="sequence-grid">
+          <div class="actor">Caller</div>
+          <div class="actor">AgentLoop</div>
+          <div class="actor">Context Budget</div>
+          <div class="actor">Observability</div>
+          <div class="actor">Transport</div>
+          <div class="actor">LLMBackend</div>
+          <div class="actor">ToolRuntime</div>
+          <div class="actor">Final Parser</div>
+
+          <div class="lane">
+            <div class="lane-title">普通 LLM Skill</div>
+            <div class="step"><span class="num">1</span><code>SkillRuntime</code> 构造 system/user messages、local tools、MCP tool mapping。</div>
+            <div class="step"><span class="num">2</span>检查 <code>CODE_MINIONS_CONTEXT_BUDGET_CHARS</code>，必要时 compact。</div>
+            <div class="step"><span class="num">3</span>写入 <code>llm_call_started</code>，仅记录大小、provider、model、attempt，不保存完整 prompt。</div>
+            <div class="step"><span class="num">4</span><code>LLMCallController.call</code> 包裹 <code>llm.chat</code>。</div>
+            <div class="step"><span class="num">5</span><code>LiteLLMBackend</code> 或 MiniMax HTTP 返回内部 <code>Response</code>。</div>
+            <div class="step"><span class="num">6</span>若有 tool calls，按 metadata 选择并发或串行，结果作为 <code>tool</code> message 追加。</div>
+            <div class="step"><span class="num">7</span>无 tool calls 时解析最终 JSON；失败则追加 parser retry prompt 或返回结构化 failure。</div>
+          </div>
+
+          <div class="lane">
+            <div class="lane-title">implement-with-tdd</div>
+            <div class="step"><span class="num">1</span>构造 implementation context、expected paths、delivery profile guidance。</div>
+            <div class="step"><span class="num">2</span>复用同一个 <code>AgentLoop</code>，role 固定为 <code>implementer</code>。</div>
+            <div class="step"><span class="num">3</span>Read 有预算，写入工具成功后禁用后续工具并要求模型返回小 JSON。</div>
+            <div class="step"><span class="num">4</span>scope drift 在 tool handler 里拦截，不靠模型自觉。</div>
+            <div class="step"><span class="num">5</span>测试、delivery gates 和 review 失败会再次调用同一 AgentLoop 自愈。</div>
+            <div class="step"><span class="num">6</span>如果模型没报 JSON，但 worktree 有改动，可从 git/filesystem 恢复 <code>files_written</code>。</div>
+            <div class="step"><span class="num">7</span>仍失败则抛出 runtime error，Engine 按 run_events 分类。</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>3. Provider 无关边界</h2>
+      <p class="section-note">
+        上层 runtime 使用 code_minions 自己的内部类型：<code>Message</code>、<code>Tool</code>、<code>ToolCall</code>、<code>Response</code>。Provider-specific 的差异只允许出现在 adapter 层：模型名拼接、tool schema normalization、temperature/reasoning defaults、MiniMax HTTP response 解析等。
+      </p>
+
+      <div class="svg-wrap">
+        <svg width="1320" height="520" viewBox="0 0 1320 520" role="img" aria-label="Provider agnostic adapter boundary diagram">
+          <defs>
+            <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L9,3 z" fill="#667085"></path>
+            </marker>
+            <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+              <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#101828" flood-opacity="0.12"></feDropShadow>
+            </filter>
+          </defs>
+
+          <rect x="30" y="40" width="300" height="420" rx="8" fill="#eaf2ff" stroke="#9ec5fe" filter="url(#shadow)"></rect>
+          <text x="180" y="75" text-anchor="middle" font-size="18" font-weight="700" fill="#1f2937">Provider-neutral Runtime</text>
+          <text x="56" y="112" font-size="14" fill="#344054">AgentLoop</text>
+          <text x="56" y="142" font-size="14" fill="#344054">LLMCallController</text>
+          <text x="56" y="172" font-size="14" fill="#344054">ToolRuntime</text>
+          <text x="56" y="202" font-size="14" fill="#344054">Final parser / retry prompt</text>
+          <text x="56" y="232" font-size="14" fill="#344054">Run events / failure classification</text>
+          <rect x="56" y="270" width="246" height="96" rx="8" fill="#ffffff" stroke="#d0d7de"></rect>
+          <text x="179" y="302" text-anchor="middle" font-size="14" font-weight="700" fill="#101828">Internal Contract</text>
+          <text x="179" y="330" text-anchor="middle" font-size="13" fill="#475467">messages + tools in</text>
+          <text x="179" y="354" text-anchor="middle" font-size="13" fill="#475467">Response(message, usage, model) out</text>
+
+          <line x1="330" y1="250" x2="450" y2="250" stroke="#667085" stroke-width="2" marker-end="url(#arrow)"></line>
+          <text x="390" y="235" text-anchor="middle" font-size="12" fill="#667085">llm.chat()</text>
+
+          <rect x="450" y="40" width="300" height="420" rx="8" fill="#fff7ed" stroke="#fed7aa" filter="url(#shadow)"></rect>
+          <text x="600" y="75" text-anchor="middle" font-size="18" font-weight="700" fill="#1f2937">LLMBackend Adapter</text>
+          <text x="476" y="112" font-size="14" fill="#344054">LiteLLMBackend.chat</text>
+          <text x="476" y="142" font-size="14" fill="#344054">_to_sdk_message</text>
+          <text x="476" y="172" font-size="14" fill="#344054">_tool_parameters_for_provider</text>
+          <text x="476" y="202" font-size="14" fill="#344054">_from_sdk_response</text>
+          <text x="476" y="232" font-size="14" fill="#344054">_from_minimax_response</text>
+          <rect x="476" y="270" width="246" height="96" rx="8" fill="#ffffff" stroke="#d0d7de"></rect>
+          <text x="599" y="302" text-anchor="middle" font-size="14" font-weight="700" fill="#101828">Provider Mechanics</text>
+          <text x="599" y="330" text-anchor="middle" font-size="13" fill="#475467">payload shape, schema stripping</text>
+          <text x="599" y="354" text-anchor="middle" font-size="13" fill="#475467">HTTP/SDK timeout and response parse</text>
+
+          <line x1="750" y1="250" x2="870" y2="250" stroke="#667085" stroke-width="2" marker-end="url(#arrow)"></line>
+          <text x="810" y="235" text-anchor="middle" font-size="12" fill="#667085">provider request</text>
+
+          <rect x="870" y="40" width="410" height="420" rx="8" fill="#f4f3ff" stroke="#d9d6fe" filter="url(#shadow)"></rect>
+          <text x="1075" y="75" text-anchor="middle" font-size="18" font-weight="700" fill="#1f2937">Provider Surface</text>
+          <rect x="900" y="110" width="150" height="70" rx="8" fill="#ffffff" stroke="#d0d7de"></rect>
+          <text x="975" y="140" text-anchor="middle" font-size="14" font-weight="700" fill="#101828">OpenAI</text>
+          <text x="975" y="162" text-anchor="middle" font-size="12" fill="#475467">gpt-5 defaults</text>
+
+          <rect x="1100" y="110" width="150" height="70" rx="8" fill="#ffffff" stroke="#d0d7de"></rect>
+          <text x="1175" y="140" text-anchor="middle" font-size="14" font-weight="700" fill="#101828">Anthropic</text>
+          <text x="1175" y="162" text-anchor="middle" font-size="12" fill="#475467">LiteLLM route</text>
+
+          <rect x="900" y="220" width="150" height="70" rx="8" fill="#ffffff" stroke="#d0d7de"></rect>
+          <text x="975" y="250" text-anchor="middle" font-size="14" font-weight="700" fill="#101828">Gemini</text>
+          <text x="975" y="272" text-anchor="middle" font-size="12" fill="#475467">strip anyOf/oneOf</text>
+
+          <rect x="1100" y="220" width="150" height="70" rx="8" fill="#ffffff" stroke="#d0d7de"></rect>
+          <text x="1175" y="250" text-anchor="middle" font-size="14" font-weight="700" fill="#101828">MiniMax</text>
+          <text x="1175" y="272" text-anchor="middle" font-size="12" fill="#475467">direct HTTP path</text>
+
+          <rect x="1000" y="330" width="150" height="70" rx="8" fill="#ffffff" stroke="#d0d7de"></rect>
+          <text x="1075" y="360" text-anchor="middle" font-size="14" font-weight="700" fill="#101828">Ollama / others</text>
+          <text x="1075" y="382" text-anchor="middle" font-size="12" fill="#475467">via LiteLLM prefix</text>
+
+          <text x="660" y="495" text-anchor="middle" font-size="13" fill="#667085">
+            上层 runtime 不读取 provider response 原始形状；adapter 归一化后只返回内部 Response。
+          </text>
+        </svg>
+      </div>
+    </section>
+
+    <section>
+      <h2>4. Durable Observability: run_events 是可审计运行日志</h2>
+      <p class="section-note">
+        关键变化是“先记录开始，再进行长操作”。所以当 run 卡在 provider 请求、tool call 或测试命令里，Web UI 和数据库里会有 in-flight 证据，而不是只能看到 step 仍然 running。
+      </p>
+
+      <div class="flow">
+        <div class="box blue"><strong>Start</strong><p><code>llm_call_started</code>, <code>tool_call_started</code>, <code>command_started</code> 在长操作前写入。</p></div>
+        <div class="connector">→</div>
+        <div class="box teal"><strong>Execute</strong><p>Provider call、local/MCP tool、delivery gate、test/build command 执行。</p></div>
+        <div class="connector">→</div>
+        <div class="box green"><strong>Finish</strong><p>成功写入 duration、usage、stop_reason、tool names、result size。</p></div>
+        <div class="box red"><strong>Fail</strong><p>失败写入 classification、error、retryable、exit_code 或 compact evidence。</p></div>
+      </div>
+
+      <div class="grid cols-3" style="margin-top:14px">
+        <div class="box gray">
+          <strong>Redaction</strong>
+          <p><code>redacted_event_payload</code> 在落库前调用 <code>redact_secrets</code>，避免 API key 或 secret 被持久化。</p>
+        </div>
+        <div class="box gray">
+          <strong>Compact Payloads</strong>
+          <p>LLM event 记录 <code>messages_count</code>、<code>prompt_chars</code>、<code>tools_count</code>，不保存完整 prompt。</p>
+        </div>
+        <div class="box gray">
+          <strong>SSE Replay</strong>
+          <p>Web 订阅会先 replay 最近 100 条 <code>run_events</code>，晚打开页面也能看到当前 runtime activity。</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>5. Tool Runtime: 让工具调用也进入同一个控制面</h2>
+      <p class="section-note">
+        模型只能“请求”工具；工具是否允许、能否并发、输出如何截断、路径/命令是否越权，全部在 runtime 里处理。
+      </p>
+
+      <div class="grid cols-4">
+        <div class="box green">
+          <strong>Read-only Tools</strong>
+          <p><code>Read</code> 和 <code>Glob</code> 标记为 read-only + concurrency-safe，可以在同一轮并发执行。</p>
+        </div>
+        <div class="box orange">
+          <strong>Mutating Tools</strong>
+          <p><code>Write</code>、<code>Edit</code>、<code>Delete</code>、<code>Bash</code> 默认串行，避免并发写文件。</p>
+        </div>
+        <div class="box red">
+          <strong>Capability Gates</strong>
+          <p><code>tool-capabilities</code> 约束 Bash allowlist 和 path allowlist，违规前置拒绝。</p>
+        </div>
+        <div class="box violet">
+          <strong>Result Budget</strong>
+          <p>长工具输出保留 head + tail，中间插入 omitted marker，避免 context 被日志淹没。</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>6. implement-with-tdd: 同一个 AgentLoop 上的工程闭环</h2>
+      <p class="section-note">
+        <code>implement-with-tdd</code> 不是单独一套 provider loop。它复用 AgentLoop，但在 tool handler、final parser、after_tool_round 和外部 gate/review loop 上叠加工程约束。
+      </p>
+
+      <div class="svg-wrap">
+        <svg width="1320" height="600" viewBox="0 0 1320 600" role="img" aria-label="implement with tdd self-heal loop">
+          <defs>
+            <marker id="arrow2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L9,3 z" fill="#667085"></path>
+            </marker>
+          </defs>
+          <rect x="40" y="50" width="180" height="92" rx="8" fill="#eaf2ff" stroke="#9ec5fe"></rect>
+          <text x="130" y="84" text-anchor="middle" font-size="15" font-weight="700" fill="#101828">Ticket + Context</text>
+          <text x="130" y="112" text-anchor="middle" font-size="12" fill="#475467">delivery profile</text>
+          <text x="130" y="132" text-anchor="middle" font-size="12" fill="#475467">expected_paths</text>
+
+          <line x1="220" y1="96" x2="300" y2="96" stroke="#667085" stroke-width="2" marker-end="url(#arrow2)"></line>
+          <rect x="300" y="50" width="210" height="92" rx="8" fill="#f4f3ff" stroke="#d9d6fe"></rect>
+          <text x="405" y="84" text-anchor="middle" font-size="15" font-weight="700" fill="#101828">AgentLoop</text>
+          <text x="405" y="112" text-anchor="middle" font-size="12" fill="#475467">Read/Glob/Write/Edit/Delete</text>
+          <text x="405" y="132" text-anchor="middle" font-size="12" fill="#475467">parser recovers files_written</text>
+
+          <line x1="510" y1="96" x2="590" y2="96" stroke="#667085" stroke-width="2" marker-end="url(#arrow2)"></line>
+          <rect x="590" y="50" width="190" height="92" rx="8" fill="#ecfdf3" stroke="#abefc6"></rect>
+          <text x="685" y="84" text-anchor="middle" font-size="15" font-weight="700" fill="#101828">Write Files</text>
+          <text x="685" y="112" text-anchor="middle" font-size="12" fill="#475467">filesystem is truth</text>
+          <text x="685" y="132" text-anchor="middle" font-size="12" fill="#475467">scope drift checked</text>
+
+          <line x1="780" y1="96" x2="860" y2="96" stroke="#667085" stroke-width="2" marker-end="url(#arrow2)"></line>
+          <rect x="860" y="50" width="190" height="92" rx="8" fill="#fff7ed" stroke="#fed7aa"></rect>
+          <text x="955" y="84" text-anchor="middle" font-size="15" font-weight="700" fill="#101828">Delivery Gates</text>
+          <text x="955" y="112" text-anchor="middle" font-size="12" fill="#475467">stack profile</text>
+          <text x="955" y="132" text-anchor="middle" font-size="12" fill="#475467">runtime findings</text>
+
+          <line x1="1050" y1="96" x2="1130" y2="96" stroke="#667085" stroke-width="2" marker-end="url(#arrow2)"></line>
+          <rect x="1130" y="50" width="150" height="92" rx="8" fill="#ecfdf3" stroke="#abefc6"></rect>
+          <text x="1205" y="84" text-anchor="middle" font-size="15" font-weight="700" fill="#101828">Tests Pass?</text>
+          <text x="1205" y="112" text-anchor="middle" font-size="12" fill="#475467">pytest/npm</text>
+          <text x="1205" y="132" text-anchor="middle" font-size="12" fill="#475467">events emitted</text>
+
+          <line x1="1205" y1="142" x2="1205" y2="230" stroke="#667085" stroke-width="2" marker-end="url(#arrow2)"></line>
+          <rect x="1130" y="230" width="150" height="92" rx="8" fill="#f4f3ff" stroke="#d9d6fe"></rect>
+          <text x="1205" y="264" text-anchor="middle" font-size="15" font-weight="700" fill="#101828">AI Review</text>
+          <text x="1205" y="292" text-anchor="middle" font-size="12" fill="#475467">blocker/major?</text>
+          <text x="1205" y="312" text-anchor="middle" font-size="12" fill="#475467">review evidence</text>
+
+          <path d="M1130 276 C940 390, 560 390, 405 150" fill="none" stroke="#b45309" stroke-width="2.5" marker-end="url(#arrow2)"></path>
+          <text x="730" y="374" text-anchor="middle" font-size="13" fill="#b45309">failed gate/test/review → self-heal prompt → same AgentLoop</text>
+
+          <line x1="1205" y1="322" x2="1205" y2="420" stroke="#667085" stroke-width="2" marker-end="url(#arrow2)"></line>
+          <rect x="1080" y="420" width="250" height="104" rx="8" fill="#ecfdf3" stroke="#abefc6"></rect>
+          <text x="1205" y="456" text-anchor="middle" font-size="15" font-weight="700" fill="#101828">Task Output</text>
+          <text x="1205" y="484" text-anchor="middle" font-size="12" fill="#475467">files_changed, test_result</text>
+          <text x="1205" y="504" text-anchor="middle" font-size="12" fill="#475467">gate_findings, trace metadata</text>
+
+          <rect x="40" y="230" width="300" height="144" rx="8" fill="#fef3f2" stroke="#fecdca"></rect>
+          <text x="190" y="264" text-anchor="middle" font-size="15" font-weight="700" fill="#101828">Hard Stops</text>
+          <text x="70" y="296" font-size="12" fill="#475467">- max_tool_rounds / max_iterations</text>
+          <text x="70" y="320" font-size="12" fill="#475467">- Read budget exhausted</text>
+          <text x="70" y="344" font-size="12" fill="#475467">- writes outside expected_paths</text>
+          <text x="70" y="368" font-size="12" fill="#475467">- missing tests / review blockers / needs_human</text>
+
+          <rect x="380" y="430" width="420" height="104" rx="8" fill="#f8fafc" stroke="#d0d7de"></rect>
+          <text x="590" y="466" text-anchor="middle" font-size="15" font-weight="700" fill="#101828">Why this matters</text>
+          <text x="590" y="494" text-anchor="middle" font-size="12" fill="#475467">模型不拥有工作流状态，不直接决定通过/失败。</text>
+          <text x="590" y="514" text-anchor="middle" font-size="12" fill="#475467">runtime 用文件系统、测试、gates、review 和 run_events 做裁决。</text>
+        </svg>
+      </div>
+    </section>
+
+    <section>
+      <h2>7. 失败分类: Provider 事故和实现失败分开</h2>
+      <p class="section-note">
+        Engine 捕获异常后读取 run_events，调用 <code>classify_failure</code>。这让 “provider timeout/503/rate limit” 不再被误判成 generated app 的实现失败。
+      </p>
+
+      <table class="matrix">
+        <thead>
+          <tr>
+            <th>Classification</th>
+            <th>典型来源</th>
+            <th>下一步</th>
+            <th>关键事件或文本</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>provider_unavailable</td>
+            <td>LLM timeout、503、rate limit、connection reset、provider overload。</td>
+            <td>稍后重试，或切换 <code>llm.roles</code> 中对应角色 provider/model。</td>
+            <td><code>llm_call_failed</code> + <code>provider_timeout</code>, <code>provider_unavailable</code>, <code>provider_rate_limited</code></td>
+          </tr>
+          <tr>
+            <td>workflow_systemic</td>
+            <td>provider schema/bad request，或工作流 payload 被 provider 拒绝。</td>
+            <td>修 code_minions 的 provider payload/schema handling 后再跑。</td>
+            <td><code>schema_incompatible</code>, <code>bad_request</code></td>
+          </tr>
+          <tr>
+            <td>implementation_fixable</td>
+            <td>测试失败、构建失败、AI review blockers、runtime gate findings。</td>
+            <td>继续 implement/self-heal，把失败证据喂回实现循环。</td>
+            <td><code>pytest</code>, <code>npm</code>, <code>review blocker</code>, <code>gate.findings</code></td>
+          </tr>
+          <tr>
+            <td>acceptance_failed</td>
+            <td>浏览器验收或产品验收失败。</td>
+            <td>检查 screenshot/e2e artifacts 和 acceptance_items，修产品行为或 UI。</td>
+            <td><code>browser_acceptance</code>, <code>acceptance_failed</code>, <code>accepted: false</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>8. 关键源码映射</h2>
+      <p class="section-note">
+        下面是这张图对应的核心实现点。读这些文件可以从入口一路追到 provider adapter 和 Web 展示。
+      </p>
+
+      <div class="source-list">
+        <div class="box">
+          <strong><code>engine/agent_loop.py</code></strong>
+          <p>共享 agent loop：context compaction、LLM start/finish/fail events、tool rounds、max limits、final parser retry。</p>
+        </div>
+        <div class="box">
+          <strong><code>engine/llm_transport.py</code></strong>
+          <p>provider 异常分类：timeout、503/overload、rate limit、auth、schema incompatible、bad request、connection error。</p>
+        </div>
+        <div class="box">
+          <strong><code>engine/tool_runtime.py</code></strong>
+          <p>工具 metadata、并发安全策略、工具输出预算与截断。</p>
+        </div>
+        <div class="box">
+          <strong><code>engine/tool_executor.py</code></strong>
+          <p>本地/MCP 工具执行、tool start/finish/fail events、workspace mode 与 capability allowlist。</p>
+        </div>
+        <div class="box">
+          <strong><code>engine/observability.py</code></strong>
+          <p>event 常量、duration、prompt size estimation、secret redaction、LLM payload helper。</p>
+        </div>
+        <div class="box">
+          <strong><code>engine/context_compaction.py</code></strong>
+          <p><code>CODE_MINIONS_CONTEXT_BUDGET_CHARS</code> 和 compacted message 生成。</p>
+        </div>
+        <div class="box">
+          <strong><code>engine/failure_classification.py</code></strong>
+          <p>从 run_events、step output 和 error text 推导 user-facing failure classification。</p>
+        </div>
+        <div class="box">
+          <strong><code>llm/litellm_backend.py</code></strong>
+          <p>provider adapter：内部类型和 LiteLLM/OpenAI-style/MiniMax HTTP payload 的双向转换。</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>9. 一句话结论</h2>
+      <div class="callout">
+        这套机制是 code_minions 原生实现的 provider-neutral agent runtime：workflow 和 agent loop 的控制权在本地 Engine/AgentLoop；provider 只提供一次 <code>chat</code> 调用能力；工具、验证、事件、失败分类和交付报告都由 code_minions 自己持久化和裁决。
+      </div>
+    </section>
+  </main>
+</body>
+</html>

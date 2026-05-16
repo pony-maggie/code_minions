@@ -11,6 +11,8 @@ class RunStatus(StrEnum):
     FAILED = "failed"
     CANCELLED = "cancelled"
     COMPLETED_WITH_ISSUES = "completed_with_issues"
+    NEEDS_HUMAN = "needs_human"
+    NEEDS_CLARIFICATION = "needs_clarification"
 
 
 class StepStatus(StrEnum):

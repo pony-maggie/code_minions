@@ -33,6 +33,8 @@ class SkillMeta(BaseModel):
     llm: LLMPref = Field(default_factory=LLMPref)
     hooks: dict[str, list[str]] = Field(default_factory=dict)
     policies: dict[str, Any] = Field(default_factory=dict)
+    tool_capabilities: dict[str, Any] = Field(default_factory=dict)
+    role: str | None = None
     model: str | None = None
     effort: str | None = None
 
@@ -55,6 +57,7 @@ FRONTMATTER_KEY_ALIASES = {
     "required-mcps": "required_mcps",
     "entrypoint-script": "entrypoint_script",
     "invokes-skills": "invokes_skills",
+    "tool-capabilities": "tool_capabilities",
 }
 
 

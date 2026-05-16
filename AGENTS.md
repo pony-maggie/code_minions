@@ -9,6 +9,33 @@ If you are starting a new session, read this file first, then read
 > inside a user's own project — that one lives in `examples/greeter/AGENTS.md`
 > as a template sample.
 
+## Product contract
+
+`code_minions` is an AI-native software delivery workflow engine. Its job is to
+turn a PRD into merge-ready code changes by modeling the full engineering loop:
+requirements parsing, task breakdown, Jira-style coordination, AI implementation,
+TDD verification, code review, acceptance reporting, and GitHub PR / GitLab MR
+creation.
+
+It is not a one-shot AI chat coding tool. Every run must behave like a real,
+auditable engineering workflow with explicit inputs, an isolated workspace,
+structured state, resumability, quality gates, traceable artifacts, and a path
+into the normal git delivery chain.
+
+When a run fails while exercising the product, fix `code_minions` only for
+general workflow defects: language semantics, framework conventions, stack-pack
+rules, reusable quality gates, deterministic testing, recovery behavior, or
+delivery/reporting contracts. Do not add PRD-specific hacks, fixture-specific
+patches, or product-code special cases that only satisfy one generated app.
+
+Before changing shipped runtime to unblock a PRD run, state the non-business
+Root Cause Class in system terms. If the explanation requires product-domain
+words (game rules, colors, coordinates, business labels, PRD fixtures, or
+feature-specific statuses), do not encode it as a builtin stabilizer or runtime
+finding. Route it to the generated project, project-local memory, or the LLM
+self-heal prompt instead. New runtime tests should be named after the system
+class they protect, not after the product that exposed the failure.
+
 ## Tech stack
 
 - **Language:** Python 3.11+ (also tested on 3.12 in CI)

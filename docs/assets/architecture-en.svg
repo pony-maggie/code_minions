@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1320" height="920" viewBox="0 0 1320 920" role="img" aria-labelledby="title desc">
   <title id="title">code_minions layered architecture</title>
-  <desc id="desc">Layered architecture diagram emphasizing specification inputs, workflow orchestration, skills, gates, runtime state, and external integrations.</desc>
+  <desc id="desc">Layered architecture diagram emphasizing specification inputs, workflow orchestration, shared agent runtime, durable run events, gates, browser acceptance evidence, failure classification, runtime state, and external integrations.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/>
@@ -27,7 +27,7 @@
 
   <rect class="bg" width="1320" height="920"/>
   <text x="40" y="48" class="title">code_minions Layered Architecture</text>
-  <text x="40" y="74" class="text">A PRD/spec-driven workflow engine: YAML orchestration, stack-aware skills, deterministic gates, resumable state, and MCP integrations.</text>
+  <text x="40" y="74" class="text">A PRD/spec-driven workflow engine: YAML orchestration, shared agent runtime, durable run events, deterministic gates, browser/product acceptance evidence, resumable state, and MCP integrations.</text>
 
   <rect x="40" y="105" width="1240" height="120" class="layer"/>
   <text x="60" y="132" class="layerTitle">1. Specification + Project Context</text>
@@ -58,12 +58,15 @@
   <rect x="550" y="310" width="210" height="58" class="orch"/>
   <text x="568" y="334" class="label">DAGRunner</text>
   <text x="568" y="354" class="small">Dependencies, for_each, resume boundaries</text>
+  <text x="568" y="369" class="small">SkillRuntime -> AgentLoop</text>
   <rect x="795" y="310" width="210" height="58" class="orch"/>
-  <text x="813" y="334" class="label">ContextAssembler</text>
-  <text x="813" y="354" class="small">PRD + AGENTS + previous step outputs</text>
+  <text x="813" y="334" class="label">Agent Runtime</text>
+  <text x="813" y="354" class="small">AgentLoop + LLMCallController</text>
+  <text x="813" y="369" class="small">ToolRuntime + ContextCompaction</text>
   <rect x="1040" y="310" width="205" height="58" class="orch"/>
-  <text x="1058" y="334" class="label">EventBus</text>
-  <text x="1058" y="354" class="small">CLI progress, Web status, gate findings</text>
+  <text x="1058" y="334" class="label">EventBus + SSE</text>
+  <text x="1058" y="354" class="small">Step status + run.event stream</text>
+  <text x="1058" y="369" class="small">Web runtime activity</text>
 
   <rect x="40" y="430" width="1240" height="150" class="layer"/>
   <text x="60" y="458" class="layerTitle">3. Skills + Stack Presets</text>
@@ -77,12 +80,12 @@
   <text x="308" y="544" class="small">python-cli-prd-to-* presets</text>
   <rect x="545" y="482" width="205" height="70" class="skill"/>
   <text x="563" y="506" class="label">Implement with TDD</text>
-  <text x="563" y="526" class="small">Coder loop, tests, self-heal</text>
-  <text x="563" y="544" class="small">Commits per task</text>
+  <text x="563" y="526" class="small">Shared AgentLoop, tests, self-heal</text>
+  <text x="563" y="544" class="small">Command events + commits per task</text>
   <rect x="780" y="482" width="205" height="70" class="skill"/>
-  <text x="798" y="506" class="label">Jira + Report</text>
-  <text x="798" y="526" class="small">create-jira-tickets</text>
-  <text x="798" y="544" class="small">compile-report</text>
+  <text x="798" y="506" class="label">Acceptance Skills</text>
+  <text x="798" y="526" class="small">web-ui-acceptance-review</text>
+  <text x="798" y="544" class="small">product acceptance + report</text>
   <rect x="1015" y="482" width="220" height="70" class="skill"/>
   <text x="1033" y="506" class="label">Open PR</text>
   <text x="1033" y="526" class="small">Push branch to origin</text>
@@ -97,27 +100,32 @@
   <text x="343" y="684" class="label">Test Gate</text>
   <text x="343" y="702" class="small">profile test command; pytest, Vitest, etc.</text>
   <rect x="580" y="662" width="230" height="48" class="gate"/>
-  <text x="598" y="684" class="label">Runtime Findings</text>
-  <text x="598" y="702" class="small">canonical gate_findings + repair hints</text>
+  <text x="598" y="684" class="label">Failure Classification</text>
+  <text x="598" y="702" class="small">provider vs workflow vs implementation</text>
   <rect x="845" y="662" width="220" height="48" class="gate"/>
-  <text x="863" y="684" class="label">Acceptance Review</text>
-  <text x="863" y="702" class="small">PRD/product contract review for commit flow</text>
+  <text x="863" y="684" class="label">Acceptance Evidence</text>
+  <text x="863" y="702" class="small">browser screenshots + verifier_rounds</text>
   <rect x="1100" y="662" width="140" height="48" class="gate"/>
   <text x="1118" y="684" class="label">Review UI</text>
   <text x="1118" y="702" class="small">CLI + Web dashboard</text>
 
   <rect x="40" y="770" width="1240" height="105" class="layer"/>
   <text x="60" y="798" class="layerTitle">5. Runtime, Integrations, Outputs</text>
-  <rect x="70" y="820" width="205" height="38" class="runtime"/>
+  <rect x="70" y="812" width="205" height="54" class="runtime"/>
   <text x="88" y="844" class="label">SQLite RunStore</text>
-  <rect x="305" y="820" width="215" height="38" class="runtime"/>
+  <text x="88" y="860" class="small">runs, steps, run_events</text>
+  <rect x="305" y="812" width="215" height="54" class="runtime"/>
   <text x="323" y="844" class="label">Git Worktrees</text>
-  <rect x="550" y="820" width="205" height="38" class="external"/>
+  <text x="323" y="860" class="small">isolated branches and commits</text>
+  <rect x="550" y="812" width="205" height="54" class="external"/>
   <text x="568" y="844" class="label">LLM Providers</text>
-  <rect x="785" y="820" width="205" height="38" class="external"/>
+  <text x="568" y="860" class="small">LiteLLM, MiniMax, Gemini, etc.</text>
+  <rect x="785" y="812" width="205" height="54" class="external"/>
   <text x="803" y="844" class="label">MCP: Jira + GitHub</text>
-  <rect x="1020" y="820" width="220" height="38" class="output"/>
-  <text x="1038" y="844" class="label">Commits, report.md, PR</text>
+  <text x="803" y="860" class="small">tool argument policy + pooling</text>
+  <rect x="1020" y="812" width="220" height="54" class="output"/>
+  <text x="1038" y="844" class="label">Delivery Artifacts</text>
+  <text x="1038" y="860" class="small">commits, evidence, browser evidence, PR</text>
 
   <path class="arrow" d="M 660 225 L 660 260"/>
   <path class="arrow" d="M 660 395 L 660 430"/>

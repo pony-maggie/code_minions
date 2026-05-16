@@ -77,12 +77,39 @@ llm:
     return load_skill(d)
 
 
+def _make_skill_with_write_tool_capability(tmp_path: Path):
+    d = tmp_path / "writer-caps"
+    d.mkdir()
+    (d / "SKILL.md").write_text(
+        """---
+name: writer-caps
+description: Try to write a file with path restrictions
+allowed-tools:
+  - Write
+required-mcps: []
+inputs: {}
+outputs:
+  done: {type: boolean}
+llm:
+  max_iterations: 5
+tool-capabilities:
+  Write:
+    path_allowlist:
+      - src/**
+---
+
+# writer-caps
+"""
+    )
+    return load_skill(d)
+
+
 def _make_task_planner_skill(tmp_path: Path):
     d = tmp_path / "planner"
     d.mkdir()
     (d / "SKILL.md").write_text(
         """---
-name: planner
+name: plan-tasks
 description: Plan tasks
 allowed-tools: []
 required-mcps: []
@@ -199,6 +226,42 @@ def test_llm_path_retries_when_final_message_has_no_json(tmp_path: Path):
     assert "valid JSON object" in llm.seen_messages[-1][-1].content
 
 
+def test_llm_path_parses_json_fence_before_trailing_json_like_text(tmp_path: Path):
+    sk = _make_skill_no_handler(tmp_path)
+    content = (
+        'scratch: {"not_summary": true}\n'
+        "```json\n"
+        '{"summary": "ok"}\n'
+        "```\n"
+        'notes: {"extra": "ignored"}'
+    )
+    llm = FakeLLM([_text_resp(content)])
+    rt = SkillRuntime()
+    ctx = SkillContext(
+        inputs={"path": "x"}, workdir=tmp_path,
+        llm=llm, assembler=ContextAssembler(tmp_path),
+    )
+
+    out = rt.invoke(sk, ctx)
+
+    assert out == {"summary": "ok"}
+    assert len(llm.seen_messages) == 1
+
+
+def test_llm_path_scans_for_object_matching_declared_outputs(tmp_path: Path):
+    sk = _make_skill_no_handler(tmp_path)
+    llm = FakeLLM([_text_resp('First {"draft": true}\nFinal {"summary": "ok"}')])
+    rt = SkillRuntime()
+    ctx = SkillContext(
+        inputs={"path": "x"}, workdir=tmp_path,
+        llm=llm, assembler=ContextAssembler(tmp_path),
+    )
+
+    out = rt.invoke(sk, ctx)
+
+    assert out == {"summary": "ok"}
+
+
 def test_llm_path_retries_when_tasks_exceed_max_tasks_policy(tmp_path: Path):
     sk = _make_task_planner_skill(tmp_path)
     llm = FakeLLM([
@@ -210,9 +273,70 @@ def test_llm_path_retries_when_tasks_exceed_max_tasks_policy(tmp_path: Path):
 
     out = rt.invoke(sk, ctx)
 
-    assert out == {"tasks": [{"id": "1"}, {"id": "2"}]}
+    assert out == {
+        "tasks": [
+            {"id": "1", "trace_id": "cm_task_1"},
+            {"id": "2", "trace_id": "cm_task_2"},
+        ]
+    }
     assert len(llm.seen_messages) == 2
     assert "at most 2 tasks" in llm.seen_messages[-1][-1].content
+
+
+def test_plan_tasks_fails_when_large_prd_hits_max_tasks_limit(tmp_path: Path):
+    import pytest
+
+    from code_minions.engine.skill_runtime import SkillExecutionError
+
+    sk = _make_task_planner_skill(tmp_path)
+    llm = FakeLLM([_text_resp('{"tasks": [{"id": "1"}, {"id": "2"}]}')])
+    rt = SkillRuntime()
+    ctx = SkillContext(
+        inputs={
+            "structured_prd": {
+                "features": [{"name": "a"}, {"name": "b"}, {"name": "c"}],
+            },
+        },
+        workdir=tmp_path,
+        llm=llm,
+        assembler=ContextAssembler(tmp_path),
+    )
+
+    with pytest.raises(SkillExecutionError) as exc:
+        rt.invoke(sk, ctx)
+
+    assert exc.value.run_status == "needs_human"
+    assert exc.value.output["max_tasks_hit"] is True
+    assert exc.value.output["feature_count"] == 3
+    assert exc.value.output["task_count"] == 2
+
+
+def test_plan_tasks_injects_stable_trace_ids(tmp_path: Path):
+    sk = _make_task_planner_skill(tmp_path)
+    llm = FakeLLM([
+        _text_resp(
+            '{"tasks": ['
+            '{"id": "T1", "title": "First"}, '
+            '{"id": "T2", "title": "Second", "trace_id": "custom-trace"}'
+            ']}'
+        )
+    ])
+    rt = SkillRuntime()
+    ctx = SkillContext(
+        inputs={
+            "structured_prd": {
+                "features": [{"name": "a"}, {"name": "b"}],
+            },
+        },
+        workdir=tmp_path,
+        llm=llm,
+        assembler=ContextAssembler(tmp_path),
+    )
+
+    out = rt.invoke(sk, ctx)
+
+    assert out["tasks"][0]["trace_id"] == "cm_task_1"
+    assert out["tasks"][1]["trace_id"] == "custom-trace"
 
 
 def test_llm_path_exceeds_max_iterations(tmp_path: Path):
@@ -350,17 +474,29 @@ def test_llm_path_records_llm_call_diagnostics(tmp_path: Path):
 
     rt.invoke(sk, ctx)
 
-    assert events == [{
-        "event_type": "llm_call",
-        "payload": {
-            "step_id": "summarize",
-            "skill": "summ",
-            "model": "fake",
-            "stop_reason": "end_turn",
-            "usage": {"input_tokens": 1, "output_tokens": 1},
-            "tool_calls": [],
-        },
-    }]
+    assert [event["event_type"] for event in events] == [
+        "llm_call_started",
+        "llm_call_finished",
+    ]
+    started = events[0]["payload"]
+    assert started["step_id"] == "summarize"
+    assert started["skill"] == "summ"
+    assert started["provider"] == "fake"
+    assert started["attempt"] == 1
+    assert started["messages_count"] == 2
+    assert started["tools_count"] == 1
+    assert started["timeout_seconds"] == 180
+    assert "prompt_chars" in started
+    assert "summary" not in str(started)
+
+    finished = events[1]["payload"]
+    assert finished["step_id"] == "summarize"
+    assert finished["skill"] == "summ"
+    assert finished["model"] == "fake"
+    assert finished["stop_reason"] == "end_turn"
+    assert finished["usage"] == {"input_tokens": 1, "output_tokens": 1}
+    assert finished["tool_calls"] == []
+    assert "duration_ms" in finished
 
 
 def test_project_readonly_workspace_rejects_mutating_local_tools(tmp_path: Path):
@@ -390,6 +526,29 @@ def test_project_readonly_workspace_rejects_mutating_local_tools(tmp_path: Path)
     assert not (tmp_path / "x.txt").exists()
     tool_messages = [m for m in llm.seen_messages[-1] if m.role == "tool"]
     assert "not allowed in project-readonly workspace" in tool_messages[0].content
+
+
+def test_llm_path_enforces_declared_tool_capabilities(tmp_path: Path):
+    sk = _make_skill_with_write_tool_capability(tmp_path)
+    turn1 = Response(
+        message=Message(
+            role="assistant",
+            tool_calls=[ToolCall(id="1", name="Write", arguments={"path": "README.md", "content": "nope"})],
+        ),
+        usage=Usage(input_tokens=1, output_tokens=1),
+        model="fake",
+        stop_reason="tool_use",
+    )
+    llm = FakeLLM([turn1, _text_resp('{"done": true}')])
+    rt = SkillRuntime()
+    ctx = SkillContext(inputs={}, workdir=tmp_path, llm=llm, assembler=ContextAssembler(tmp_path))
+
+    out = rt.invoke(sk, ctx)
+
+    assert out == {"done": True}
+    assert not (tmp_path / "README.md").exists()
+    tool_messages = [m for m in llm.seen_messages[-1] if m.role == "tool"]
+    assert "not in path_allowlist" in tool_messages[0].content
 
 
 def test_cacheable_llm_skill_reuses_cached_output(tmp_path: Path):

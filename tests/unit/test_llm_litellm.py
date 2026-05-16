@@ -92,6 +92,36 @@ def test_chat_with_tool_use():
         assert sent_tools[0]["function"]["name"] == "read_file"
 
 
+def test_gemini_tool_schema_strips_anyof_and_derives_required_fields():
+    with patch("code_minions.llm.litellm_backend._completion") as mock_completion:
+        mock_completion.return_value = _fake_litellm_response(text="ok")
+        be = LiteLLMBackend(provider="gemini", default_model="gemini-3.1-pro-preview", api_key="sk-x")
+        tools = [
+            Tool(
+                name="Read",
+                description="read",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "file_path": {"type": "string"},
+                    },
+                    "anyOf": [
+                        {"required": ["path"]},
+                        {"required": ["file_path"]},
+                    ],
+                },
+            )
+        ]
+
+        be.chat([Message(role="user", content="read x")], tools=tools)
+
+        params = mock_completion.call_args.kwargs["tools"][0]["function"]["parameters"]
+        assert "anyOf" not in params
+        assert params["required"] == ["path"]
+        assert tools[0].input_schema["anyOf"][0]["required"] == ["path"]
+
+
 def test_round_trip_tool_result_sent_correctly():
     """After a tool_use + tool result, LiteLLMBackend forwards them to litellm in the expected shape."""
     from code_minions.llm.types import ToolCall
@@ -437,6 +467,40 @@ def test_minimax_retries_remote_disconnected_failure():
     ):
         mock_urlopen.side_effect = [
             http.client.RemoteDisconnected("Remote end closed connection without response"),
+            FakeHTTPResponse(),
+        ]
+        be = LiteLLMBackend(provider="minimax", default_model="MiniMax-M2.7", api_key="mini-x")
+
+        resp = be.chat([Message(role="user", content="hi")])
+
+        assert resp.message.content == "hi"
+        assert mock_urlopen.call_count == 2
+        mock_sleep.assert_called_once()
+
+
+def test_minimax_retries_connection_reset_failure():
+    class FakeHTTPResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self):
+            return json.dumps({
+                "choices": [{"message": {"content": "hi"}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 2},
+                "model": "MiniMax-M2.7",
+            }).encode()
+
+    with (
+        patch("urllib.request.urlopen") as mock_urlopen,
+        patch("code_minions.llm.litellm_backend.time.sleep") as mock_sleep,
+    ):
+        mock_urlopen.side_effect = [
+            ConnectionResetError(54, "Connection reset by peer"),
             FakeHTTPResponse(),
         ]
         be = LiteLLMBackend(provider="minimax", default_model="MiniMax-M2.7", api_key="mini-x")

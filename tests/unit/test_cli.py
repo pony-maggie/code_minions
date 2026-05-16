@@ -108,6 +108,30 @@ def test_run_prints_live_progress_events(tmp_git_repo):
     assert "greet  success" in result.output
 
 
+def test_make_engine_does_not_start_mcp_until_required(tmp_git_repo, monkeypatch):
+    (tmp_git_repo / ".mcp.json").write_text(
+        '{"mcpServers": {"jira": {"command": "echo", "args": ["jira"]}}}\n'
+    )
+    starts = []
+
+    class FakeMCPClientPool:
+        def __init__(self, config):
+            self.config = config
+
+        def start(self):
+            starts.append("start")
+
+        def stop(self):
+            starts.append("stop")
+
+    monkeypatch.setattr("code_minions.mcp.pool.MCPClientPool", FakeMCPClientPool)
+
+    engine = main._make_engine(tmp_git_repo)
+
+    assert engine._mcp is not None  # noqa: SLF001 - verify lazy pool wiring
+    assert starts == []
+
+
 def test_live_progress_prints_step_detail(monkeypatch):
     event = main.Event(
         run_id="r_1234",
@@ -268,6 +292,62 @@ def test_status_prints_run_llm(tmp_path):
     assert result.exit_code == 0
     assert "llm=" in result.output
     assert "minimax/MiniMax-M2.7" in result.output
+
+
+def test_web_refuses_remote_host_without_explicit_remote_flag(monkeypatch):
+    called: list[dict] = []
+
+    class UvicornStub:
+        @staticmethod
+        def run(*args, **kwargs):
+            called.append({"args": args, "kwargs": kwargs})
+
+    monkeypatch.setitem(__import__("sys").modules, "uvicorn", UvicornStub)
+
+    result = CliRunner().invoke(app, ["web", "--host", "0.0.0.0"])
+
+    assert result.exit_code == 1
+    assert "requires --enable-remote" in result.output
+    assert called == []
+
+
+def test_web_refuses_remote_host_without_auth_token(monkeypatch):
+    called: list[dict] = []
+
+    class UvicornStub:
+        @staticmethod
+        def run(*args, **kwargs):
+            called.append({"args": args, "kwargs": kwargs})
+
+    monkeypatch.setitem(__import__("sys").modules, "uvicorn", UvicornStub)
+
+    result = CliRunner().invoke(app, ["web", "--host", "0.0.0.0", "--enable-remote"])
+
+    assert result.exit_code == 1
+    assert "--auth-token" in result.output
+    assert called == []
+
+
+def test_web_remote_host_sets_auth_token_for_app(monkeypatch):
+    called: list[dict] = []
+    monkeypatch.delenv("CODE_MINIONS_WEB_AUTH_TOKEN", raising=False)
+
+    class UvicornStub:
+        @staticmethod
+        def run(*args, **kwargs):
+            called.append({"args": args, "kwargs": kwargs})
+
+    monkeypatch.setitem(__import__("sys").modules, "uvicorn", UvicornStub)
+
+    result = CliRunner().invoke(
+        app,
+        ["web", "--host", "0.0.0.0", "--enable-remote", "--auth-token", "secret"],
+    )
+
+    assert result.exit_code == 0
+    assert called
+    assert called[0]["kwargs"]["host"] == "0.0.0.0"
+    assert __import__("os").environ["CODE_MINIONS_WEB_AUTH_TOKEN"] == "secret"
 
 
 def test_status_prints_successful_step_outputs(tmp_path):

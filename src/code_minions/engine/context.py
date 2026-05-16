@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from code_minions.engine.project_memory import read_project_memory
+
 BASE_PROMPT = """You are a code_minions skill executor. Work inside the given run workspace.
 Use the provided built-in local tools to read files, edit files, write files, and run local commands.
 Use MCP tools only for external systems such as Jira or GitHub.
@@ -19,6 +21,9 @@ class ContextAssembler:
         agents = self._load_agents_md()
         parts = [BASE_PROMPT.strip()]
         parts.append("## Project (AGENTS.md)\n" + agents)
+        memory = read_project_memory(self._root)
+        if memory:
+            parts.append("## Project Memory\n" + memory)
         parts.append("## Skill (SKILL.md)\n" + skill_instructions.strip())
         if step_summary.strip():
             parts.append("## Current step\n" + step_summary.strip())

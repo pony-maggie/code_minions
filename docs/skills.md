@@ -16,6 +16,14 @@ description: Parse a PRD file into structured JSON.
 allowed-tools:
   - Read
 required-mcps: []
+tool-capabilities:
+  Bash:
+    command_allowlist:
+      - pytest
+  Write:
+    path_allowlist:
+      - src/**
+      - tests/**
 inputs:
   prd_file: {type: string, required: true}
 outputs:
@@ -37,10 +45,22 @@ Use Claude-style kebab-case keys in frontmatter:
 
 - `allowed-tools` declares built-in local tools available to the LLM path: `Read`, `Write`, `Edit`, and `Bash`.
 - `required-mcps` declares external systems such as `jira` or `github`.
+- `tool-capabilities` optionally narrows local tool use for LLM-path skills. `Bash.command_allowlist` allows only commands with matching token prefixes, and `Write`/`Edit`/`Delete.path_allowlist` allows only matching relative file paths.
 - `entrypoint-script` declares a deterministic Python entrypoint for skills that should not run through the LLM loop.
 - `inputs`, `outputs`, `hooks`, `policies`, `invokes-skills`, and `llm` are `code_minions` extensions that continue to be supported in frontmatter.
+- `role` optionally selects a role-specific LLM provider from `devflow.yaml`
+  `llm.roles`; use roles such as `implementer` or `reviewer` when a workflow
+  should route different responsibilities to different models.
 - `llm.max_tokens` controls the per-call output budget for LLM-path skills. Use a larger value for skills that must emit large JSON objects.
 - `policies.cache: true` opts a skill into persistent LLM-output caching when it is safe to do so.
+
+Tool and MCP declarations are an LLM-path contract, not a sandbox for
+deterministic Python. `allowed-tools` controls which local tools the agent loop
+can call, `tool-capabilities` restricts those local tool calls before execution,
+and `required-mcps` controls which MCP tools are exposed to that loop. They do
+not restrict what an `entrypoint-script` can do in process. Treat entrypoint
+scripts as trusted workflow code; `invokes-skills` documents intended nested
+skill calls but is advisory in the current runtime.
 
 ## LLM output caching
 
@@ -97,6 +117,11 @@ def run(ctx):
 
 Return a dict matching the skill's declared `outputs` schema.
 
+Because entrypoints run as local Python, they are not confined by
+`allowed-tools` or `required-mcps`. Keep entrypoint code in reviewed workflow
+skills, and use frontmatter declarations to document intent for humans,
+inspectors, and future policy enforcement.
+
 ## Migration from the old format
 
 Old project skills that used `skill.yaml + handler.py` must migrate:
@@ -128,7 +153,7 @@ the same name under `./skills/`.
 - `parse-prd` — PRD file to structured JSON
 - `plan-tasks` — structured PRD to atomic tickets
 - `create-jira-tickets` — tickets to Jira Epic and Stories through the `jira` MCP
-- `implement-with-tdd` — single-ticket TDD implementation with built-in local tools and AI review
+- `implement-with-tdd` — single-ticket TDD implementation with built-in local tools, required-test detection, and AI review
 - `ai-code-review` — diff to structured severity-tagged issues
 - `compile-report` — aggregate ticket results into `report.md`
 - `open-github-pr` — push current branch and create a GitHub pull request through the `github` MCP

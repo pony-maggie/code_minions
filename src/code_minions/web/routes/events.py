@@ -53,6 +53,14 @@ async def run_events(request: Request, run_id: str) -> EventSourceResponse:
                     "error": s.get("error"),
                 }, default=str),
             }
+        for ev in store.list_run_events(run_id)[-100:]:
+            yield {
+                "event": "run.event",
+                "data": json.dumps({
+                    "event_type": ev["event_type"],
+                    "payload": ev.get("payload") or {},
+                }, default=str),
+            }
         current = store.get_run(run_id)
         if current and current["status"] in {"success", "failed", "cancelled"}:
             yield {

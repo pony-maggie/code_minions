@@ -1,3 +1,4 @@
+import re
 from typing import Any
 
 PLAYBOOK: tuple[tuple[tuple[str, ...], str], ...] = (
@@ -111,6 +112,90 @@ PLAYBOOK: tuple[tuple[tuple[str, ...], str], ...] = (
         "structure/classes instead, or move layout verification to browser/e2e visual checks.",
     ),
     (
+        ("test timed out in 5000ms", "keyboard"),
+        "Vitest interaction tests timed out. If the test uses `vi.useFakeTimers()` with "
+        "`@testing-library/user-event`, create the user with "
+        "`userEvent.setup({ advanceTimers: vi.advanceTimersByTime })`, or switch that interaction "
+        "test back to real timers. When asserting timer-driven UI movement, explicitly advance the "
+        "fake clock inside `act(...)` before checking DOM state.",
+    ),
+    (
+        ("property 'advancetimersbytime' does not exist", "userevent"),
+        "`advanceTimersByTime` belongs to Vitest's `vi`, not to a `userEvent` instance. Replace "
+        "`user.advanceTimersByTime(...)` with `vi.advanceTimersByTime(...)` inside `act(...)`, and "
+        "remove unused `userEvent.setup()` scaffolding when the test uses `fireEvent`.",
+    ),
+    (
+        ("180度反向", "expected", "to be"),
+        "Movement tests for grid apps must respect the current direction and 180-degree reversal "
+        "rule. Do not expect an immediate opposite turn from the initial direction; use a legal turn "
+        "sequence or deterministic initial state before asserting left/down/up/right movement.",
+    ),
+    (
+        ("headafterup", "expected", "向下"),
+        "A movement test that first turns upward and then immediately expects downward movement is usually "
+        "asserting an illegal 180-degree reversal. Test the rejection behavior, or use a legal non-opposite "
+        "setup before expecting downward movement.",
+    ),
+    (
+        ("expected", "当前分数: 0", "当前分数: 10"),
+        "A state-transition test expected score changes, but the rendered component stayed at the default "
+        "state. If the test creates an initial-state fixture, pass it into the component or hook and ensure "
+        "the implementation consumes that public initializer; otherwise drive enough real timer ticks and "
+        "interactions to reach the asserted state.",
+    ),
+    (
+        ("localstorage", "number of calls: 0"),
+        "A persistence assertion expected localStorage writes, but the score transition never happened. "
+        "First make the test reach the scoring state through a deterministic initializer or valid UI/timer "
+        "sequence, then assert the storage side effect.",
+    ),
+    (
+        ("ts2322", "initialstate", "props"),
+        "A React test is passing an initial-state fixture prop that the component props do not accept. "
+        "Align the public contract: add and consume an `initialState` prop, or pass the component's "
+        "supported granular initializer props. Type fixtures with the existing domain type or `satisfies` "
+        "so literal unions do not widen to `string`.",
+    ),
+    (
+        ("ts2322", "initial", "intrinsicattributes"),
+        "A React test is passing deterministic initializer props to a component currently typed as taking "
+        "no props. Add and consume those props in the component and any backing hook, or update the test to "
+        "use the component's real public initializer contract.",
+    ),
+    (
+        ("element type is invalid", "got: undefined", "mixed up default and named imports"),
+        "A React component rendered as `undefined`, usually because tests or callers default-import a "
+        "module that only has a named export, or vice versa. Keep the import/export contract consistent; "
+        "for `src/App.tsx`, exporting both `export function App(...)` and `export default App` is "
+        "acceptable when existing callers use both forms.",
+    ),
+    (
+        ("result.current._setstate is not a function",),
+        "React hook tests should not access private or imagined hook internals such as "
+        "`result.current['_setState']`. Drive state through the public hook API, factor deterministic "
+        "pure helpers, or intentionally expose a real testable setter/initializer and update the hook "
+        "contract and tests together.",
+    ),
+    (
+        ("does not exist", "vi.spyon"),
+        "`vi.spyOn(module, 'name')` can only mock a real exported module property. Do not spy on "
+        "non-exported implementation helpers; either export the helper deliberately, move it to a "
+        "pure helper module, or test through the public UI/hook behavior without that spy.",
+    ),
+    (
+        ("unable to find an element with the text", "text is broken up by multiple elements"),
+        "Testing Library text queries can fail when label and value are split across child elements such "
+        "as `<span>Score:</span><strong>0</strong>`. Prefer an accessible label/query, a stable test id "
+        "plus `toHaveTextContent`, or a function matcher that checks `element.textContent`.",
+    ),
+    (
+        ("received value must be a node", ".enter-hint"),
+        "A test is passing a missing optional element into a jest-dom matcher. Do not convert OR acceptance "
+        "criteria into AND assertions: if the product can start with a button or Enter hint, assert that at "
+        "least one supported affordance works, or intentionally render both as the public UI contract.",
+    ),
+    (
         ("low-level-pointerdown-test",),
         "A React/Vite test uses low-level `user.pointer(... '[pointerdown]')` to prove touch support. "
         "In jsdom this can diverge from browser activation behavior; prefer `await user.click(cell)` "
@@ -123,6 +208,17 @@ PLAYBOOK: tuple[tuple[tuple[str, ...], str], ...] = (
         "exported player type contract across tasks; if the state is typed as an enum, use enum members "
         "such as `Stone.Black`, and if the app already uses a `'black' | 'white'` union, do not replace "
         "it with an incompatible enum.",
+    ),
+    (
+        ("ts6133", "is declared but its value is never read"),
+        "TypeScript noUnusedLocals rejects unused generated values. Remove the unused local/import, or for "
+        "React `useState` destructure only the value, e.g. `[score] = useState(0)`, when the setter is not "
+        "actually called.",
+    ),
+    (
+        ("ts2588", "cannot assign to", "because it is a constant"),
+        "A generated local is reassigned after being declared with `const`. Use `let` for that binding, or "
+        "refactor the reassignment into a separate immutable value.",
     ),
     (
         ("cannot code sign because the target does not have an info.plist file",),
@@ -140,12 +236,33 @@ PLAYBOOK: tuple[tuple[tuple[str, ...], str], ...] = (
 
 
 def failure_hints_for_output(output: str) -> list[str]:
+    return [match["fix_hint"] for match in failure_matches_for_output(output)]
+
+
+def failure_matches_for_output(output: str) -> list[dict[str, Any]]:
     normalized = output.lower()
-    hints: list[str] = []
+    matches: list[dict[str, Any]] = []
+    seen_hints: set[str] = set()
     for needles, hint in PLAYBOOK:
-        if all(needle.lower() in normalized for needle in needles) and hint not in hints:
-            hints.append(hint)
-    return hints
+        if not all(needle.lower() in normalized for needle in needles):
+            continue
+        if hint in seen_hints:
+            continue
+        seen_hints.add(hint)
+        matches.append({
+            "name": _playbook_match_name(needles),
+            "category": "functional",
+            "severity": "major",
+            "fix_hint": hint,
+            "auto_fixable": False,
+            "deterministic_fix": None,
+        })
+    return matches
+
+
+def _playbook_match_name(needles: tuple[str, ...]) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", needles[0].lower()).strip("-")
+    return slug[:80] or "failure-playbook-match"
 
 
 def failure_findings_for_output(output: str, *, source: str = "") -> list[dict[str, Any]]:

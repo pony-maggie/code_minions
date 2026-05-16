@@ -32,6 +32,10 @@ hooks:
     - lint
 policies:
   self_heal_max_rounds: 2
+role: reviewer
+tool-capabilities:
+  Bash:
+    command_allowlist: ["pytest"]
 model: inherit
 effort: medium
 ---
@@ -57,6 +61,8 @@ Read a PRD and return structured JSON.
     assert skill.meta.llm.max_tokens == 12000
     assert skill.meta.hooks == {"post_run": ["lint"]}
     assert skill.meta.policies == {"self_heal_max_rounds": 2}
+    assert skill.meta.role == "reviewer"
+    assert skill.meta.tool_capabilities == {"Bash": {"command_allowlist": ["pytest"]}}
     assert skill.meta.model == "inherit"
     assert skill.meta.effort == "medium"
     assert "Read a PRD" in skill.instructions

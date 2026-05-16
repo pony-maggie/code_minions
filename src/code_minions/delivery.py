@@ -71,8 +71,9 @@ LOW_LEVEL_USER_POINTERDOWN_RE = re.compile(
 )
 COMPUTED_STYLE_LAYOUT_ASSERTION_RE = re.compile(
     r"""getComputedStyle\s*\([\s\S]{0,320}"""
-    r"""expect\s*\([^)]*\.(?:display|justifyContent|alignItems|placeItems|gridTemplateColumns|width|height)[^)]*\)\s*"""
-    r"""\.(?:toBe|toEqual|toContain|toMatch)\s*\(""",
+    r"""expect\s*\(\s*(?:parseFloat\s*\(\s*)?"""
+    r"""[^)]*\.(?:display|justifyContent|alignItems|placeItems|gridTemplateColumns|width|height)[^)]*\)?\s*\)\s*"""
+    r"""\.(?:toBe|toEqual|toContain|toMatch|toBeTruthy|toBeLessThan|toBeLessThanOrEqual|toBeGreaterThan|toBeGreaterThanOrEqual)\s*\(""",
     re.MULTILINE,
 )
 ABSOLUTE_STONE_CLASS_RE = re.compile(
@@ -1349,7 +1350,7 @@ def validate_delivery_profile(workdir: Path, profile: dict[str, Any] | None) -> 
                 (
                     "Python web tests import application code through the synthetic `src` module. "
                     "For src-layout packages, tests should import the FastAPI app from the package, "
-                    "for example `from minicalc_api.app import app`, not `from src.main import app`."
+                    "for example `from <package>.app import app`, not `from src.main import app`."
                 ),
                 repair_hint=(
                     "Move the ASGI app into `src/<package>/app.py`, update tests to import "

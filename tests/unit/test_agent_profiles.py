@@ -7,7 +7,7 @@ def test_default_implementer_profile_has_safe_loop_defaults() -> None:
     assert profile.profile_id == "default/implementer"
     assert profile.role == "implementer"
     assert profile.self_heal_max_rounds == 3
-    assert profile.reviewer_max_rounds == 0
+    assert profile.reviewer_max_rounds == 2
     assert profile.gate_strictness == "balanced"
     assert profile.temperature == 0.2
 
@@ -24,7 +24,14 @@ def test_react_vite_implementer_profile_inherits_delivery_strictness() -> None:
     assert profile.profile_id == "react-vite/implementer"
     assert profile.stack_id == "react-vite"
     assert profile.gate_strictness == "relaxed"
-    assert "React/Vite" in "\n".join(profile.guidance)
+    guidance = "\n".join(profile.guidance)
+    assert "React/Vite" in guidance
+    assert "advanceTimers" in guidance
+    assert "stable semantic markers" in guidance
+    assert "result.current['_setState']" in guidance
+    assert "vi.spyOn" in guidance
+    assert "deterministic initial state" in guidance
+    assert "180-degree" in guidance
 
 
 def test_python_web_implementer_profile_guides_canonical_src_app_layout() -> None:
