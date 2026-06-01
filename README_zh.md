@@ -34,6 +34,11 @@
 
 [![code_minions 分层架构图](docs/assets/architecture-zh.svg)](docs/assets/architecture-zh.svg)
 
+runtime 会把每次 workflow 记录成 SQLite 中的 typed run journal：step attempt、
+LLM 调用、tool 调用、gate finding 和验收证据都会按顺序写入 `run_events`。本地
+tool 事件会附带精简的 tool evidence，用来区分文件读取、写入、命令执行、策略拒绝和
+被截断的输出，同时避免保存 secret 或完整 prompt。
+
 ## 安装
 
 `code-minions` 还没有发布到 PyPI。当前需要从源码安装：

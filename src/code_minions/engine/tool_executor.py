@@ -69,16 +69,18 @@ class ToolExecutor:
                     f"local tool {name} is not allowed in project-readonly workspace"
                 )
             self._enforce_tool_capabilities(name, arguments)
-            from code_minions.engine.local_tools import run_local_tool
-            result = run_local_tool(name, arguments, self._ctx.workdir)
+            from code_minions.engine.local_tools import run_local_tool_with_evidence
+            result = run_local_tool_with_evidence(name, arguments, self._ctx.workdir)
         except Exception as e:
             duration_ms = monotonic_ms() - started
+            evidence = _error_evidence(e)
             self._record(
                 TOOL_CALL_FAILED,
                 {
                     **base_payload,
                     "duration_ms": duration_ms,
                     "error": str(e),
+                    "evidence": evidence,
                 },
             )
             self._record(
@@ -89,6 +91,7 @@ class ToolExecutor:
                     "status": "error",
                     "read_only": read_only,
                     "error": str(e),
+                    "evidence": evidence,
                 },
             )
             return f"[error] {e}"
@@ -98,7 +101,8 @@ class ToolExecutor:
             {
                 **base_payload,
                 "duration_ms": duration_ms,
-                "result_chars": len(result),
+                "result_chars": len(result.content),
+                "evidence": result.evidence,
             },
         )
         self._record(
@@ -108,9 +112,10 @@ class ToolExecutor:
                 "call_id": call_id,
                 "status": "success",
                 "read_only": read_only,
+                "evidence": result.evidence,
             },
         )
-        return result
+        return result.content
 
     def run_mcp(
         self,
@@ -273,3 +278,13 @@ def _split_command(command: str) -> list[str]:
         return shlex.split(command)
     except ValueError:
         return []
+
+
+def _error_evidence(error: Exception) -> dict[str, Any]:
+    message = str(error)
+    kind = "policy_rejection" if "not allowed" in message or "allowlist" in message else "tool_error"
+    return {
+        "kind": kind,
+        "result_chars": 0,
+        "result_truncated": False,
+    }

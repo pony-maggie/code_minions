@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1320" height="920" viewBox="0 0 1320 920" role="img" aria-labelledby="title desc">
   <title id="title">code_minions 分层架构图</title>
-  <desc id="desc">分层架构图，强调规格输入、workflow 编排、共享 agent runtime、持久化 run events、门禁、浏览器验收证据、失败分类、运行状态和外部集成。</desc>
+  <desc id="desc">分层架构图，强调规格输入、workflow 编排、共享 agent runtime、typed run journal、tool evidence、门禁、浏览器验收证据、失败分类、运行状态和外部集成。</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/>
@@ -27,7 +27,7 @@
 
   <rect class="bg" width="1320" height="920"/>
   <text x="40" y="48" class="title">code_minions 分层架构</text>
-  <text x="40" y="74" class="text">以 PRD/spec 为输入的研发工作流引擎：YAML 编排、共享 agent runtime、持久化 run events、确定性门禁、浏览器/产品验收证据、可恢复状态和 MCP 集成。</text>
+  <text x="40" y="74" class="text">以 PRD/spec 为输入的研发工作流引擎：YAML 编排、共享 agent runtime、typed run journal、确定性门禁、浏览器/产品验收证据、tool evidence、可恢复状态和 MCP 集成。</text>
 
   <rect x="40" y="105" width="1240" height="120" class="layer"/>
   <text x="60" y="132" class="layerTitle">1. 规格与项目上下文</text>
@@ -62,7 +62,7 @@
   <rect x="795" y="310" width="210" height="58" class="orch"/>
   <text x="813" y="334" class="label">Agent Runtime</text>
   <text x="813" y="354" class="small">AgentLoop + LLMCallController</text>
-  <text x="813" y="369" class="small">ToolRuntime + ContextCompaction</text>
+  <text x="813" y="369" class="small">ToolRuntime + tool evidence</text>
   <rect x="1040" y="310" width="205" height="58" class="orch"/>
   <text x="1058" y="334" class="label">EventBus + SSE</text>
   <text x="1058" y="354" class="small">step 状态 + run.event 流</text>
@@ -113,7 +113,7 @@
   <text x="60" y="798" class="layerTitle">5. 运行时、外部集成与输出</text>
   <rect x="70" y="812" width="205" height="54" class="runtime"/>
   <text x="88" y="844" class="label">SQLite RunStore</text>
-  <text x="88" y="860" class="small">runs、steps、run_events</text>
+  <text x="88" y="860" class="small">runs、steps、typed run journal</text>
   <rect x="305" y="812" width="215" height="54" class="runtime"/>
   <text x="323" y="844" class="label">Git Worktrees</text>
   <text x="323" y="860" class="small">隔离分支与提交</text>

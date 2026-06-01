@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1320" height="920" viewBox="0 0 1320 920" role="img" aria-labelledby="title desc">
   <title id="title">code_minions layered architecture</title>
-  <desc id="desc">Layered architecture diagram emphasizing specification inputs, workflow orchestration, shared agent runtime, durable run events, gates, browser acceptance evidence, failure classification, runtime state, and external integrations.</desc>
+  <desc id="desc">Layered architecture diagram emphasizing specification inputs, workflow orchestration, shared agent runtime, typed run journal events, tool evidence, gates, browser acceptance evidence, failure classification, runtime state, and external integrations.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/>
@@ -27,7 +27,7 @@
 
   <rect class="bg" width="1320" height="920"/>
   <text x="40" y="48" class="title">code_minions Layered Architecture</text>
-  <text x="40" y="74" class="text">A PRD/spec-driven workflow engine: YAML orchestration, shared agent runtime, durable run events, deterministic gates, browser/product acceptance evidence, resumable state, and MCP integrations.</text>
+  <text x="40" y="74" class="text">A PRD/spec-driven workflow engine: YAML orchestration, shared agent runtime, typed run journal, deterministic gates, browser/product acceptance evidence, tool evidence, resumable state, and MCP integrations.</text>
 
   <rect x="40" y="105" width="1240" height="120" class="layer"/>
   <text x="60" y="132" class="layerTitle">1. Specification + Project Context</text>
@@ -62,7 +62,7 @@
   <rect x="795" y="310" width="210" height="58" class="orch"/>
   <text x="813" y="334" class="label">Agent Runtime</text>
   <text x="813" y="354" class="small">AgentLoop + LLMCallController</text>
-  <text x="813" y="369" class="small">ToolRuntime + ContextCompaction</text>
+  <text x="813" y="369" class="small">ToolRuntime + tool evidence</text>
   <rect x="1040" y="310" width="205" height="58" class="orch"/>
   <text x="1058" y="334" class="label">EventBus + SSE</text>
   <text x="1058" y="354" class="small">Step status + run.event stream</text>
@@ -113,7 +113,7 @@
   <text x="60" y="798" class="layerTitle">5. Runtime, Integrations, Outputs</text>
   <rect x="70" y="812" width="205" height="54" class="runtime"/>
   <text x="88" y="844" class="label">SQLite RunStore</text>
-  <text x="88" y="860" class="small">runs, steps, run_events</text>
+  <text x="88" y="860" class="small">runs, steps, typed run journal</text>
   <rect x="305" y="812" width="215" height="54" class="runtime"/>
   <text x="323" y="844" class="label">Git Worktrees</text>
   <text x="323" y="860" class="small">isolated branches and commits</text>

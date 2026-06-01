@@ -17,6 +17,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from code_minions.engine.hooks import HookContext, HookRegistry
+from code_minions.engine.run_journal import (
+    STEP_ATTEMPT_REUSED,
+    STEP_ATTEMPT_SKIPPED,
+    record_step_attempt_failed,
+    record_step_attempt_finished,
+    record_step_attempt_started,
+    record_step_attempt_status,
+)
 from code_minions.engine.sensors import BLOCKING_SEVERITIES, run_sensor
 from code_minions.engine.skill import Skill
 from code_minions.engine.skill_runtime import SkillContext, SkillRuntime
@@ -179,10 +187,24 @@ class DAGRunner:
 
         for step in order:
             if step.id in outputs:
+                record_step_attempt_status(
+                    self._run_event_recorder,
+                    STEP_ATTEMPT_REUSED,
+                    observable_step_id=step.id,
+                    reason="preloaded successful output reused during resume",
+                    output=outputs[step.id],
+                )
                 continue  # resume: skip already-succeeded steps
             if not self._when_allows(step, outputs):
                 output = {_SKIPPED_KEY: True, "reason": "when condition evaluated false"}
                 outputs[step.id] = output
+                record_step_attempt_status(
+                    self._run_event_recorder,
+                    STEP_ATTEMPT_SKIPPED,
+                    observable_step_id=step.id,
+                    reason="when condition evaluated false",
+                    output=output,
+                )
                 self._observe(step.id, "skipped", output, None)
                 continue
             if step.for_each is not None:
@@ -243,6 +265,18 @@ class DAGRunner:
                 f"step {step.id!r} references unknown skill {step.skill!r}"
             )
         resolved = self._resolve_inputs(raw_inputs, outputs)
+        llm = self._llm_for_skill(skill)
+        record_step_attempt_started(
+            self._run_event_recorder,
+            observable_step_id=observable_step_id,
+            step=step,
+            skill=skill,
+            resolved_inputs=resolved,
+            workspace_mode=self._workspace_mode,
+            is_resume=self._is_resume,
+            llm=llm,
+            detail=detail,
+        )
         self._observe(observable_step_id, "running", None, None, detail)
         try:
             previous_step_id = self._active_step_id
@@ -261,6 +295,13 @@ class DAGRunner:
             )
         except Exception as e:
             partial_output = getattr(e, "output", None)
+            record_step_attempt_failed(
+                self._run_event_recorder,
+                observable_step_id=observable_step_id,
+                error=repr(e),
+                output=partial_output,
+                detail=detail,
+            )
             self._observe(observable_step_id, "failed", partial_output, repr(e), detail)
             raise
         finally:
@@ -287,16 +328,29 @@ class DAGRunner:
             ]
             blocking = [finding for finding in sensor_findings if finding.severity in BLOCKING_SEVERITIES]
             if blocking:
+                error = f"sensor {blocking[0].code.removeprefix('sensor-')} failed"
+                record_step_attempt_failed(
+                    self._run_event_recorder,
+                    observable_step_id=observable_step_id,
+                    error=error,
+                    output=observed_result,
+                    detail=detail,
+                )
                 self._observe(
                     observable_step_id,
                     "failed",
                     observed_result,
-                    f"sensor {blocking[0].code.removeprefix('sensor-')} failed",
+                    error,
                     detail,
                 )
-                raise DAGRunnerError(
-                    f"sensor {blocking[0].code.removeprefix('sensor-')} failed"
-                )
+                raise DAGRunnerError(error)
+        record_step_attempt_finished(
+            self._run_event_recorder,
+            observable_step_id=observable_step_id,
+            status="success",
+            output=observed_result,
+            detail=detail,
+        )
         self._observe(observable_step_id, "success", observed_result, None, detail)
         return result
 

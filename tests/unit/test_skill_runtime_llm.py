@@ -449,6 +449,12 @@ def test_llm_path_records_allowed_local_tool_call(tmp_path: Path):
             "call_id": "1",
             "status": "success",
             "read_only": True,
+            "evidence": {
+                "kind": "file_read",
+                "path": "x.txt",
+                "result_chars": 5,
+                "result_truncated": False,
+            },
         },
     }]
 

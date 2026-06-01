@@ -2,12 +2,19 @@
 from __future__ import annotations
 
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 MAX_BASH_TIMEOUT_SECONDS = 600
 MAX_TOOL_OUTPUT_CHARS = 12_000
 IGNORED_GLOB_PARTS = {".git", ".devflow", "build", "coverage", "dist", "node_modules"}
+
+
+@dataclass(frozen=True)
+class LocalToolResult:
+    content: str
+    evidence: dict[str, Any]
 
 
 def _resolve_inside(workdir: Path, user_path: str) -> Path:
@@ -25,6 +32,20 @@ def _truncate(text: str) -> str:
     if len(text) <= MAX_TOOL_OUTPUT_CHARS:
         return text
     return text[-MAX_TOOL_OUTPUT_CHARS:]
+
+
+def _truncate_with_flag(text: str) -> tuple[str, bool]:
+    truncated = _truncate(text)
+    return truncated, len(truncated) != len(text)
+
+
+def _evidence(kind: str, *, content: str, truncated: bool = False, **extra: Any) -> dict[str, Any]:
+    return {
+        "kind": kind,
+        **extra,
+        "result_chars": len(content),
+        "result_truncated": truncated,
+    }
 
 
 def _directory_listing(path: Path, workdir: Path) -> str:
@@ -70,25 +91,56 @@ def _glob_listing(workdir: Path, pattern: str) -> str:
     return _truncate("\n".join(matches))
 
 
-def run_local_tool(name: str, arguments: dict[str, Any], workdir: Path) -> str:
-    """Run a built-in local tool inside a run workspace."""
+def run_local_tool_with_evidence(name: str, arguments: dict[str, Any], workdir: Path) -> LocalToolResult:
+    """Run a built-in local tool inside a run workspace and describe the artifact touched."""
     if name == "Read":
         path = _resolve_inside(workdir, _path_argument(arguments))
         if path.is_dir():
-            return _directory_listing(path, workdir)
+            content, truncated = _truncate_with_flag(_directory_listing(path, workdir))
+            return LocalToolResult(
+                content=content,
+                evidence=_evidence(
+                    "directory_listing",
+                    path=path.relative_to(workdir.resolve()).as_posix(),
+                    content=content,
+                    truncated=truncated,
+                ),
+            )
         if not path.is_file():
             raise ValueError("path is not a file or directory")
-        return _truncate(path.read_text())
+        content, truncated = _truncate_with_flag(path.read_text())
+        return LocalToolResult(
+            content=content,
+            evidence=_evidence(
+                "file_read",
+                path=path.relative_to(workdir.resolve()).as_posix(),
+                content=content,
+                truncated=truncated,
+            ),
+        )
 
     if name == "Glob":
         pattern = str(arguments.get("pattern") or arguments.get("glob") or arguments.get("path") or "**/*")
-        return _glob_listing(workdir, pattern)
+        content, truncated = _truncate_with_flag(_glob_listing(workdir, pattern))
+        return LocalToolResult(
+            content=content,
+            evidence=_evidence("glob_listing", pattern=pattern, content=content, truncated=truncated),
+        )
 
     if name == "Write":
         path = _resolve_inside(workdir, _path_argument(arguments))
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(arguments["content"])
-        return f"wrote {path.relative_to(workdir.resolve())}"
+        content = f"wrote {path.relative_to(workdir.resolve())}"
+        return LocalToolResult(
+            content=content,
+            evidence=_evidence(
+                "file_write",
+                path=path.relative_to(workdir.resolve()).as_posix(),
+                content=content,
+                bytes_written=len(str(arguments["content"]).encode("utf-8")),
+            ),
+        )
 
     if name == "Edit":
         path = _resolve_inside(workdir, _path_argument(arguments))
@@ -114,7 +166,15 @@ def run_local_tool(name: str, arguments: dict[str, Any], workdir: Path) -> str:
         if text.count(old) != 1:
             raise ValueError("old_text must match exactly one location")
         path.write_text(text.replace(old, new, 1))
-        return f"updated {path.relative_to(workdir.resolve())}"
+        content = f"updated {path.relative_to(workdir.resolve())}"
+        return LocalToolResult(
+            content=content,
+            evidence=_evidence(
+                "file_edit",
+                path=path.relative_to(workdir.resolve()).as_posix(),
+                content=content,
+            ),
+        )
 
     if name == "Delete":
         path = _resolve_inside(workdir, _path_argument(arguments))
@@ -122,7 +182,11 @@ def run_local_tool(name: str, arguments: dict[str, Any], workdir: Path) -> str:
             raise ValueError("path is not a file")
         rel = path.relative_to(workdir.resolve())
         path.unlink()
-        return f"deleted {rel}"
+        content = f"deleted {rel}"
+        return LocalToolResult(
+            content=content,
+            evidence=_evidence("file_delete", path=rel.as_posix(), content=content),
+        )
 
     if name in {"Bash", "Command"}:
         timeout = min(int(arguments.get("timeout", 300)), MAX_BASH_TIMEOUT_SECONDS)
@@ -137,10 +201,27 @@ def run_local_tool(name: str, arguments: dict[str, Any], workdir: Path) -> str:
             text=True,
             timeout=timeout,
         )
-        return (
+        full_content = (
             f"exit_code={result.returncode}\n"
-            f"stdout:\n{_truncate(result.stdout)}\n"
-            f"stderr:\n{_truncate(result.stderr)}"
+            f"stdout:\n{result.stdout}\n"
+            f"stderr:\n{result.stderr}"
+        )
+        content, truncated = _truncate_with_flag(full_content)
+        return LocalToolResult(
+            content=content,
+            evidence=_evidence(
+                "command_execution",
+                content=content,
+                truncated=truncated,
+                exit_code=result.returncode,
+                stdout_chars=len(result.stdout),
+                stderr_chars=len(result.stderr),
+            ),
         )
 
     raise ValueError(f"unknown local tool: {name}")
+
+
+def run_local_tool(name: str, arguments: dict[str, Any], workdir: Path) -> str:
+    """Run a built-in local tool inside a run workspace."""
+    return run_local_tool_with_evidence(name, arguments, workdir).content

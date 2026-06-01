@@ -152,8 +152,9 @@ class RunStore:
                 .order_by(run_events.c.id.asc())
             ).mappings().all()
         events = []
-        for row in rows:
+        for journal_seq, row in enumerate(rows, start=1):
             item = dict(row)
+            item["journal_seq"] = journal_seq
             item["payload"] = json.loads(item.pop("payload_json"))
             events.append(item)
         return events

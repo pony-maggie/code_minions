@@ -3496,6 +3496,13 @@ def test_tool_writes_are_recorded(tmp_git_repo: Path, monkeypatch):
             "call_id": "call-1",
             "status": "success",
             "read_only": False,
+            "evidence": {
+                "kind": "file_write",
+                "path": "x.py",
+                "bytes_written": 6,
+                "result_chars": 10,
+                "result_truncated": False,
+            },
         },
     }]
 

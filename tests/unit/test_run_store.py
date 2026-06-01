@@ -103,6 +103,19 @@ def test_run_events_are_append_only_and_ordered(tmp_path: Path) -> None:
     assert events[0]["created_at"] <= events[1]["created_at"]
 
 
+def test_run_events_have_journal_sequence_numbers(tmp_path: Path) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    run_id = store.create_run(workflow="w", inputs={})
+
+    store.append_run_event(run_id, "step_attempt_started", {"step_id": "parse"})
+    store.append_run_event(run_id, "step_attempt_finished", {"step_id": "parse"})
+
+    events = store.list_run_events(run_id)
+
+    assert [event["journal_seq"] for event in events] == [1, 2]
+    assert events[0]["journal_seq"] < events[1]["journal_seq"]
+
+
 def test_successful_outputs_include_for_each_iteration_steps(tmp_path: Path) -> None:
     store = RunStore(tmp_path / "runs.db")
     run_id = store.create_run(workflow="w", inputs={})

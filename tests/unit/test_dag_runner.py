@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from code_minions.engine.dag_runner import DAGRunner, DAGRunnerError
+from code_minions.engine.run_journal import STEP_ATTEMPT_FINISHED, STEP_ATTEMPT_STARTED
 from code_minions.engine.skill import Skill, load_skill
 from code_minions.engine.skill_runtime import SkillContext, SkillRuntime
 from code_minions.engine.workflow import InputSpec, Workflow, WorkflowStep
@@ -134,7 +135,69 @@ def test_runner_passes_event_recorder_and_step_id_to_skill_context(tmp_path: Pat
     runner.run()
 
     assert seen[0]["current_step_id"] == "s1"
-    assert events == [{"event_type": "custom", "payload": {"step": "s1"}}]
+    custom_events = [event for event in events if event["event_type"] == "custom"]
+    assert custom_events == [{"event_type": "custom", "payload": {"step": "s1"}}]
+
+
+def test_runner_records_step_attempt_journal_events(tmp_path: Path) -> None:
+    events: list[dict] = []
+    wf = Workflow(
+        name="w",
+        sensors={
+            "lint": {
+                "type": "command",
+                "command": f"{sys.executable} -c \"pass\"",
+                "severity": "blocker",
+            },
+        },
+        steps=[
+            WorkflowStep(
+                id="build",
+                skill="build",
+                inputs={"path": "$inputs.path"},
+                sensors=["lint"],
+            )
+        ],
+    )
+    skill = _stub_skill(tmp_path, "build", role="implementer")
+    rt = FakeSkillRuntime({"build": {"ok": True}})
+
+    DAGRunner(
+        workflow=wf,
+        skills_by_name={"build": skill},
+        runtime=rt,
+        workdir=tmp_path,
+        inputs={"path": "src/app.py"},
+        run_event_recorder=lambda event_type, payload: events.append({
+            "event_type": event_type,
+            "payload": payload,
+        }),
+    ).run()
+
+    attempt_events = [
+        event for event in events
+        if event["event_type"] in {STEP_ATTEMPT_STARTED, STEP_ATTEMPT_FINISHED}
+    ]
+
+    assert [event["event_type"] for event in attempt_events] == [
+        STEP_ATTEMPT_STARTED,
+        STEP_ATTEMPT_FINISHED,
+    ]
+    snapshot = attempt_events[0]["payload"]["snapshot"]
+    assert snapshot == {
+        "step_id": "build",
+        "skill": "build",
+        "role": "implementer",
+        "workspace_mode": "git-worktree",
+        "is_resume": False,
+        "input_keys": ["path"],
+        "depends_on": [],
+        "sensors": ["lint"],
+        "post_run_hooks": [],
+        "llm": {"provider": "", "model": ""},
+    }
+    assert attempt_events[1]["payload"]["status"] == "success"
+    assert attempt_events[1]["payload"]["output_keys"] == ["ok"]
 
 
 def test_blocker_command_sensor_fails_step_after_skill_success(tmp_path: Path) -> None:

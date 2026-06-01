@@ -43,6 +43,13 @@ The core product model:
 
 [![code_minions layered architecture](docs/assets/architecture-en.svg)](docs/assets/architecture-en.svg)
 
+The runtime records each workflow as a typed run journal in SQLite: step
+attempts, LLM calls, tool calls, gate findings, and acceptance evidence are
+stored as ordered `run_events`. Local tool events include compact evidence about
+the artifact touched, so audits can distinguish file reads, writes, command
+execution, policy rejections, and truncated output without persisting secrets or
+full prompts.
+
 ## Install
 
 `code-minions` is not published on PyPI yet. Install from source:
